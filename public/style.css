@@ -493,3 +493,10 @@ body[data-theme="red"]{--main-theme-color:#a95b61;--main-theme-hover:#c0787e}bod
 .avatar-crop-controls button{width:auto}
 .account-avatar-preview.hidden{display:none!important}
 @media(max-width:560px){.avatar-crop-controls{align-items:stretch}.avatar-crop-controls label{flex-basis:100%}}
+
+/* Ensure the selected default dark preset does not override the muted palette. */
+body[data-theme="dark"]{--main-theme-color:#8795a5;--main-theme-hover:#a3afbd}
+body[data-theme="dark"] .account-settings-main{background:#202329}
+body[data-theme="dark"] .account-settings-nav{background:#1b1e23}
+body[data-theme="dark"] .account-nav.active{background:#303740;border-color:#414955;box-shadow:inset 2px 0 #9aa6b4}
+body[data-theme="dark"] .account-nav.active:before{background:#aeb9c6;box-shadow:none}
