@@ -257,3 +257,11 @@ input:disabled,textarea:disabled,select:disabled{opacity:.55;cursor:not-allowed}
  .inline-create{flex-direction:column}
  .inline-create .primary{width:100%}
 }
+
+/* Server rail icon fix: render each server's icon once, without the theme home image layered underneath. */
+.servers .server-icon{position:relative;isolation:isolate;padding:0;box-sizing:border-box;background-image:none!important}
+.servers .server-icon.active{background-image:none!important;background-color:rgba(79,84,92,.72);color:#fff}
+.servers .server-icon img{display:block!important;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:cover;border:0;border-radius:inherit;position:absolute;inset:0;margin:0;padding:0;z-index:1}
+.servers .server-icon.active img{display:block!important}
+.servers .server-icon:not(:has(img)){background-image:none!important}
+.servers .server-icon.add{background-image:none!important}
