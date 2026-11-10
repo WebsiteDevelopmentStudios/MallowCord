@@ -49,12 +49,23 @@ async function loadMessages(){
  if(!channelId)return;
  try{
   const d=await api("/channels/"+channelId+"/messages"),box=$("#messages"),bottom=box.scrollHeight-box.scrollTop-box.clientHeight<90;
-  box.innerHTML=(d.messages||[]).map(m=>{
-   const reply=m.reply_to?'<div class="message-reply-preview">↪ Replying to <b>'+esc(m.reply_to.username)+'</b>: '+esc(m.reply_to.content)+'</div>':"";
-   const reactions=(m.reactions||[]).map(r=>'<button class="reaction-chip '+(r.mine?"mine":"")+'" data-message="'+m.id+'" data-emoji="'+esc(r.emoji)+'">'+(r.custom_url?'<img src="'+esc(r.custom_url)+'" alt="">':esc(r.emoji))+' <span>'+r.count+'</span></button>').join("");
-   return '<article class="message" data-message-id="'+m.id+'"><div class="avatar">'+(m.avatar_url?'<img src="'+esc(m.avatar_url)+'" alt="">':esc((m.username||"?")[0].toUpperCase()))+'</div><div class="message-body">'+reply+'<div class="message-head"><b>'+esc(m.username)+'</b><small>'+new Date(m.created_at*1000).toLocaleString()+(m.edited_at?' · edited':"")+'</small></div><div class="message-content">'+renderMarkdown(m.content)+'</div><div class="message-reactions">'+reactions+'</div></div></article>';
+  const messages=d.messages||[],groups=[];
+  for(const m of messages){
+   const last=groups[groups.length-1],same=last&&last.author_id===m.author_id&&last.username===m.username&&(m.created_at-last.lastTime)<=300;
+   if(same){last.items.push(m);last.lastTime=m.created_at}else groups.push({author_id:m.author_id,username:m.username,avatar_url:m.avatar_url,items:[m],lastTime:m.created_at});
+  }
+  box.innerHTML=groups.map(g=>{
+   const avatar=g.avatar_url?'<img src="'+esc(g.avatar_url)+'" alt="">':esc((g.username||"?")[0].toUpperCase());
+   const entries=g.items.map(m=>{
+    const reply=m.reply_to?'<div class="message-reply-preview">↪ Replying to <b>'+esc(m.reply_to.username)+'</b>: '+esc(m.reply_to.content)+'</div>':"";
+    const reactions=(m.reactions||[]).map(r=>'<button class="reaction-chip '+(r.mine?"mine":"")+'" data-message="'+m.id+'" data-emoji="'+esc(r.emoji)+'">'+(r.custom_url?'<img src="'+esc(r.custom_url)+'" alt="">':esc(r.emoji))+' <span>'+r.count+'</span></button>').join("");
+    const time=new Date(m.created_at*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+    return '<div class="message-entry" data-message-id="'+m.id+'">'+reply+'<div class="message-content">'+renderMarkdown(m.content)+'</div><small class="message-time-inline" title="'+new Date(m.created_at*1000).toLocaleString()+'">'+time+(m.edited_at?' · edited':"")+'</small><div class="message-reactions">'+reactions+'</div></div>';
+   }).join("");
+   const first=g.items[0],stamp=new Date(first.created_at*1000).toLocaleString();
+   return '<article class="message-group"><div class="avatar">'+avatar+'</div><div class="message-group-body"><div class="message-head"><b>'+esc(g.username)+'</b><small>'+stamp+'</small></div>'+entries+'</div></article>';
   }).join("");
-  box.querySelectorAll(".message").forEach(el=>{const m=(d.messages||[]).find(x=>x.id===el.dataset.messageId);el.addEventListener("contextmenu",e=>{e.preventDefault();openMessageMenu(m,e.clientX,e.clientY)})});
+  box.querySelectorAll(".message-entry").forEach(el=>{const m=messages.find(x=>x.id===el.dataset.messageId);el.addEventListener("contextmenu",e=>{e.preventDefault();openMessageMenu(m,e.clientX,e.clientY)})});
   if(bottom)box.scrollTop=box.scrollHeight;
  }catch(e){toast(e.message)}
 }
