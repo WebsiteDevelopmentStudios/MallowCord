@@ -30,7 +30,7 @@ const b=await body(req),name=String(b.username||"").trim(),pw=String(b.password|
 if(!/^[A-Za-z0-9_]{3,24}$/.test(name)||pw.length<12)return fail("Use a valid username and password of at least 12 characters.");
 const id2=uid(),t=now();try{await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'full',?,?,?)").bind(id2,name,name.toLowerCase(),await passwordHash(pw),t,t).run();}catch{return fail("That username is already taken.",409);}
 await joinSwamp(env,id2);await audit(env,ownerRow?.id,id2,"mallowbot_create_full_account");return json({user:{id:id2,username:name,account_type:"full"}},201);}
-let botMod=p.match(/^\\/api\\/integrations\\/mallowbot\\/users\\/([\\w-]+)\\/(timeout|ban|unban|delete)$/);
+const botParts=p.split("/");const botMatch=botParts.length===7&&botParts[1]==="api"&&botParts[2]==="integrations"&&botParts[3]==="mallowbot"&&botParts[4]==="users"&&["timeout","ban","unban","delete"].includes(botParts[6]);
 if(botMatch&&m==="POST"){
 if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
 const target=botParts[5],action=botParts[6],b=await body(req),ownerRow=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first();
