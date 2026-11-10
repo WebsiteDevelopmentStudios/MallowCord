@@ -602,3 +602,35 @@ body[data-theme="light"] .message-form button,body[data-theme="opposite"] .messa
 .mallowbot-member .avatar img{width:100%;height:100%;object-fit:cover;border-radius:inherit}
 .bot-tag{display:inline-block;vertical-align:2px;margin-left:5px;padding:2px 4px;border-radius:3px;background:#596574;color:#fff;font-size:9px;font-weight:800;letter-spacing:.35px}
 @media(max-width:620px){.messages{padding:12px 8px}.message-group{gap:9px;padding:7px 5px}.message-group>.avatar{width:34px;height:34px;flex-basis:34px}.message-time-inline{display:none!important}}
+
+
+/* Background image remains visible through the application, with a soft black tint. */
+body{
+ background:#111 var(--theme-background-image) center center/cover fixed no-repeat!important;
+ isolation:isolate;
+}
+body:before{
+ content:"";
+ position:fixed;
+ inset:0;
+ z-index:0;
+ pointer-events:none;
+ background:rgba(0,0,0,.48)!important;
+}
+#auth,#app{position:relative;z-index:1}
+body :is(.servers,.channels,.members,.workspace-head,.chat-head,.chat,.user-panel,.message-form,.account-settings-card,.account-settings-layout,.account-settings-nav,.account-settings-main,.account-panel,.message-context-menu,.emoji-picker,.workspace-head,.channel-list,.member-list){
+ background-color:rgba(12,14,17,.48)!important;
+ backdrop-filter:blur(8px);
+ -webkit-backdrop-filter:blur(8px);
+}
+body .servers{background-color:rgba(8,10,13,.58)!important}
+body .chat{background-color:rgba(8,10,13,.24)!important}
+body .channels,body .members{background-color:rgba(12,14,17,.42)!important}
+body .workspace-head,body .chat-head,body .user-panel,body .message-form{background-color:rgba(8,10,13,.38)!important}
+body .account-settings-main,body .account-settings-nav{background-color:rgba(12,14,17,.70)!important}
+.message-embed-link{display:block;width:fit-content;max-width:min(100%,560px);margin:7px 0}
+.message-embed{display:block;max-width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:rgba(0,0,0,.18)}
+.message-embed.gif-embed{max-height:460px}
+.message-link{color:var(--main-theme-hover);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
+.message-link:hover{filter:brightness(1.15)}
+@media(max-width:620px){.message-embed{max-height:300px}.message-embed.gif-embed{max-height:340px}}
