@@ -42,7 +42,7 @@ function renderMarkdown(raw){
 function closeMessageMenu(){$("#messageContextMenu")?.classList.add("hidden")}
 function openMessageMenu(message,x,y){
  contextMessage=message;const menu=$("#messageContextMenu");
- menu.innerHTML='<button data-action="reply">↩ Reply</button><div class="context-label">Add reaction</div><div class="context-emojis">'+["👍","❤️","😂","🎉","👀","🔥","😭","💀"].map(e=>'<button data-action="react" data-emoji="'+e+'">'+e+'</button>').join("")+'</div>'+(message.author_id===me.id?'<button data-action="edit">✎ Edit message</button><button class="context-danger" data-action="delete">Delete message</button>':'')+'<button data-action="copy">Copy text</button><button data-action="copy-id">Copy message ID</button>';
+ menu.innerHTML='<button data-action="reply">↩ Reply</button><div class="context-label">Add reaction</div><div class="context-emojis">'+["👍","❤️","😂","🎉","👀","🔥","😭","💀"].map(e=>'<button data-action="react" data-emoji="'+e+'">'+e+'</button>').join("")+serverEmojis.map(e=>'<button data-action="react" data-emoji="custom:'+e.id+'" title=":'+esc(e.name)+':"><img src="'+esc(e.image_url)+'" alt="'+esc(e.name)+'"></button>').join("")+'</div>'+(message.author_id===me.id?'<button data-action="edit">✎ Edit message</button><button class="context-danger" data-action="delete">Delete message</button>':'')+'<button data-action="copy">Copy text</button><button data-action="copy-id">Copy message ID</button>';
  menu.classList.remove("hidden");const rect=menu.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(x,innerWidth-rect.width-8))+"px";menu.style.top=Math.max(8,Math.min(y,innerHeight-rect.height-8))+"px";
 }
 async function loadMessages(){
