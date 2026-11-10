@@ -22,9 +22,17 @@ function renderMarkdown(raw){
  return parts.map(part=>{
   if(part.startsWith(tick.repeat(3))&&part.endsWith(tick.repeat(3))){const body=part.slice(3,-3).replace(/^[a-zA-Z0-9_-]+\n/,"");return "<pre><code>"+esc(body)+"</code></pre>"}
   let safe=esc(part);
+  safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>x.name===name);return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
+  safe=safe.replace(/https:\/\/[^\s<>"']+/gi,url=>{
+   const clean=url.replace(/[),.!?]+$/,""),tail=url.slice(clean.length),lower=clean.toLowerCase();
+   if(/\.(gif|png|jpe?g|webp)(\?.*)?$/i.test(lower)){
+    const type=/\.gif(\?.*)?$/i.test(lower)?"gif":"image";
+    return '<a class="message-embed-link" href="'+clean+'" target="_blank" rel="noopener noreferrer"><img class="message-embed '+type+'-embed" src="'+clean+'" alt="'+(type==="gif"?"GIF":"Image")+'" loading="lazy"></a>'+tail;
+   }
+   return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a>'+tail;
+  });
   safe=safe.replace(/\x60([^\x60\n]+)\x60/g,"<code>$1</code>");
   safe=safe.replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>");
-  safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>x.name===name);return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
   safe=safe.replace(/__([^_\n]+)__/g,"<u>$1</u>");
   safe=safe.replace(/~~([^~\n]+)~~/g,"<del>$1</del>");
   safe=safe.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");
