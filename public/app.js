@@ -31,7 +31,7 @@ function renderMarkdown(raw){
    }
    return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a>'+tail;
   });
-  const mentionItems=[...(mentionDirectory.roles||[]).filter(r=>r.pingable!==0).sort((x,y)=>y.name.length-x.name.length).map(r=>({name:r.name,type:"role"})),...(mentionDirectory.users||[]).sort((x,y)=>y.username.length-x.username.length).map(u=>({name:u.username,type:"user"}))];
+  const mentionItems=[...(mentionDirectory.roles||[]).filter(r=>r.pingable!==0).sort((x,y)=>y.name.length-x.name.length).map(r=>({name:r.name.startsWith("@")?r.name:"@"+r.name,type:"role"})),...(mentionDirectory.users||[]).sort((x,y)=>y.username.length-x.username.length).map(u=>({name:u.username,type:"user"}))];
   for(const item of mentionItems){const token="@"+item.name;safe=safe.replace(new RegExp("(^|[^A-Za-z0-9_])("+token+")(?![A-Za-z0-9_])","gi"),(all,prefix,value)=>prefix+'<span class="mention mention-'+item.type+'">'+value+"</span>");}
   safe=safe.replace(/\x60([^\x60\n]+)\x60/g,"<code>$1</code>");
   safe=safe.replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>");
