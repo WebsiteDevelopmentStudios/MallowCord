@@ -268,7 +268,26 @@ function applyProfile(){
  const name=accountProfile.display_name||me.username;$("#currentUsername").textContent=name;
  const avatar=$("#userAvatar");avatar.innerHTML=accountProfile.avatar_url?'<img src="'+esc(accountProfile.avatar_url)+'" alt="">':esc(name[0].toUpperCase());
 }
-function applyCustomCss(source){const css=String(source||"");if(css.length>50000)throw Error("Custom CSS must be 50 KB or smaller.");if(/@import|expression\s*\(|javascript\s*:|behavior\s*:|-moz-binding|<\/style/i.test(css))throw Error("This CSS contains a blocked import or unsafe construct.");let style=document.getElementById("mallowcord-custom-css");if(!style){style=document.createElement("style");style.id="mallowcord-custom-css";document.head.append(style)}style.textContent=css}
+function applyCustomCss(source){
+ let css=String(source||"");
+ if(css.length>50000)throw Error("Custom CSS must be 50 KB or smaller.");
+ const allowedImport="https://puckzxz.github.io/NotAnotherAnimeTheme/build/v3/naat.v3.css";
+ let imported=null;
+ css=css.replace(/@import\s+(?:url\(\s*)?(['"]?)(https:\/\/[^'")\s;]+)\1\s*\)?\s*;/gi,(all,q,url)=>{
+  if(url!==allowedImport)throw Error("Only the supplied NotAnotherAnimeTheme stylesheet is allowed as an external import.");
+  if(imported&&imported!==url)throw Error("Only one external theme stylesheet can be imported.");
+  imported=url;return "";
+ });
+ if(/@import/i.test(css)||/expression\s*\(|javascript\s*:|behavior\s*:|-moz-binding|<\/style/i.test(css))throw Error("This CSS contains an unsupported or unsafe construct.");
+ let link=document.getElementById("mallowcord-approved-theme-import");
+ if(imported){
+  if(!link){link=document.createElement("link");link.id="mallowcord-approved-theme-import";link.rel="stylesheet";document.head.append(link)}
+  if(link.href!==imported)link.href=imported;
+ }else link?.remove();
+ let style=document.getElementById("mallowcord-custom-css");
+ if(!style){style=document.createElement("style");style.id="mallowcord-custom-css";document.head.append(style)}
+ style.textContent=css;
+}
 function applyPreferences(){const theme=accountPreferences.appearance?.theme||"dark";document.body.dataset.theme=theme;document.body.classList.toggle("reduced-motion",!!accountPreferences.accessibility?.reducedMotion);document.body.classList.toggle("high-contrast",!!accountPreferences.accessibility?.highContrast);document.documentElement.style.setProperty("--account-font-scale",accountPreferences.appearance?.fontScale||"100%");try{applyCustomCss(accountPreferences.appearance?.customCss||"")}catch(e){console.warn("Custom CSS:",e.message)}}
 document.querySelectorAll(".account-nav").forEach(b=>b.onclick=()=>showAccountPage(b.dataset.page));
 $("#settingsBtn").onclick=openAccountSettings;
