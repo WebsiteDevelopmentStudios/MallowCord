@@ -162,8 +162,48 @@ if(x&&m==="POST"){
  return json({channel:{id,name,kind,position}},201);
 }
 
-x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot view this channel.",403);const a=await env.DB.prepare("SELECT m.id,m.content,m.created_at,u.username,u.id AS author_id FROM messages m JOIN users u ON u.id=m.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(x[1]).all();return json({messages:a.results.reverse()});}
-if(x&&m==="POST"){const content=String((await body(req)).content||"").trim();if(!content||content.length>4000)return fail("Message must be 1–4000 characters.");const mem=await env.DB.prepare("SELECT 1 FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot send messages here.",403);const mid=uid(),t=now();await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(mid,x[1],u.id,content,t).run();return json({message:{id:mid,content,created_at:t,username:u.username,author_id:u.id}},201);}
+
+/* Message replies, reactions, edits and deletes */
+async function ensureMessageExtras(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_replies(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,reply_to_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_reactions(message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,emoji TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(message_id,user_id,emoji))").run();
+}
+const messageAction=p.match(/^\/api\/messages\/([\w-]+)(?:\/(edit|reactions))?$/);
+if(messageAction){
+ const mid=messageAction[1],action=messageAction[2]||"";
+ const row=await env.DB.prepare("SELECT m.id,m.channel_id,m.author_id,c.server_id FROM messages m JOIN channels c ON c.id=m.channel_id WHERE m.id=?").bind(mid).first();
+ if(!row)return fail("Message not found.",404);
+ const member=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(row.server_id,u.id).first();
+ if(!member)return fail("You cannot access this message.",403);
+ await ensureMessageExtras(env);
+ if(action==="edit"&&m==="POST"){
+  if(row.author_id!==u.id)return fail("You can only edit your own messages.",403);
+  const content=String((await body(req)).content||"").trim();
+  if(!content||content.length>4000)return fail("Message must be 1–4000 characters.");
+  await env.DB.prepare("UPDATE messages SET content=?,edited_at=? WHERE id=?").bind(content,now(),mid).run();return json({ok:true});
+ }
+ if(action==="reactions"&&m==="POST"){
+  const emoji=String((await body(req)).emoji||"");
+  if(!["👍","❤️","😂","🎉","👀","🔥","😭","💀","😮","😢","👏","✅"].includes(emoji))return fail("That reaction is not supported.");
+  const exists=await env.DB.prepare("SELECT 1 FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?").bind(mid,u.id,emoji).first();
+  if(exists)await env.DB.prepare("DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?").bind(mid,u.id,emoji).run();
+  else await env.DB.prepare("INSERT INTO message_reactions(message_id,user_id,emoji,created_at) VALUES(?,?,?,?)").bind(mid,u.id,emoji,now()).run();
+  return json({ok:true,added:!exists});
+ }
+ if(!action&&m==="DELETE"){
+  if(row.author_id!==u.id&&!isOwner(u))return fail("You can only delete your own messages.",403);
+  await env.DB.prepare("DELETE FROM messages WHERE id=?").bind(mid).run();return json({ok:true});
+ }
+}
+
+x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot view this channel.",403);await ensureMessageExtras(env);
+const a=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,u.username,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(x[1]).all();
+const results=await Promise.all(a.results.reverse().map(async msg=>{
+ const rr=await env.DB.prepare("SELECT emoji,COUNT(*) AS count,MAX(CASE WHEN user_id=? THEN 1 ELSE 0 END) AS mine FROM message_reactions WHERE message_id=? GROUP BY emoji").bind(u.id,msg.id).all();
+ return {...msg,reply_to:msg.reply_to_id?{username:msg.reply_username,content:msg.reply_content}:null,reactions:rr.results};
+}));
+return json({messages:results});}
+if(x&&m==="POST"){const b=await body(req),content=String(b.content||"").trim();if(!content||content.length>4000)return fail("Message must be 1–4000 characters.");const mem=await env.DB.prepare("SELECT 1 FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot send messages here.",403);const mid=uid(),t=now();await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(mid,x[1],u.id,content,t).run();if(b.reply_to_id){const parent=await env.DB.prepare("SELECT id FROM messages WHERE id=? AND channel_id=?").bind(String(b.reply_to_id),x[1]).first();if(parent){await ensureMessageExtras(env);await env.DB.prepare("INSERT INTO message_replies(message_id,reply_to_id) VALUES(?,?)").bind(mid,parent.id).run();}}return json({message:{id:mid,content,created_at:t,username:u.username,author_id:u.id}},201);}
 if(p==="/api/integrations/mallowbot/users"&&(m==="GET"||m==="POST")){if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);const ownerRow=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first();if(m==="GET"){const a=await env.DB.prepare("SELECT id,username,account_type,status,timeout_until,created_at FROM users ORDER BY created_at DESC LIMIT 500").all();return json({users:a.results});}const b=await body(req),name=String(b.username||"").trim(),pw=String(b.password||"");if(!/^[A-Za-z0-9_]{3,24}$/.test(name)||pw.length<12)return fail("Use a valid username and password of at least 12 characters.");const id2=uid(),t=now();try{await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'full',?,?,?)").bind(id2,name,name.toLowerCase(),await passwordHash(pw),t,t).run();}catch{return fail("That username is already taken.",409);}await joinSwamp(env,id2);await audit(env,ownerRow?.id,id2,"mallowbot_create_full_account");return json({user:{id:id2,username:name,account_type:"full"}},201);}
 let integrationMod=p.match(/^\/api\/integrations\/mallowbot\/users\/([\w-]+)\/(timeout|ban|unban|delete)$/);if(integrationMod&&m==="POST"){if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);const target=integrationMod[1],action=integrationMod[2],b=await body(req),ownerRow=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first();if(!ownerRow)return fail("Owner not initialized.",503);if(action==="timeout"){const secs=Math.max(60,Math.min(2592000,Number(b.seconds)||600));await env.DB.prepare("UPDATE users SET status='timed_out',timeout_until=?,updated_at=? WHERE id=?").bind(now()+secs,now(),target).run();}if(action==="ban")await env.DB.prepare("UPDATE users SET status='banned',updated_at=? WHERE id=?").bind(now(),target).run();if(action==="unban")await env.DB.prepare("UPDATE users SET status='active',timeout_until=NULL,updated_at=? WHERE id=?").bind(now(),target).run();if(action==="delete")await env.DB.prepare("DELETE FROM users WHERE id=?").bind(target).run();if(action==="ban"||action==="delete")await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(target).run();await audit(env,ownerRow.id,target,"mallowbot_"+action,JSON.stringify(b));return json({ok:true});}
 if(p==="/api/admin/users"&&m==="GET"){if(!isOwner(u))return fail("Owner access required.",403);const a=await env.DB.prepare("SELECT id,username,account_type,status,timeout_until,created_at FROM users ORDER BY created_at DESC LIMIT 500").all();return json({users:a.results});}
