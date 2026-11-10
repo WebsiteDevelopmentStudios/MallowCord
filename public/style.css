@@ -196,3 +196,64 @@ input:disabled,textarea:disabled,select:disabled{opacity:.55;cursor:not-allowed}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+
+/* Server controls, settings dashboard and onboarding */
+.workspace-head{width:100%;border:0;text-align:left;cursor:pointer;font:inherit}
+.workspace-head:hover{background:rgba(255,255,255,.07)}
+.channel-heading{display:flex;align-items:center;justify-content:space-between;padding-right:12px}
+.channel-heading .section-label{padding-bottom:10px}
+.icon-button{width:27px;height:27px;border:0;border-radius:5px;background:transparent;color:var(--text-muted);font-size:21px;line-height:1}
+.icon-button:hover{background:rgba(255,255,255,.1);color:var(--main-theme-color)}
+.channel{display:flex;align-items:center;gap:7px;width:calc(100% - 16px);border:0;background:transparent;text-align:left;font:inherit}
+.channel-kind{display:inline-block;width:18px;color:var(--text-faint);font-size:15px;text-align:center}
+.channel.active .channel-kind,.channel:hover .channel-kind{color:var(--main-theme-color)}
+.empty-state,.settings-loading{padding:18px;color:var(--text-muted);font-size:13px}
+.server-settings-card{width:min(100%,760px)}
+.settings-subtitle{margin:-8px 0 18px;color:var(--text-muted);font-size:13px}
+.settings-tabs{display:flex;gap:5px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:18px}
+.settings-tab{border:0;border-radius:5px;background:transparent;color:var(--text-muted);padding:9px 12px}
+.settings-tab:hover,.settings-tab.active{background:rgba(255,255,255,.1);color:#fff}
+.settings-tab.active{box-shadow:inset 0 -2px var(--main-theme-color)}
+.settings-content{min-height:180px;max-height:58vh;overflow:auto;padding:2px 3px 8px}
+.settings-form{max-width:560px}
+.settings-form label{display:grid;gap:8px;margin:14px 0;color:var(--text);font-size:13px;font-weight:700}
+.settings-form textarea{resize:vertical;line-height:1.5}
+.settings-form input[type=checkbox]{width:18px;height:18px;accent-color:var(--main-theme-color)}
+.settings-form .toggle-line{display:flex;align-items:center;gap:10px}
+.settings-save{max-width:220px}
+.settings-note{color:var(--text-muted);font-size:12px;line-height:1.5}
+.settings-error{color:#ff777e;padding:12px}
+.stats-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.stat-card{padding:18px;background:rgba(0,0,0,.32);border:1px solid var(--line);border-radius:7px;display:grid;gap:8px}
+.stat-card small{color:var(--text-muted);font-size:12px}
+.stat-card strong{font-size:27px;color:#fff}
+.settings-list{display:grid;gap:8px}
+.settings-list-row,.member-setting{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;background:rgba(0,0,0,.24);border:1px solid var(--line);border-radius:6px}
+.settings-list-row b,.member-setting b{color:#fff}
+.settings-list-row small,.member-setting small{display:block;color:var(--text-muted);font-size:11px;margin-top:4px}
+.row-actions,.member-role-control{display:flex;align-items:center;gap:7px}
+.row-actions button,.member-role-control button{width:auto;margin:0;padding:8px 11px;font-size:12px}
+.danger-small{border:0;border-radius:5px;background:#8f2931;color:#fff;padding:8px 11px}
+.inline-create{display:flex;gap:8px;margin-bottom:14px}
+.inline-create input{flex:1}
+.inline-create .primary{width:auto;margin:0}
+.member-setting{align-items:flex-start}
+.member-setting-main{min-width:0;flex:1}
+.member-role-control{min-width:190px}
+.member-role-control select{padding:8px;font-size:12px}
+.voice-room-notice{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px}
+.voice-room-notice h2{color:#fff;margin:14px 0 5px}
+.voice-room-notice p{color:var(--text-muted);max-width:380px;line-height:1.5}
+.voice-room-symbol{width:76px;height:76px;display:grid;place-items:center;border-radius:50%;background:rgba(67,181,129,.16);color:var(--main-theme-color);font-size:30px}
+.onboarding-card h2{color:#fff;margin-top:4px}
+.onboarding-card h3{margin:22px 0 8px;color:#fff}
+.onboarding-copy{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;color:var(--text-muted);padding:14px;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:6px}
+@media(max-width:700px){
+ .settings-tabs{overflow-x:auto;flex-wrap:nowrap}
+ .settings-tab{white-space:nowrap}
+ .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .settings-list-row,.member-setting{align-items:stretch;flex-direction:column}
+ .member-role-control{min-width:0}
+ .inline-create{flex-direction:column}
+ .inline-create .primary{width:100%}
+}
