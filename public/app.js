@@ -1,5 +1,5 @@
-const $=s=>document.querySelector(s);let me=null,serverId=null,channelId=null,poll=null;
-async function api(path,opts={}){const r=await fetch("/api"+path,{credentials:"same-origin",headers:{"content-type":"application/json",...(opts.headers||{})},...opts});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Request failed");return d}
+const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";const $=s=>document.querySelector(s);let me=null,serverId=null,channelId=null,poll=null;
+async function api(path,opts={}){const r=await fetch(API_BASE+path,{credentials:"include",headers:{"content-type":"application/json",...(opts.headers||{})},...opts});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Request failed");return d}
 function toast(s){const t=$("#toast");t.textContent=s;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600)}
 function status(s){$("#authStatus").textContent=s}
 function revealCode(c){$("#recoveryCode").textContent=c;$("#recoveryBox").classList.remove("hidden")}
