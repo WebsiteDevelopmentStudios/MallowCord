@@ -65,7 +65,9 @@ if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
   return json({profile:profile||{display_name:null,avatar_url:null,email:null,email_verified_at:null,phone:null,phone_verified_at:null},username:u.username,account_type:u.account_type});
  }
  const b=await body(req),display=String(b.display_name||"").trim().slice(0,32),avatar=String(b.avatar_url||"").trim();
- if(avatar&&(!/^https:\/\/[^\s]+$/i.test(avatar)||avatar.length>1000))return fail("Avatar must be a valid HTTPS image URL.");
+ const isUploadedAvatar=/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(avatar)&&avatar.length<=700000;
+ const isRemoteAvatar=/^https:\/\/[^\s]+$/i.test(avatar)&&avatar.length<=1000;
+ if(avatar&&!isUploadedAvatar&&!isRemoteAvatar)return fail("Avatar must be an HTTPS image URL or a cropped JPEG image under 500 KB.");
  await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at").bind(u.id,display||null,avatar||null,now()).run();
  return json({ok:true,display_name:display||null,avatar_url:avatar||null});
 }
