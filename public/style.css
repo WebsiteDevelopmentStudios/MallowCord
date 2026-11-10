@@ -660,3 +660,14 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .channel-category-label{padding:12px 8px 5px;color:var(--text-faint);font-size:10px;font-weight:800;letter-spacing:.08em;}
 
 .unread-count{margin-left:auto;min-width:19px;height:19px;padding:0 5px;border-radius:10px;background:#d83c45;color:#fff!important;font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;line-height:1}.channel.has-unread{color:var(--text)!important;font-weight:750}.server-unread-count{position:absolute;right:-5px;bottom:-4px;z-index:5;min-width:19px;height:19px;padding:0 4px;border:2px solid #17191d;border-radius:12px;background:#d83c45;color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;line-height:1}.message-entry.is-mentioned,.message-entry.is-reply-to-you{margin:3px -9px;padding:5px 9px 6px;border-radius:4px;background:rgba(216,60,69,.105);border-left:3px solid #d83c45}.message-entry.is-mentioned:before{content:"Mentioned you";display:block;margin:0 0 3px;color:#e56a72;font-size:10px;font-weight:750}.message-entry.is-reply-to-you:before{content:"Replied to you";display:block;margin:0 0 3px;color:#e56a72;font-size:10px;font-weight:750}
+
+/* Discord-synced channel list */
+.channel-category-label{display:flex;align-items:center;gap:6px;padding:16px 8px 6px;color:var(--text-faint);font-size:10px;font-weight:800;letter-spacing:.08em;line-height:1.2;user-select:none}
+.channel-category-chevron{font-size:13px;color:var(--text-muted);transform:translateY(-1px)}
+.channel{display:flex;align-items:center;gap:7px;width:100%;min-width:0;text-align:left}
+.channel-kind{color:var(--text-muted);font-size:19px;font-weight:500;line-height:1}
+.channel-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.discord-channel-mark{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:4px;background:rgba(88,101,242,.12);color:#8794f5;font-size:8px;font-weight:900;line-height:1;opacity:.8}
+.discord-linked-channel:hover .discord-channel-mark,.discord-linked-channel.active .discord-channel-mark{opacity:1;background:rgba(88,101,242,.2)}
+.message-embed{display:block;max-width:min(520px,100%);max-height:360px;object-fit:contain;border-radius:7px;margin:6px 0}
+.message-embed-link{display:inline-block;max-width:100%}
