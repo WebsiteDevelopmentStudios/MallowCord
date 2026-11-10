@@ -28,7 +28,7 @@ const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
 if(discordBridgePath){
  if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
  const expectedGuild="1560367587542433812";
- const system=await env.DB.prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
+ await ensureAccountTables(env);const system=await env.DB.prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(!system)return fail("Mallow Swamp has not been initialized.",503);
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
@@ -49,7 +49,7 @@ if(discordBridgePath){
    let cid=existing?.mallow_channel_id;
    if(!cid){const same=await env.DB.prepare("SELECT id FROM channels WHERE server_id=? AND name=? AND kind='text'").bind(system.id,raw).first();cid=same?.id;}
    if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind='text',position=? WHERE id=? AND server_id=?").bind(raw,Number(ch.position)||0,cid,system.id).run();
-   else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?,?)".replace("?,?)","?)")).bind(cid,system.id,raw,Number(ch.position)||0).run();}
+   else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?)").bind(cid,system.id,raw,Number(ch.position)||0).run();}
    await env.DB.prepare("INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET mallow_channel_id=excluded.mallow_channel_id,category_name=excluded.category_name,updated_at=excluded.updated_at").bind(dcid,system.id,cid,String(ch.category||"").slice(0,100)||null,now()).run();
    channelMap.push({discord_id:dcid,mallow_id:cid,name:raw});
   }
