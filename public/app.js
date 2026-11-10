@@ -12,7 +12,7 @@ $("#loginForm").addEventListener("submit",async e=>{e.preventDefault();const for
 $("#recoverForm").onsubmit=async e=>{e.preventDefault();try{const d=await api("/auth/recover",{method:"POST",body:JSON.stringify({username:e.target.username.value,recovery_code:e.target.recovery_code.value})});me=d.user;revealCode(d.recovery_code);status("Device recovered. Save your new recovery code, then select Continue.")}catch(x){status(x.message)}};
 $("#copyRecovery").onclick=async()=>{try{await navigator.clipboard.writeText($("#recoveryCode").textContent);toast("Recovery code copied")}catch{status("Clipboard access was blocked. Select and copy the code manually.")}};
 $("#continueRecovery").onclick=()=>enterApp();
-async function enterApp(){try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";$("#addServer").style.display=me.account_type==="basic"?"none":"grid";await loadServers()}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
+async function enterApp(){try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";$("#addServer").style.display=me.account_type==="basic"?"none":"grid";await loadServers();try{const p=await api("/account/profile"),s=await api("/account/preferences");accountProfile=p.profile||{};accountPreferences={...preferenceDefaults,...s.settings};for(const k of Object.keys(preferenceDefaults))accountPreferences[k]={...preferenceDefaults[k],...(s.settings?.[k]||{})};applyProfile();applyPreferences()}catch(e){console.warn("Account preferences:",e.message)}}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
 async function loadServers(){const d=await api("/servers");const list=d.servers||[];const rail=document.querySelector(".servers");rail.innerHTML="";for(const s of list){const b=document.createElement("button");b.type="button";b.className="server-icon"+(s.id===serverId?" active":"");b.title=s.name;b.dataset.serverId=s.id;b.textContent=(s.name||"?")[0].toUpperCase();if(s.icon_url){const im=document.createElement("img");im.src=s.icon_url;im.alt=s.name;im.onerror=()=>im.remove();b.textContent="";b.append(im)}b.onclick=()=>selectServer(s);rail.append(b)}const divider=document.createElement("div");divider.className="server-divider";rail.append(divider);const add=document.createElement("button");add.id="addServer";add.type="button";add.className="server-icon add";add.title="Create server";add.textContent="+";add.style.display=me.account_type==="basic"?"none":"grid";add.onclick=createServer;rail.append(add);if(!list.length){toast("You have not joined a server yet.");return}const selected=list.find(x=>x.id===serverId)||list.find(x=>x.is_system)||list[0];await selectServer(selected)}
 async function selectServer(s){serverId=s.id;currentServer=s;channelId=null;currentChannel=null;$("#workspaceName").textContent=s.name;$("#channelTitle").textContent="Select a channel";$("#messages").innerHTML="";$("#channelList").innerHTML="";document.querySelectorAll(".server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===s.id));try{const meta=await api("/servers/"+serverId+"/settings");canManageServer=!!meta.can_manage}catch{canManageServer=false}$("#createChannelBtn").style.display=canManageServer?"grid":"none";await loadChannels();checkOnboarding().catch(e=>console.warn("Onboarding:",e))}
 async function loadChannels(){const d=await api("/servers/"+serverId+"/channels");const box=$("#channelList");box.innerHTML="";if(!d.channels.length){box.innerHTML='<div class="empty-state">No channels yet.</div>';return}d.channels.forEach(c=>{const el=document.createElement("button");el.type="button";el.className="channel";el.dataset.id=c.id;el.innerHTML='<span class="channel-kind">'+(c.kind==="voice"?"◖))":"#")+'</span>'+esc(c.name);el.onclick=()=>selectChannel(c);box.append(el)});if(d.channels[0])selectChannel(d.channels[0])}
@@ -101,9 +101,116 @@ if(f.id==="onboardingSettingsForm"){try{await api("/servers/"+serverId+"/onboard
 $("#serverSettingsContent").addEventListener("click",async e=>{const edit=e.target.closest(".edit-role"),del=e.target.closest(".delete-role"),assign=e.target.closest(".assign-role");if(edit){const role=serverRoles.find(r=>r.id===edit.dataset.id),name=prompt("Rename role",role?.name||"");if(!name)return;try{await api("/servers/"+serverId+"/roles/"+edit.dataset.id,{method:"POST",body:JSON.stringify({name})});toast("Role renamed.");openServerSettings("roles")}catch(x){toast(x.message)}}if(del){if(!confirm("Delete this role? Members will lose it."))return;try{await api("/servers/"+serverId+"/roles/"+del.dataset.id,{method:"DELETE"});toast("Role deleted.");openServerSettings("roles")}catch(x){toast(x.message)}}if(assign){const sel=$("#serverSettingsContent .member-role-select[data-user='"+assign.dataset.user+"']");if(!sel?.value)return;try{await api("/servers/"+serverId+"/members/"+assign.dataset.user+"/roles",{method:"POST",body:JSON.stringify({role_id:sel.value})});toast("Role assigned.");openServerSettings("members")}catch(x){toast(x.message)}}});
 async function checkOnboarding(){if(!serverId)return;const d=await api("/servers/"+serverId+"/onboarding");if(!d.config.enabled||d.completed)return;$("#onboardingTitle").textContent="Welcome to "+(currentServer?.name||"the server");$("#onboardingWelcome").textContent=d.config.welcome_text||"Welcome!";$("#onboardingRules").textContent=d.config.rules_text||"Please be respectful.";$("#onboardingModal").classList.remove("hidden")}
 $("#finishOnboarding").onclick=async()=>{try{await api("/servers/"+serverId+"/onboarding",{method:"POST",body:JSON.stringify({complete:true})});$("#onboardingModal").classList.add("hidden");toast("You're all set.")}catch(e){toast(e.message)}};
-$("#settingsBtn").onclick=()=>{$("#modal").classList.remove("hidden");$("#usernameForm").username.value=me.username};
+
+let accountProfile={},accountPreferences={},activeAccountPage="account-info";
+const preferenceDefaults={
+ privacy:{showOnlineStatus:true,showProfile:true,allowAnalytics:false,personalizedActivity:false},
+ messaging:{allowMessagesFrom:"members",allowFriendRequests:true,readReceipts:true},
+ notifications:{desktopNotifications:true,messageSounds:true,mentionsOnly:false,emailNotifications:false},
+ voice:{inputMode:"voice_activity",noiseSuppression:true,echoCancellation:true,autoGainControl:true},
+ appearance:{theme:"dark",compactMode:false,showAvatars:true,fontScale:"100%"},
+ accessibility:{reducedMotion:false,highContrast:false,largerText:false,screenReaderLabels:true},
+ system:{spellcheck:true,hardwareAcceleration:true,confirmBeforeClosing:true},
+ language:{language:"English (US)",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC",dateFormat:"MM/DD/YYYY"},
+ games:{showRegisteredGames:true,shareGameActivity:false},
+ activity:{shareCurrentActivity:false,showRecentActivity:false},
+ clips:{saveClips:false,clipQuality:"1080p"},
+ overlay:{enableOverlay:false,overlayPosition:"top-right"}
+};
+const accountPageMeta={
+ "account-info":["Account Info","Change your username, display name, profile picture and contact details."],
+ security:["Password & Security","Manage sign-in security, passwords and recovery."],
+ status:["Account Status","Review the current standing and details of your account."],
+ family:["Family Center","Family safety and supervision tools."],
+ privacy:["Data & Privacy","Control profile visibility and how MallowCord uses your information."],
+ messaging:["Messaging Permissions","Choose who can message you and how conversations behave."],
+ notifications:["Notifications","Manage alerts, sounds and notification preferences."],
+ voice:["Voice & Video","Configure voice preferences for supported voice rooms."],
+ appearance:["Appearance","Customize the look and feel of MallowCord."],
+ accessibility:["Accessibility","Adjust motion, contrast and reading preferences."],
+ system:["System","Configure browser and application behavior."],
+ language:["Language & Time","Choose your display language, timezone and date format."],
+ games:["Registered Games","Manage games associated with your MallowCord account."],
+ activity:["Activity Privacy","Control whether your activity is visible to others."],
+ clips:["Clips","Manage game clip preferences."],
+ overlay:["Game Overlay","Configure the in-game overlay when supported."],
+ apps:["Connected Apps","Review third-party connections to your account."]
+};
+async function openAccountSettings(){
+ $("#modal").classList.remove("hidden");
+ $("#accountSettingsContent").innerHTML='<div class="settings-loading">Loading account settings…</div>';
+ try{
+  const [p,s]=await Promise.all([api("/account/profile"),api("/account/preferences")]);
+  accountProfile=p.profile||{};accountPreferences={...preferenceDefaults,...(s.settings||{})};
+  for(const k of Object.keys(preferenceDefaults))accountPreferences[k]={...preferenceDefaults[k],...(s.settings?.[k]||{})};
+  await showAccountPage("account-info");
+ }catch(e){$("#accountSettingsContent").innerHTML='<div class="settings-error">'+esc(e.message)+'</div>'}
+}
+function settingField(label,key,type="checkbox",options=[]){
+ const value=accountPreferences[activeAccountPage]?.[key];
+ if(type==="select")return '<label class="account-field">'+esc(label)+'<select data-pref="'+key+'">'+options.map(o=>'<option value="'+esc(o[0])+'" '+(String(value)===o[0]?"selected":"")+'>'+esc(o[1])+'</option>').join("")+'</select></label>';
+ return '<label class="account-toggle"><span>'+esc(label)+'</span><input type="checkbox" data-pref="'+key+'" '+(value?"checked":"")+'></label>';
+}
+function prefPage(key,fields,note="Changes are saved to your MallowCord account."){
+ return '<div class="account-panel"><p class="account-note">'+esc(note)+'</p><div class="account-fields">'+fields.join("")+'</div><button class="primary account-save" id="savePreferences">Save changes</button></div>';
+}
+async function showAccountPage(page){
+ activeAccountPage=page;document.querySelectorAll(".account-nav").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
+ const meta=accountPageMeta[page]||["Settings","Manage your preferences."];
+ $("#accountPageTitle").textContent=meta[0];$("#accountPageDescription").textContent=meta[1];
+ const root=$("#accountSettingsContent");
+ if(page==="account-info"){
+  const p=accountProfile,verifiedEmail=!!p.email_verified_at,verifiedPhone=!!p.phone_verified_at;
+  root.innerHTML='<div class="account-panel"><h3>Profile</h3><form id="profileSettingsForm" class="account-form"><label>Username<div class="inline-field"><input name="username" value="'+esc(me.username)+'" minlength="3" maxlength="24" required><button class="secondary" type="button" id="saveUsername">Save</button></div></label><label>Display name<input name="display_name" maxlength="32" value="'+esc(p.display_name||"")+'" placeholder="How others see you"></label><label>Profile picture URL<input name="avatar_url" type="url" value="'+esc(p.avatar_url||"")+'" placeholder="https://example.com/avatar.png"></label><div class="account-avatar-preview">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="Profile preview">':'<span>'+esc((p.display_name||me.username)[0].toUpperCase())+'</span>')+'</div><button class="primary">Save profile</button></form></div><div class="account-panel"><h3>Email verification</h3><p class="account-note">Add an email address and verify it with a one-time code.</p><form id="emailVerifyForm" class="account-form"><label>Email address<input name="value" type="email" value="'+esc(p.email||"")+'" placeholder="you@example.com" required></label><div class="verification-state '+(verifiedEmail?"verified":"")+'">'+(verifiedEmail?"Verified":"Not verified")+'</div><button class="secondary">Send verification code</button></form><form id="emailConfirmForm" class="account-form verify-code-form"><label>Six-digit email code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></label><button class="primary">Confirm email</button></form></div><div class="account-panel"><h3>Phone verification</h3><p class="account-note">Use international format, including the country code (for example +12065550123).</p><form id="phoneVerifyForm" class="account-form"><label>Phone number<input name="value" type="tel" value="'+esc(p.phone||"")+'" placeholder="+12065550123" required></label><div class="verification-state '+(verifiedPhone?"verified":"")+'">'+(verifiedPhone?"Verified":"Not verified")+'</div><button class="secondary">Send SMS code</button></form><form id="phoneConfirmForm" class="account-form verify-code-form"><label>Six-digit SMS code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></label><button class="primary">Confirm phone</button></form></div>';
+  $("#profileSettingsForm").onsubmit=async e=>{e.preventDefault();try{const d=new FormData(e.target);await api("/account/profile",{method:"POST",body:JSON.stringify({display_name:d.get("display_name"),avatar_url:d.get("avatar_url")})});accountProfile=(await api("/account/profile")).profile;applyProfile();toast("Profile updated");showAccountPage("account-info")}catch(x){toast(x.message)}};
+  $("#saveUsername").onclick=async()=>{const val=$("#profileSettingsForm").username.value;try{const d=await api("/auth/username",{method:"POST",body:JSON.stringify({username:val})});me.username=d.username;$("#currentUsername").textContent=me.username;toast("Username updated")}catch(x){toast(x.message)}};
+  for(const [form,channel] of [["emailVerifyForm","email"],["phoneVerifyForm","phone"]])$("#"+form).onsubmit=async e=>{e.preventDefault();try{const value=new FormData(e.target).get("value");await api("/account/contact/request",{method:"POST",body:JSON.stringify({channel,value})});accountProfile=(await api("/account/profile")).profile;toast("Verification code sent");showAccountPage("account-info")}catch(x){toast(x.message)}};
+  for(const [form,channel] of [["emailConfirmForm","email"],["phoneConfirmForm","phone"]])$("#"+form).onsubmit=async e=>{e.preventDefault();try{await api("/account/contact/confirm",{method:"POST",body:JSON.stringify({channel,code:new FormData(e.target).get("code")})});accountProfile=(await api("/account/profile")).profile;toast("Contact method verified");showAccountPage("account-info")}catch(x){toast(x.message)}};
+ }else if(page==="security"){
+  root.innerHTML='<div class="account-panel"><h3>Password</h3>'+(me.account_type==="basic"?'<p class="account-note">This is a device-based basic account. It currently signs in with its saved device cookie and recovery code rather than a password. Password login is available on full-access accounts.</p>':'<form id="passwordForm" class="account-form"><label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label><label>New password<input name="new_password" type="password" minlength="12" autocomplete="new-password" required></label><label>Confirm new password<input name="confirm_password" type="password" minlength="12" autocomplete="new-password" required></label><button class="primary">Change password</button></form>')+'</div><div class="account-panel"><h3>Two-factor authentication</h3><span class="coming-soon">COMING SOON</span><p class="account-note">Authenticator apps and backup codes are planned but are not enabled yet.</p></div><div class="account-panel"><h3>Recovery code</h3><p class="account-note">Keep a recovery code somewhere safe. Generating a new one invalidates the previous code.</p><button id="rotateRecovery" class="secondary">Generate new recovery code</button><code id="rotatedCode" class="recovery-code-output"></code></div><div class="account-panel"><h3>Device session</h3><p class="account-note">This device is signed in using a secure, HTTP-only session cookie.</p><button id="securityLogout" class="danger">Sign out of this device</button></div>';
+  if($("#passwordForm"))$("#passwordForm").onsubmit=async e=>{e.preventDefault();const d=new FormData(e.target);if(d.get("new_password")!==d.get("confirm_password"))return toast("New passwords do not match.");try{await api("/account/password",{method:"POST",body:JSON.stringify({current_password:d.get("current_password"),new_password:d.get("new_password")})});e.target.reset();toast("Password changed successfully")}catch(x){toast(x.message)}};
+  $("#rotateRecovery").onclick=async()=>{try{const d=await api("/auth/recovery/rotate",{method:"POST"});$("#rotatedCode").textContent=d.recovery_code;toast("New recovery code created. Save it now.")}catch(x){toast(x.message)}};
+  $("#securityLogout").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};
+ }else if(page==="status"){
+  const d=await api("/account/status"),u=d.account;
+  root.innerHTML='<div class="account-panel"><h3>Account standing</h3><div class="status-line"><span>Account status</span><b class="'+(u.status==="active"?"status-good":"status-warning")+'">'+esc(u.status)+'</b></div><div class="status-line"><span>Account type</span><b>'+esc(u.account_type)+'</b></div><div class="status-line"><span>Username</span><b>'+esc(u.username)+'</b></div><div class="status-line"><span>Created</span><b>'+new Date(u.created_at*1000).toLocaleDateString()+'</b></div>'+(u.timeout_until?'<div class="status-line"><span>Timeout expires</span><b>'+new Date(u.timeout_until*1000).toLocaleString()+'</b></div>':"")+'</div>';
+ }else if(page==="family"){
+  root.innerHTML='<div class="account-panel"><h3>Family Center</h3><span class="coming-soon">COMING SOON</span><p class="account-note">Family supervision, guardian links and teen safety controls are not available in MallowCord yet.</p></div>';
+ }else if(page==="apps"){
+  root.innerHTML='<div class="account-panel"><h3>Connected Apps</h3><p class="account-note">No third-party apps are currently connected to your MallowCord account.</p></div>';
+ }else if(page==="games"){
+  root.innerHTML='<div class="account-panel"><h3>Registered Games</h3><p class="account-note">Game registration is not connected yet. Game integrations will appear here when supported.</p></div>';
+ }else{
+  const fields=[];
+  if(page==="privacy")fields.push(settingField("Show my online status","showOnlineStatus"),settingField("Show my profile to other members","showProfile"),settingField("Allow anonymous usage analytics","allowAnalytics"),settingField("Personalize activity suggestions","personalizedActivity"));
+  if(page==="messaging")fields.push(settingField("Who can send me messages","allowMessagesFrom","select",[["everyone","Everyone"],["members","People in shared servers"],["none","Nobody"]]),settingField("Allow friend requests","allowFriendRequests"),settingField("Show read receipts","readReceipts"));
+  if(page==="notifications")fields.push(settingField("Desktop notifications","desktopNotifications"),settingField("Message sounds","messageSounds"),settingField("Only notify me for mentions","mentionsOnly"),settingField("Email notifications","emailNotifications"));
+  if(page==="voice")fields.push(settingField("Input mode","inputMode","select",[["voice_activity","Voice activity"],["push_to_talk","Push to talk"]]),settingField("Noise suppression","noiseSuppression"),settingField("Echo cancellation","echoCancellation"),settingField("Automatic gain control","autoGainControl"));
+  if(page==="appearance")fields.push(settingField("Theme","theme","select",[["dark","Dark"],["light","Light"],["system","Use system setting"]]),settingField("Compact message layout","compactMode"),settingField("Show avatars","showAvatars"),settingField("Text size","fontScale","select",[["90%","Small"],["100%","Default"],["110%","Large"],["125%","Extra large"]]));
+  if(page==="accessibility")fields.push(settingField("Reduce motion","reducedMotion"),settingField("High contrast","highContrast"),settingField("Larger text","largerText"),settingField("Screen-reader labels","screenReaderLabels"));
+  if(page==="system")fields.push(settingField("Spellcheck in message composer","spellcheck"),settingField("Hardware acceleration preference","hardwareAcceleration"),settingField("Confirm before closing","confirmBeforeClosing"));
+  if(page==="language")fields.push(settingField("Language","language","select",[["English (US)","English (US)"],["English (UK)","English (UK)"],["Spanish","Spanish"],["French","French"],["German","German"],["Portuguese","Portuguese"]]),settingField("Timezone","timezone","select",[[Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC",Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC"],["UTC","UTC"],["America/Los_Angeles","Pacific Time"],["America/Denver","Mountain Time"],["America/Chicago","Central Time"],["America/New_York","Eastern Time"],["Europe/London","London"],["Europe/Paris","Central European Time"]]),settingField("Date format","dateFormat","select",[["MM/DD/YYYY","MM/DD/YYYY"],["DD/MM/YYYY","DD/MM/YYYY"],["YYYY-MM-DD","YYYY-MM-DD"]]));
+  if(page==="activity")fields.push(settingField("Share current game/activity","shareCurrentActivity"),settingField("Show recent activity on my profile","showRecentActivity"));
+  if(page==="clips")fields.push(settingField("Enable clip saving","saveClips"),settingField("Clip quality","clipQuality","select",[["720p","720p"],["1080p","1080p"],["1440p","1440p"]]),'<p class="account-note">Clip capture is a planned feature; these preferences are saved for later.</p>');
+  if(page==="overlay")fields.push(settingField("Enable game overlay","enableOverlay"),settingField("Overlay position","overlayPosition","select",[["top-right","Top right"],["top-left","Top left"],["bottom-right","Bottom right"],["bottom-left","Bottom left"]]),'<p class="account-note">The desktop game overlay is not available in the web app yet.</p>');
+  root.innerHTML=prefPage(page,fields);
+  $("#savePreferences").onclick=async()=>{const values={...(accountPreferences[page]||{})};root.querySelectorAll("[data-pref]").forEach(el=>values[el.dataset.pref]=el.type==="checkbox"?el.checked:el.value);accountPreferences[page]=values;try{await api("/account/preferences",{method:"POST",body:JSON.stringify({settings:accountPreferences})});applyPreferences();toast("Settings saved")}catch(e){toast(e.message)}};
+ }
+}
+function applyProfile(){
+ const name=accountProfile.display_name||me.username;$("#currentUsername").textContent=name;
+ const avatar=$("#userAvatar");avatar.innerHTML=accountProfile.avatar_url?'<img src="'+esc(accountProfile.avatar_url)+'" alt="">':esc(name[0].toUpperCase());
+}
+function applyPreferences(){
+ const theme=accountPreferences.appearance?.theme||"dark";
+ document.body.dataset.theme=theme;
+ document.body.classList.toggle("reduced-motion",!!accountPreferences.accessibility?.reducedMotion);
+ document.body.classList.toggle("high-contrast",!!accountPreferences.accessibility?.highContrast);
+ document.documentElement.style.setProperty("--account-font-scale",accountPreferences.appearance?.fontScale||"100%");
+}
+document.querySelectorAll(".account-nav").forEach(b=>b.onclick=()=>showAccountPage(b.dataset.page));
+$("#settingsBtn").onclick=openAccountSettings;
+
 $("#closeModal").onclick=()=>$("#modal").classList.add("hidden");
-$("#usernameForm").onsubmit=async e=>{e.preventDefault();try{const d=await api("/auth/username",{method:"POST",body:JSON.stringify({username:e.target.username.value})});me.username=d.username;$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();toast("Username updated")}catch(x){toast(x.message)}};
-$("#rotateRecovery").onclick=async()=>{try{const d=await api("/auth/recovery/rotate",{method:"POST"});$("#rotatedCode").textContent=d.recovery_code;toast("New recovery code created. Save it now.")}catch(x){toast(x.message)}};
 $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};
 (async()=>{try{me=(await api("/auth/me")).user;await enterApp()}catch{}})();
