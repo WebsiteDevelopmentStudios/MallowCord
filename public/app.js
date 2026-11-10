@@ -37,7 +37,8 @@ function renderMarkdown(raw){
   safe=safe.replace(/\x60([^\x60\n]+)\x60/g,"<code>$1</code>");
   safe=safe.replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>");
   safe=safe.replace(/__([^_\n]+)__/g,"<u>$1</u>");
-  safe=safe.replace(/~~([^~\n]+)~~/g,"<del>$1</del>");\n  safe=safe.replace(/\|\|([^|\n]+)\|\|/g,'<span class="message-spoiler">$1</span>');
+  safe=safe.replace(/~~([^~\n]+)~~/g,"<del>$1</del>");
+  safe=safe.replace(/\|\|([^|\n]+)\|\|/g,'<span class="message-spoiler">$1</span>');
   safe=safe.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");
   safe=safe.replace(/(^|[^_])_([^_\n]+)_(?!_)/g,"$1<em>$2</em>");
   return safe.split("\n").map(line=>{
