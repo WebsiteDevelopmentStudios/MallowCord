@@ -139,12 +139,16 @@ function renderProfilePopover(p,own=false){
  root.classList.remove("hidden");
 }
 async function openUserProfile(userId){
- try{if(userId===me.id){renderProfilePopover({...accountProfile,username:me.username},true);return}const d=await api("/users/"+userId+"/profile");renderProfilePopover(d.profile,false)}catch(e){toast(e.message)}
+ try{
+  if(!userId||userId==="undefined")throw Error("This profile is unavailable.");
+  if(userId===me.id){if(!accountProfile||!Object.keys(accountProfile).length){const d=await api("/account/profile");accountProfile=d.profile||{}}renderProfilePopover({...accountProfile,username:me.username},true);return}
+  const d=await api("/users/"+encodeURIComponent(userId)+"/profile");if(!d.profile)throw Error("This profile is unavailable.");renderProfilePopover(d.profile,false);
+ }catch(e){toast(e.message)}
 }
-$("#userProfileTrigger").onclick=()=>{const root=$("#profilePopover");if(!root.classList.contains("hidden")){root.classList.add("hidden");return}openUserProfile(me.id)};
+
 $("#profilePopover").addEventListener("click",e=>{if(e.target.closest("#profileEditButton")){ $("#profilePopover").classList.add("hidden");openAccountSettings()}if(e.target.closest("#profileStatusButton")){$("#profilePopover").classList.add("hidden");openAccountSettings();setTimeout(()=>showAccountPage("account-info"),0)}});
 document.addEventListener("click",e=>{
- const const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}
+ const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}
  const action=e.target.closest("#messageContextMenu [data-action]");
  if(action&&contextMessage){
   const m=contextMessage,kind=action.dataset.action;closeMessageMenu();
@@ -162,7 +166,7 @@ document.addEventListener("click",e=>{
 });
 document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeMessageMenu();closeItemMenu();clearReply()}});
 document.addEventListener("scroll",closeMessageMenu,true);document.addEventListener("scroll",closeItemMenu,true);
-document.addEventListener("click",e=>{const target=e.target.closest("#userProfileTrigger,.member-profile-trigger,.profile-avatar-trigger");if(!target)return;e.stopPropagation();if(target.id==="userProfileTrigger")openUserProfile(me.id);else if(target.dataset.userId)openUserProfile(target.dataset.userId);else if(target.dataset.botProfile)renderProfilePopover({username:"MallowBot",display_name:"MallowBot",avatar_url:"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",bio:"Official MallowCord bot",status:"online",pronouns:""});},{capture:true});
+document.addEventListener("click",e=>{const target=e.target.closest("#userProfileTrigger,.member-profile-trigger,.profile-avatar-trigger");if(!target)return;e.stopPropagation();if(target.id==="userProfileTrigger"){const root=$("#profilePopover");if(!root.classList.contains("hidden"))root.classList.add("hidden");else openUserProfile(me.id);}else if(target.dataset.userId)openUserProfile(target.dataset.userId);else if(target.dataset.botProfile)renderProfilePopover({username:"MallowBot",display_name:"MallowBot",avatar_url:"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",bio:"Official MallowCord bot",status:"online",pronouns:""});},{capture:true});
 async function toggleReaction(id,emoji){try{await api("/messages/"+id+"/reactions",{method:"POST",body:JSON.stringify({emoji})});await loadMessages()}catch(e){toast(e.message)}}
 
 $("#openEmojiPicker").onclick=()=>{const box=$("#emojiPicker");if(!box.classList.contains("hidden")){box.classList.add("hidden");return}box.innerHTML='<div class="emoji-picker-grid">'+["😀","😂","🥹","😍","😎","😭","💀","🔥","❤️","👍","👎","🎉","👀","🤔","🙏","✨","🚀","💯"].map(e=>'<button type="button" data-insert-emoji="'+e+'">'+e+'</button>').join("")+serverEmojis.map(e=>'<button type="button" data-insert-custom=":'+esc(e.name)+':" title=":'+esc(e.name)+':"><img src="'+esc(e.image_url)+'" alt="'+esc(e.name)+'"></button>').join("")+'</div>';box.classList.remove("hidden")};$("#emojiPicker").addEventListener("click",e=>{const b=e.target.closest("[data-insert-emoji],[data-insert-custom]");if(!b)return;const input=$("#messageForm [name=content]"),v=b.dataset.insertEmoji||b.dataset.insertCustom;input.setRangeText(v,input.selectionStart,input.selectionEnd,"end");input.focus()});document.addEventListener("click",e=>{if(!e.target.closest("#emojiPicker")&&!e.target.closest("#openEmojiPicker"))$("#emojiPicker").classList.add("hidden")});
