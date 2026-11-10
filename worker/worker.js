@@ -61,14 +61,18 @@ async function ensureAccountTables(env){
 if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
  await ensureAccountTables(env);
  if(m==="GET"){
-  const profile=await env.DB.prepare("SELECT display_name,avatar_url,email,email_verified_at,phone,phone_verified_at FROM user_profiles WHERE user_id=?").bind(u.id).first();
-  return json({profile:profile||{display_name:null,avatar_url:null,email:null,email_verified_at:null,phone:null,phone_verified_at:null},username:u.username,account_type:u.account_type});
+  const profile=await env.DB.prepare("SELECT display_name,avatar_url,bio,status,pronouns,email,email_verified_at,phone,phone_verified_at FROM user_profiles WHERE user_id=?").bind(u.id).first();
+  return json({profile:profile||{display_name:null,avatar_url:null,bio:null,status:'online',pronouns:null,email:null,email_verified_at:null,phone:null,phone_verified_at:null},username:u.username,account_type:u.account_type});
  }
  const b=await body(req),display=String(b.display_name||"").trim().slice(0,32),avatar=String(b.avatar_url||"").trim();
+  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN bio TEXT").run().catch(()=>{});
+  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN status TEXT NOT NULL DEFAULT 'online'").run().catch(()=>{});
+  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN pronouns TEXT").run().catch(()=>{});
+  const bio=String(b.bio||"").trim().slice(0,190),pronouns=String(b.pronouns||"").trim().slice(0,32),presence=["online","idle","dnd","invisible"].includes(b.status)?b.status:"online";
  const isUploadedAvatar=/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(avatar)&&avatar.length<=700000;
  const isRemoteAvatar=/^https:\/\/[^\s]+$/i.test(avatar)&&avatar.length<=1000;
  if(avatar&&!isUploadedAvatar&&!isRemoteAvatar)return fail("Avatar must be an HTTPS image URL or a cropped JPEG image under 500 KB.");
- await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at").bind(u.id,display||null,avatar||null,now()).run();
+ await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,bio,status,pronouns,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,bio=excluded.bio,status=excluded.status,pronouns=excluded.pronouns,updated_at=excluded.updated_at").bind(u.id,display||null,avatar||null,bio||null,presence,pronouns||null,now()).run();
  return json({ok:true,display_name:display||null,avatar_url:avatar||null});
 }
 if(p==="/api/account/preferences"&&(m==="GET"||m==="POST")){
@@ -322,7 +326,7 @@ x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  await ensureMessageExtras(env);await ensureAccountTables(env);
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_forwards(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,source_message_id TEXT,source_username TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
- const base=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,COALESCE(up.display_name,u.username) AS username,up.avatar_url,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content,(SELECT mf.source_username FROM message_forwards mf WHERE mf.message_id=m.id) AS forwarded_from FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(channelId).all();
+ const base=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,COALESCE(up.display_name,u.username) AS username,up.avatar_url,up.bio,up.status,up.pronouns,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content,(SELECT mf.source_username FROM message_forwards mf WHERE mf.message_id=m.id) AS forwarded_from FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(channelId).all();
  const regular=base.results.reverse();
  const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? ORDER BY created_at DESC LIMIT 75").bind(channelId).all();
  const messages=[...regular.map(msg=>({...msg,is_bot:false,reply_to:msg.reply_to_id?{username:msg.reply_username,content:msg.reply_content}:null,reactions:[]})),...bots.results.map(msg=>({id:msg.id,content:msg.content,created_at:msg.created_at,edited_at:null,username:msg.username,avatar_url:msg.avatar_url,author_id:"mallowcord-bot",is_bot:true,forwarded_from:null,reply_to:null,reactions:[]}))].sort((a,b)=>a.created_at-b.created_at).slice(-75);
