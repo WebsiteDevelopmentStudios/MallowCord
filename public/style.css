@@ -477,3 +477,19 @@ body[data-theme="light"] .account-settings-nav{background:#e8eaee}body[data-them
 body[data-theme="light"] .account-nav.active{background:#dfe3e9;border-color:#cbd1da;box-shadow:inset 2px 0 #687687}body[data-theme="light"] .account-settings-nav:before{background:#687687;box-shadow:none}body[data-theme="light"] .primary{background:#596574}body[data-theme="light"] .account-avatar-preview{border-color:#8795a5;box-shadow:none}
 body[data-theme="red"]{--main-theme-color:#a95b61;--main-theme-hover:#c0787e}body[data-theme="blue"]{--main-theme-color:#647d9d;--main-theme-hover:#8299b5}body[data-theme="green"]{--main-theme-color:#648b72;--main-theme-hover:#82a58d}body[data-theme="purple"]{--main-theme-color:#81728f;--main-theme-hover:#9d8bab}body[data-theme="orange"]{--main-theme-color:#a77c58;--main-theme-hover:#c0936d}body[data-theme="yellow"]{--main-theme-color:#a28e55;--main-theme-hover:#bdab70}body[data-theme="opposite"]{--main-theme-color:#817b6b;--main-theme-hover:#a49c88}body[data-theme="darker"]{--main-theme-color:#788494;--main-theme-hover:#98a3b1}
 @media(prefers-reduced-motion:reduce){.account-settings-card,.settings-page-enter,.settings-page-enter .account-panel{animation:none!important}}
+
+
+/* Profile picture upload and crop controls */
+.avatar-upload-section{display:grid;gap:12px;padding:15px;border:1px solid var(--line);border-radius:7px;background:rgba(0,0,0,.08)}
+.avatar-upload-section>label{margin:0}
+.avatar-upload-section input[type=file]{padding:9px;background:#1b1e23}
+.avatar-crop-stage{position:relative;width:min(100%,320px);aspect-ratio:1/1;overflow:hidden;border-radius:8px;background:#17191d;border:1px solid #414955;touch-action:none;user-select:none}
+.avatar-crop-stage canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+.avatar-crop-stage canvas.dragging{cursor:grabbing}
+.avatar-crop-hint{position:absolute;bottom:9px;left:50%;transform:translateX(-50%);padding:5px 9px;border-radius:4px;background:rgba(0,0,0,.65);color:#fff;font-size:11px;pointer-events:none;white-space:nowrap}
+.avatar-crop-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px;max-width:420px}
+.avatar-crop-controls label{display:flex;align-items:center;gap:10px;flex:1;min-width:180px;margin:0}
+.avatar-crop-controls input[type=range]{padding:0;accent-color:#8795a5}
+.avatar-crop-controls button{width:auto}
+.account-avatar-preview.hidden{display:none!important}
+@media(max-width:560px){.avatar-crop-controls{align-items:stretch}.avatar-crop-controls label{flex-basis:100%}}
