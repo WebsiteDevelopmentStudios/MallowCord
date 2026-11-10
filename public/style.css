@@ -656,3 +656,5 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .member-list{display:flex;flex-direction:column;gap:2px;overflow-y:auto;padding:5px 8px 12px}.member-profile-trigger{width:100%;display:flex;align-items:center;gap:10px;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:var(--text);text-align:left;cursor:pointer}.member-profile-trigger:hover{background:var(--theme-hover)}.member-profile-trigger .avatar{width:32px;height:32px;flex:0 0 32px}.member-copy{display:flex;flex-direction:column;min-width:0;flex:1}.member-copy b{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.member-copy small{font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.member-presence{display:none}
 
 .status-avatar[data-status="offline"]:after{background:#747f8d;border:0;box-shadow:none}
+
+.channel-category-label{padding:12px 8px 5px;color:var(--text-faint);font-size:10px;font-weight:800;letter-spacing:.08em;}
