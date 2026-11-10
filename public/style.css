@@ -500,3 +500,40 @@ body[data-theme="dark"] .account-settings-main{background:#202329}
 body[data-theme="dark"] .account-settings-nav{background:#1b1e23}
 body[data-theme="dark"] .account-nav.active{background:#303740;border-color:#414955;box-shadow:inset 2px 0 #9aa6b4}
 body[data-theme="dark"] .account-nav.active:before{background:#aeb9c6;box-shadow:none}
+
+
+/* Theme-aware foreground and surface colors.
+   Keep all theme presets readable, including nested controls and secondary labels. */
+body[data-theme="dark"],body[data-theme="darker"],body[data-theme="red"],body[data-theme="blue"],body[data-theme="green"],body[data-theme="purple"],body[data-theme="orange"],body[data-theme="yellow"]{
+  color-scheme:dark;
+  --text:#e6e8eb;--text-muted:#b4bac3;--text-faint:#929aa5;
+  --surface-main:#202329;--surface-raised:#292d34;--surface-input:#171a1f;
+  --surface-border:#3a4049;--surface-hover:#343a43;
+}
+body[data-theme="light"],body[data-theme="opposite"]{
+  color-scheme:light;
+  --text:#24272d;--text-muted:#555d68;--text-faint:#737c88;
+  --surface-main:#f1f2f5;--surface-raised:#fff;--surface-input:#fff;
+  --surface-border:#d4d8df;--surface-hover:#e4e7ec;
+  --line:rgba(30,36,44,.14);
+}
+body[data-theme="darker"]{--surface-main:#111317;--surface-raised:#191c21;--surface-input:#0d0f12;--surface-border:#292e36;--surface-hover:#252a32}
+body:is([data-theme="red"],[data-theme="blue"],[data-theme="green"],[data-theme="purple"],[data-theme="orange"],[data-theme="yellow"]){--surface-main:#202329;--surface-raised:#292d34;--surface-input:#171a1f;--surface-border:#3a4049;--surface-hover:#343a43}
+body:is([data-theme="light"],[data-theme="opposite"]) :is(.chat,.channels,.members,.workspace-head,.chat-head,.user-panel,.message-form,.modal-card,.account-settings-card,.account-settings-layout,.account-settings-main,.account-panel,.message-context-menu,.emoji-picker){
+  color:var(--text);border-color:var(--surface-border)
+}
+body:is([data-theme="light"],[data-theme="opposite"]) :is(.chat,.channels,.members,.workspace-head,.chat-head,.user-panel,.message-form,.modal-card,.account-settings-card,.account-settings-layout,.account-settings-main,.account-panel,.message-context-menu,.emoji-picker){background:var(--surface-main)}
+body:is([data-theme="light"],[data-theme="opposite"]) :is(.message,.message-content,.message-author,.message-time,.channel,.channel-name,.member,.member-name,.workspace-head,.chat-head,.account-panel,.account-settings-header,.account-settings-content,.account-note,.account-field,.account-form label,.settings-group-title,.account-nav,.user-meta,.user-meta span,.member-list-title,.channel-category,.empty-state,.modal-card p,.modal-card label){color:var(--text)}
+body:is([data-theme="light"],[data-theme="opposite"]) :is(.message-form input,.message-form textarea,.account-form input,.account-field select,.css-theme-editor textarea,.message-context-menu button,.emoji-picker button){background:var(--surface-input);color:var(--text);border-color:var(--surface-border)}
+body:is([data-theme="light"],[data-theme="opposite"]) :is(.account-settings-nav,.servers){background:#e5e8ed;color:var(--text);border-color:var(--surface-border)}
+body:is([data-theme="light"],[data-theme="opposite"]) .account-nav{color:var(--text-muted)}
+body:is([data-theme="light"],[data-theme="opposite"]) .account-nav:hover,body:is([data-theme="light"],[data-theme="opposite"]) .account-nav.active{color:var(--text);background:var(--surface-hover)}
+body:is([data-theme="light"],[data-theme="opposite"]) :is(.channel:hover,.channel.active,.message-context-menu button:hover){background:var(--surface-hover);color:var(--text)}
+body:is([data-theme="light"],[data-theme="opposite"]) :is(.account-note,.message-time,.text-muted,.muted){color:var(--text-muted)}
+body:is([data-theme="light"],[data-theme="opposite"]) input::placeholder,body:is([data-theme="light"],[data-theme="opposite"]) textarea::placeholder{color:#777f8a;opacity:1}
+body:is([data-theme="light"],[data-theme="opposite"]) a{color:#425f87}
+body:is([data-theme="light"],[data-theme="opposite"]) .primary{color:#fff}
+body:is([data-theme="light"],[data-theme="opposite"]) .secondary{color:#252a31;background:#dfe3e9;border-color:#cbd1da}
+body:is([data-theme="light"],[data-theme="opposite"]) .danger{color:#fff}
+body:is([data-theme="dark"],[data-theme="darker"],[data-theme="red"],[data-theme="blue"],[data-theme="green"],[data-theme="purple"],[data-theme="orange"],[data-theme="yellow"]) :is(.message,.message-content,.message-author,.channel,.member,.account-panel,.account-settings-header,.account-settings-content,.account-note,.account-field,.account-form label,.settings-group-title,.account-nav,.user-meta,.modal-card label){color:var(--text)}
+body:is([data-theme="dark"],[data-theme="darker"],[data-theme="red"],[data-theme="blue"],[data-theme="green"],[data-theme="purple"],[data-theme="orange"],[data-theme="yellow"]) :is(input,textarea,select){color:var(--text)}
