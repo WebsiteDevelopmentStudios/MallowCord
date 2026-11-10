@@ -51,7 +51,7 @@ async function loadMessages(){
   box.innerHTML=(d.messages||[]).map(m=>{
    const reply=m.reply_to?'<div class="message-reply-preview">↪ Replying to <b>'+esc(m.reply_to.username)+'</b>: '+esc(m.reply_to.content)+'</div>':"";
    const reactions=(m.reactions||[]).map(r=>'<button class="reaction-chip '+(r.mine?"mine":"")+'" data-message="'+m.id+'" data-emoji="'+esc(r.emoji)+'">'+esc(r.emoji)+' <span>'+r.count+'</span></button>').join("");
-   return '<article class="message" data-message-id="'+m.id+'"><div class="avatar">'+esc((m.username||"?")[0].toUpperCase())+'</div><div class="message-body">'+reply+'<div class="message-head"><b>'+esc(m.username)+'</b><small>'+new Date(m.created_at*1000).toLocaleString()+(m.edited_at?' · edited':"")+'</small></div><div class="message-content">'+renderMarkdown(m.content)+'</div><div class="message-reactions">'+reactions+'</div></div></article>';
+   return '<article class="message" data-message-id="'+m.id+'"><div class="avatar">'+(m.avatar_url?'<img src="'+esc(m.avatar_url)+'" alt="">':esc((m.username||"?")[0].toUpperCase()))+'</div><div class="message-body">'+reply+'<div class="message-head"><b>'+esc(m.username)+'</b><small>'+new Date(m.created_at*1000).toLocaleString()+(m.edited_at?' · edited':"")+'</small></div><div class="message-content">'+renderMarkdown(m.content)+'</div><div class="message-reactions">'+reactions+'</div></div></article>';
   }).join("");
   box.querySelectorAll(".message").forEach(el=>{const m=(d.messages||[]).find(x=>x.id===el.dataset.messageId);el.addEventListener("contextmenu",e=>{e.preventDefault();openMessageMenu(m,e.clientX,e.clientY)})});
   if(bottom)box.scrollTop=box.scrollHeight;
