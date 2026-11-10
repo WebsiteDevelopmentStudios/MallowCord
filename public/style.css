@@ -439,3 +439,41 @@ body[data-theme="light"] .account-form input,body[data-theme="light"] .account-f
  .account-settings-header h2{font-size:21px}
 }
 @media(prefers-reduced-motion:reduce){.account-settings-card,.settings-page-enter,.settings-page-enter .account-panel{animation:none!important}.account-nav,.account-panel,.account-form button{transition:none!important}}
+
+
+/* Restrained MallowCord palette: flat charcoal surfaces, muted slate accents, no neon. */
+:root{--theme-background-image:none;--main-theme-color:#8795a5;--main-theme-hover:#a3afbd;--theme-transparency:#17191d;--panel:#22252b;--panel-strong:#1b1e23;--panel-soft:#292d34;--text:#e1e3e6;--text-muted:#a3a8b0;--text-faint:#777e88;--line:rgba(220,225,232,.10);--message-box-transparency:#252930;--embed-background-transparency:#252930;--context-menu-transparency:#24272d;--scrollbar-color:rgba(190,198,208,.22);--shadow:0 12px 32px rgba(0,0,0,.24)}
+body{background:#17191d!important;color:var(--text)}body:before{background:transparent!important}
+a{color:#aeb9c6}::selection{background:rgba(135,149,165,.28);color:#fff}:focus-visible{outline:2px solid #9aa6b4!important;outline-offset:2px}
+.auth-card,.channels,.members,.chat,.modal-card,.recovery,.toast{backdrop-filter:none;-webkit-backdrop-filter:none}
+.auth-card{background:#202329;border-color:#343941;box-shadow:0 12px 32px rgba(0,0,0,.25)}
+.mark,.welcome-icon{background:#4a535e;box-shadow:none}
+.tabs{background:#191c21;border-color:#343941}.tab.active{background:#343a43;box-shadow:none}
+input,textarea,select{background:#191c21;border-color:#3a4049}input:focus,textarea:focus,select:focus{border-color:#8795a5;background:#1b1e23;box-shadow:0 0 0 2px rgba(135,149,165,.12)}
+.primary{background:#596574;color:#fff}.primary:hover{background:#687687;filter:none}.secondary{background:#3b414a}.secondary:hover{background:#4a515c}.danger{background:#873d43}.danger:hover{background:#9b4a51}
+.servers{background:#17191d;backdrop-filter:none;-webkit-backdrop-filter:none}.server-icon{background:#30353d}.server-icon:hover{background:#596574}.server-icon.active{box-shadow:0 0 0 2px #8795a5}.server-icon.add{color:#aeb8c4;border-color:#555e69}.server-icon.add:hover{background:#596574;color:#fff}
+.channels,.members{background:#202329;border-color:#343941;backdrop-filter:none;-webkit-backdrop-filter:none}.workspace-head,.chat-head{background:#202329;box-shadow:none}
+.channel.active,.channel:hover{background:#30353d}.channel.active{box-shadow:inset 3px 0 #8795a5}.channel.active .channel-kind,.channel:hover .channel-kind,.channel:hover:before,.channel.active:before{color:#aeb9c6}
+.user-panel{background:#1b1e23}.chat{background:#292d34;backdrop-filter:none;-webkit-backdrop-filter:none}
+.message-form input{background:#202329}.message-form input:focus{border-color:#8795a5;box-shadow:none}.message-form button{background:#596574}.message-form button:hover{background:#687687}
+.modal-card{background:#202329;border-color:#3a4049;box-shadow:0 18px 48px rgba(0,0,0,.35)}.modal{background:rgba(8,10,13,.72)}
+.settings-tab:hover,.settings-tab.active{background:#343a43;color:#fff}.settings-tab.active{box-shadow:inset 0 -2px #8795a5}
+.stat-card,.settings-list-row,.member-setting{background:#252930}.voice-room-symbol{background:#303740;color:#aeb9c6}
+.message-content blockquote{border-left-color:#8795a5}.reaction-chip:hover,.reaction-chip.mine{border-color:#8795a5;background:rgba(135,149,165,.13)}.message-reply-preview,.replying-to,.message-edit-bar{border-left-color:#8795a5}
+.message-context-menu{background:#24272d;border-color:#3a4049;backdrop-filter:none}.message-context-menu button:hover{background:#3a414b;color:#fff}.emoji-picker{background:#202329;box-shadow:0 12px 32px rgba(0,0,0,.3)}
+.account-settings-card{border-color:#3a4049;border-radius:10px;background:#202329;box-shadow:0 20px 55px rgba(0,0,0,.4)}.account-settings-layout{background:#202329}
+.account-settings-nav{background:#1b1e23;border-right-color:#343941}.account-settings-nav:before{height:2px;width:28px;background:#8795a5;box-shadow:none}
+.settings-group-title{color:#858c96}.account-nav{color:#b1b6bf;border-radius:5px;font-weight:500}.account-nav:hover{background:#292e35;border-color:transparent;color:#f0f1f3;transform:none}
+.account-nav.active{background:#303740;border-color:#414955;color:#fff;box-shadow:inset 2px 0 #9aa6b4}.account-nav.active:before{background:#aeb9c6;box-shadow:none}
+.account-settings-main{background:#202329}.settings-eyebrow{color:#aeb9c6}
+.account-panel{background:#252930;border-color:#383e47;border-radius:8px;box-shadow:none}.account-panel:hover{border-color:#4a525e;background:#282d34}
+.account-form input,.account-field select,.css-theme-editor textarea{background:#1b1e23;border-color:#3b424c;border-radius:6px}
+.account-form input:focus,.account-field select:focus,.css-theme-editor textarea:focus{border-color:#8795a5;box-shadow:0 0 0 2px rgba(135,149,165,.12);background:#1b1e23}
+.account-form button:hover,.account-save:hover{transform:translateY(-1px);filter:brightness(1.04);box-shadow:none}
+.account-avatar-preview{border:2px solid #596574;box-shadow:none}.verification-state.verified{background:rgba(91,151,112,.13);color:#9bc5a6}.coming-soon{border-color:#81765d;color:#c6b58d}
+#closeModal:hover{background:rgba(170,110,110,.14);transform:none}
+.account-settings-card,.settings-page-enter,.settings-page-enter .account-panel{animation-duration:.18s}.account-panel,.account-nav,.account-form button{transition-duration:.15s}
+body[data-theme="light"] .account-settings-nav{background:#e8eaee}body[data-theme="light"] .account-settings-main{background:#f5f6f8}body[data-theme="light"] .account-panel{background:#fff;border-color:#d9dce2;box-shadow:none}
+body[data-theme="light"] .account-nav.active{background:#dfe3e9;border-color:#cbd1da;box-shadow:inset 2px 0 #687687}body[data-theme="light"] .account-settings-nav:before{background:#687687;box-shadow:none}body[data-theme="light"] .primary{background:#596574}body[data-theme="light"] .account-avatar-preview{border-color:#8795a5;box-shadow:none}
+body[data-theme="red"]{--main-theme-color:#a95b61;--main-theme-hover:#c0787e}body[data-theme="blue"]{--main-theme-color:#647d9d;--main-theme-hover:#8299b5}body[data-theme="green"]{--main-theme-color:#648b72;--main-theme-hover:#82a58d}body[data-theme="purple"]{--main-theme-color:#81728f;--main-theme-hover:#9d8bab}body[data-theme="orange"]{--main-theme-color:#a77c58;--main-theme-hover:#c0936d}body[data-theme="yellow"]{--main-theme-color:#a28e55;--main-theme-hover:#bdab70}body[data-theme="opposite"]{--main-theme-color:#817b6b;--main-theme-hover:#a49c88}body[data-theme="darker"]{--main-theme-color:#788494;--main-theme-hover:#98a3b1}
+@media(prefers-reduced-motion:reduce){.account-settings-card,.settings-page-enter,.settings-page-enter .account-panel{animation:none!important}}
