@@ -148,6 +148,8 @@ async function openUserProfile(userId){
 
 $("#profilePopover").addEventListener("click",e=>{if(e.target.closest("#profileEditButton")){ $("#profilePopover").classList.add("hidden");openAccountSettings()}if(e.target.closest("#profileStatusButton")){$("#profilePopover").classList.add("hidden");openAccountSettings();setTimeout(()=>showAccountPage("account-info"),0)}});
 document.addEventListener("click",e=>{
+ const itemAction=e.target.closest("#itemContextMenu [data-action]");if(itemAction){const menu=$("#itemContextMenu"),scope=menu.dataset.scope,id=menu.dataset.id,action=itemAction.dataset.action;closeItemMenu();if(action==="mute"){const set=scope==="channel"?notificationSettings.channels:notificationSettings.servers;setNotificationMuted(scope,id,!set.has(id)).catch(x=>toast(x.message))}else if(action==="clear")clearItemNotifications(scope,id).catch(x=>toast(x.message));return}
+ if(!e.target.closest("#itemContextMenu"))closeItemMenu();
  const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}
  const action=e.target.closest("#messageContextMenu [data-action]");
  if(action&&contextMessage){
