@@ -537,3 +537,47 @@ body:is([data-theme="light"],[data-theme="opposite"]) .secondary{color:#252a31;b
 body:is([data-theme="light"],[data-theme="opposite"]) .danger{color:#fff}
 body:is([data-theme="dark"],[data-theme="darker"],[data-theme="red"],[data-theme="blue"],[data-theme="green"],[data-theme="purple"],[data-theme="orange"],[data-theme="yellow"]) :is(.message,.message-content,.message-author,.channel,.member,.account-panel,.account-settings-header,.account-settings-content,.account-note,.account-field,.account-form label,.settings-group-title,.account-nav,.user-meta,.modal-card label){color:var(--text)}
 body:is([data-theme="dark"],[data-theme="darker"],[data-theme="red"],[data-theme="blue"],[data-theme="green"],[data-theme="purple"],[data-theme="orange"],[data-theme="yellow"]) :is(input,textarea,select){color:var(--text)}
+
+
+/* Complete MallowCord theme palettes. Theme selection changes both surfaces and text,
+   not just the accent color. These rules intentionally cover every app panel. */
+body[data-theme="dark"]{
+ --main-theme-color:#8795a5;--main-theme-hover:#a3afbd;--text:#e6e8eb;--text-muted:#b4bac3;--text-faint:#929aa5;
+ --panel:#202329;--panel-strong:#1b1e23;--panel-soft:#292d34;--line:#3a4049;
+ --theme-surface:#202329;--theme-raised:#292d34;--theme-input:#171a1f;--theme-hover:#343a43;
+}
+body[data-theme="darker"]{
+ --main-theme-color:#788494;--main-theme-hover:#98a3b1;--text:#e7e9ed;--text-muted:#aeb5bf;--text-faint:#838c98;
+ --panel:#15171b;--panel-strong:#101216;--panel-soft:#1b1e23;--line:#292e36;
+ --theme-surface:#15171b;--theme-raised:#1d2026;--theme-input:#0d0f12;--theme-hover:#252a32;
+}
+body[data-theme="light"],body[data-theme="opposite"]{
+ --text:#24272d;--text-muted:#555d68;--text-faint:#737c88;--line:#d4d8df;
+ --panel:#f1f2f5;--panel-strong:#fff;--panel-soft:#e7e9ee;
+ --theme-surface:#f1f2f5;--theme-raised:#fff;--theme-input:#fff;--theme-hover:#e4e7ec;
+}
+body[data-theme="light"]{--main-theme-color:#64748b;--main-theme-hover:#475569}
+body[data-theme="opposite"]{--main-theme-color:#827b68;--main-theme-hover:#6c6656}
+body[data-theme="red"]{--main-theme-color:#a95b61;--main-theme-hover:#c0787e;--text:#e6e8eb;--text-muted:#b4bac3;--panel:#252123;--panel-strong:#1e1b1e;--panel-soft:#30282b;--line:#49383c;--theme-surface:#252123;--theme-raised:#30282b;--theme-input:#1a1719;--theme-hover:#3a2d31}
+body[data-theme="blue"]{--main-theme-color:#647d9d;--main-theme-hover:#8299b5;--text:#e6e8eb;--text-muted:#b4bac3;--panel:#20242a;--panel-strong:#1a1e24;--panel-soft:#292f38;--line:#39434f;--theme-surface:#20242a;--theme-raised:#292f38;--theme-input:#171b20;--theme-hover:#343d49}
+body[data-theme="green"]{--main-theme-color:#648b72;--main-theme-hover:#82a58d;--text:#e6e8eb;--text-muted:#b4bac3;--panel:#202622;--panel-strong:#191f1b;--panel-soft:#29332c;--line:#39483d;--theme-surface:#202622;--theme-raised:#29332c;--theme-input:#151a16;--theme-hover:#343f37}
+body[data-theme="purple"]{--main-theme-color:#81728f;--main-theme-hover:#9d8bab;--text:#e6e8eb;--text-muted:#b4bac3;--panel:#252329;--panel-strong:#1e1b23;--panel-soft:#302b36;--line:#453d4c;--theme-surface:#252329;--theme-raised:#302b36;--theme-input:#19171d;--theme-hover:#3b3443}
+body[data-theme="orange"]{--main-theme-color:#a77c58;--main-theme-hover:#c0936d;--text:#e6e8eb;--text-muted:#b4bac3;--panel:#28241f;--panel-strong:#211d19;--panel-soft:#342d26;--line:#4a4035;--theme-surface:#28241f;--theme-raised:#342d26;--theme-input:#1b1815;--theme-hover:#40372e}
+body[data-theme="yellow"]{--main-theme-color:#a28e55;--main-theme-hover:#bdab70;--text:#e6e8eb;--text-muted:#b4bac3;--text-faint:#929aa5;--panel:#28271f;--panel-strong:#211f19;--panel-soft:#343126;--line:#4a4635;--theme-surface:#28271f;--theme-raised:#343126;--theme-input:#1b1a15;--theme-hover:#403d2e}
+body:is([data-theme="dark"],[data-theme="darker"],[data-theme="red"],[data-theme="blue"],[data-theme="green"],[data-theme="purple"],[data-theme="orange"],[data-theme="yellow"]){color-scheme:dark}
+body:is([data-theme="light"],[data-theme="opposite"]){color-scheme:light}
+body :is(.servers,.channels,.members,.workspace-head,.chat-head,.chat,.user-panel,.message-form,.modal-card,.account-settings-card,.account-settings-layout,.account-settings-nav,.account-settings-main,.account-panel,.message-context-menu,.emoji-picker,.workspace-head,.channel-list,.member-list){
+ background-color:var(--theme-surface)!important;color:var(--text)!important;border-color:var(--line)
+}
+body :is(.message,.message-content,.message-author,.message b,.channel,.channel-name,.member,.member-name,.workspace-head,.chat-head,.account-panel,.account-settings-header,.account-settings-content,.account-note,.account-field,.account-form label,.settings-group-title,.account-nav,.user-meta,.user-meta span,.modal-card p,.modal-card label){color:var(--text)}
+body :is(.account-panel,.message-item,.channel:hover,.channel.active,.account-nav:hover,.account-nav.active,.message-context-menu button:hover,.emoji-picker button:hover){background-color:var(--theme-raised);border-color:var(--line)}
+body :is(input,textarea,select,.message-form input,.account-form input,.account-field select,.css-theme-editor textarea){background-color:var(--theme-input);color:var(--text);border-color:var(--line)}
+body :is(input,textarea,select)::placeholder{color:var(--text-faint);opacity:1}
+body a{color:var(--main-theme-hover)}
+body .primary{background:var(--main-theme-color);color:#fff}
+body :is(.server-icon.active,.channel.active){border-color:var(--main-theme-color)}
+body :is(.account-nav.active,.channel.active){box-shadow:inset 2px 0 var(--main-theme-color)}
+body[data-theme="light"] .account-settings-nav,body[data-theme="opposite"] .account-settings-nav{background:#e7e9ee!important}
+body[data-theme="light"] .account-nav,body[data-theme="opposite"] .account-nav{color:#424954}
+body[data-theme="light"] .account-nav.active,body[data-theme="opposite"] .account-nav.active{color:#20242a;background:#dce1e8}
+body[data-theme="light"] .message-form button,body[data-theme="opposite"] .message-form button{color:#fff}
