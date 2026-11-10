@@ -204,6 +204,7 @@ async function showAccountPage(page){
   root.innerHTML=prefPage(page,fields);
   if($("#customCssInput")){$("#cssThemeFile").onchange=async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>50000){toast("CSS file must be 50 KB or smaller.");return}$("#customCssInput").value=await file.text()};$("#previewCustomCss").onclick=()=>{try{applyCustomCss($("#customCssInput").value);toast("CSS preview applied")}catch(e){toast(e.message)}};$("#clearCustomCss").onclick=()=>{$("#customCssInput").value="";applyCustomCss("");toast("Custom CSS cleared")}}$("#savePreferences").onclick=async()=>{const values={...(accountPreferences[page]||{})};root.querySelectorAll("[data-pref]").forEach(el=>values[el.dataset.pref]=el.type==="checkbox"?el.checked:el.value);if(page==="appearance")values.customCss=$("#customCssInput")?.value||"";accountPreferences[page]=values;try{await api("/account/preferences",{method:"POST",body:JSON.stringify({settings:accountPreferences})});applyPreferences();toast("Settings saved across your devices")}catch(e){toast(e.message)}};
  }
+ root.classList.remove("settings-page-enter");void root.offsetWidth;root.classList.add("settings-page-enter");
 }
 function applyProfile(){
  const name=accountProfile.display_name||me.username;$("#currentUsername").textContent=name;
