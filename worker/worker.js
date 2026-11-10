@@ -51,6 +51,91 @@ if(p==="/api/auth/me"&&m==="GET")return u?json({user:{id:u.id,username:u.usernam
 if(!u)return fail("Sign in required.",401);
 const banned=await env.DB.prepare("SELECT id FROM bans WHERE ip_hash=? AND server_id IS NULL AND (expires_at IS NULL OR expires_at>?) LIMIT 1").bind(await ipDigest(req,env),now()).first();if(banned)return fail("Access to MallowCord is blocked.",403);
 if(u.timed_out&&p.startsWith("/api/")&&!["/api/auth/me","/api/auth/logout"].includes(p))return fail("Your account is timed out.",403);
+
+/* Account profile, preferences, password and verified contact methods */
+async function ensureAccountTables(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,display_name TEXT,avatar_url TEXT,email TEXT,email_verified_at INTEGER,phone TEXT,phone_verified_at INTEGER,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,settings_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS contact_verifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,channel TEXT NOT NULL,target TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+}
+if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
+ await ensureAccountTables(env);
+ if(m==="GET"){
+  const profile=await env.DB.prepare("SELECT display_name,avatar_url,email,email_verified_at,phone,phone_verified_at FROM user_profiles WHERE user_id=?").bind(u.id).first();
+  return json({profile:profile||{display_name:null,avatar_url:null,email:null,email_verified_at:null,phone:null,phone_verified_at:null},username:u.username,account_type:u.account_type});
+ }
+ const b=await body(req),display=String(b.display_name||"").trim().slice(0,32),avatar=String(b.avatar_url||"").trim();
+ if(avatar&&(!/^https:\/\/[^\s]+$/i.test(avatar)||avatar.length>1000))return fail("Avatar must be a valid HTTPS image URL.");
+ await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at").bind(u.id,display||null,avatar||null,now()).run();
+ return json({ok:true,display_name:display||null,avatar_url:avatar||null});
+}
+if(p==="/api/account/preferences"&&(m==="GET"||m==="POST")){
+ await ensureAccountTables(env);
+ if(m==="GET"){
+  const row=await env.DB.prepare("SELECT settings_json FROM user_preferences WHERE user_id=?").bind(u.id).first();
+  let settings={};try{settings=JSON.parse(row?.settings_json||"{}")}catch{}
+  return json({settings});
+ }
+ const b=await body(req),settings=b.settings;
+ if(!settings||typeof settings!=="object"||Array.isArray(settings)||JSON.stringify(settings).length>12000)return fail("Invalid settings payload.");
+ await env.DB.prepare("INSERT INTO user_preferences(user_id,settings_json,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET settings_json=excluded.settings_json,updated_at=excluded.updated_at").bind(u.id,JSON.stringify(settings),now()).run();
+ return json({ok:true});
+}
+if(p==="/api/account/status"&&m==="GET"){
+ const row=await env.DB.prepare("SELECT username,account_type,status,timeout_until,created_at FROM users WHERE id=?").bind(u.id).first();
+ return json({account:row});
+}
+if(p==="/api/account/password"&&m==="POST"){
+ if(u.account_type==="basic")return fail("Basic accounts use device sign-in and recovery codes. Password login is available on full-access accounts.",403);
+ const b=await body(req),old=String(b.current_password||""),next=String(b.new_password||"");
+ const stored=await env.DB.prepare("SELECT password_hash FROM users WHERE id=?").bind(u.id).first();
+ if(!await passwordCheck(old,stored?.password_hash))return fail("Your current password is incorrect.",401);
+ if(next.length<12||next.length>256)return fail("New password must be at least 12 characters.");
+ if(next===old)return fail("Choose a password different from your current one.");
+ await env.DB.prepare("UPDATE users SET password_hash=?,updated_at=? WHERE id=?").bind(await passwordHash(next),now(),u.id).run();
+ await audit(env,u.id,u.id,"change_password");
+ return json({ok:true});
+}
+if(p==="/api/account/contact/request"&&m==="POST"){
+ await ensureAccountTables(env);
+ const b=await body(req),channel=b.channel==="phone"?"phone":b.channel==="email"?"email":null,target=String(b.value||"").trim();
+ if(!channel)return fail("Choose email or phone verification.");
+ if(channel==="email"&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target))return fail("Enter a valid email address.");
+ if(channel==="phone"&&!/^\+[1-9]\d{7,14}$/.test(target))return fail("Enter a phone number in international format, such as +12065550123.");
+ const last=await env.DB.prepare("SELECT created_at FROM contact_verifications WHERE user_id=? AND channel=? ORDER BY created_at DESC LIMIT 1").bind(u.id,channel).first();
+ if(last&&now()-last.created_at<60)return fail("Please wait 60 seconds before requesting another code.",429);
+ const code=String(crypto.getRandomValues(new Uint32Array(1))[0]%1000000).padStart(6,"0"),t=now(),id=uid();
+ await env.DB.prepare("DELETE FROM contact_verifications WHERE user_id=? AND channel=?").bind(u.id,channel).run();
+ await env.DB.prepare("INSERT INTO contact_verifications(id,user_id,channel,target,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?)").bind(id,u.id,channel,target,await sha(channel+":"+u.id+":"+code+":"+env.IP_HASH_SECRET),t+600,t).run();
+ if(channel==="email"){
+  if(!env.RESEND_API_KEY||!env.MALLOWCORD_EMAIL_FROM){await env.DB.prepare("DELETE FROM contact_verifications WHERE id=?").bind(id).run();return fail("Email verification is not configured yet. The site owner must configure the Resend email service and verified sender address.",503);}
+  const sent=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"Authorization":"Bearer "+env.RESEND_API_KEY,"Content-Type":"application/json"},body:JSON.stringify({from:env.MALLOWCORD_EMAIL_FROM,to:[target],subject:"Your MallowCord verification code",text:"Your MallowCord verification code is "+code+". It expires in 10 minutes. If you did not request this, ignore this email."})});
+  if(!sent.ok){await env.DB.prepare("DELETE FROM contact_verifications WHERE id=?").bind(id).run();return fail("The verification email could not be sent. Check the email service configuration.",502);}
+ }else{
+  if(!env.TWILIO_ACCOUNT_SID||!env.TWILIO_AUTH_TOKEN||!env.TWILIO_FROM_NUMBER){await env.DB.prepare("DELETE FROM contact_verifications WHERE id=?").bind(id).run();return fail("Phone verification is not configured yet. The site owner must configure Twilio SMS.",503);}
+  const form=new URLSearchParams({To:target,From:env.TWILIO_FROM_NUMBER,Body:"Your MallowCord verification code is "+code+". It expires in 10 minutes."});
+  const auth=btoa(env.TWILIO_ACCOUNT_SID+":"+env.TWILIO_AUTH_TOKEN);
+  const sent=await fetch("https://api.twilio.com/2010-04-01/Accounts/"+env.TWILIO_ACCOUNT_SID+"/Messages.json",{method:"POST",headers:{"Authorization":"Basic "+auth,"Content-Type":"application/x-www-form-urlencoded"},body:form});
+  if(!sent.ok){await env.DB.prepare("DELETE FROM contact_verifications WHERE id=?").bind(id).run();return fail("The verification text could not be sent. Check the SMS service configuration.",502);}
+ }
+ await env.DB.prepare("INSERT INTO user_profiles(user_id,updated_at) VALUES(?,?) ON CONFLICT(user_id) DO NOTHING").bind(u.id,now()).run();
+ if(channel==="email")await env.DB.prepare("UPDATE user_profiles SET email=?,email_verified_at=NULL,updated_at=? WHERE user_id=?").bind(target,now(),u.id).run();
+ else await env.DB.prepare("UPDATE user_profiles SET phone=?,phone_verified_at=NULL,updated_at=? WHERE user_id=?").bind(target,now(),u.id).run();
+ return json({ok:true,message:"Verification code sent. It expires in 10 minutes."});
+}
+if(p==="/api/account/contact/confirm"&&m==="POST"){
+ await ensureAccountTables(env);
+ const b=await body(req),channel=b.channel==="phone"?"phone":b.channel==="email"?"email":null,code=String(b.code||"").trim();
+ if(!channel||!/^\d{6}$/.test(code))return fail("Enter the six-digit verification code.");
+ const row=await env.DB.prepare("SELECT * FROM contact_verifications WHERE user_id=? AND channel=? ORDER BY created_at DESC LIMIT 1").bind(u.id,channel).first();
+ if(!row||row.expires_at<now()||row.code_hash!==await sha(channel+":"+u.id+":"+code+":"+env.IP_HASH_SECRET))return fail("That verification code is invalid or expired.",400);
+ const col=channel==="email"?"email_verified_at":"phone_verified_at";
+ await env.DB.prepare("UPDATE user_profiles SET "+col+"=?,updated_at=? WHERE user_id=?").bind(now(),now(),u.id).run();
+ await env.DB.prepare("DELETE FROM contact_verifications WHERE id=?").bind(row.id).run();
+ await audit(env,u.id,u.id,"verify_"+channel);
+ return json({ok:true,verified:true});
+}
+
 if(p==="/api/auth/username"&&m==="POST"){const name=String((await body(req)).username||"").trim();if(!/^[A-Za-z0-9_]{3,24}$/.test(name))return fail("Username must be 3–24 characters.");try{await env.DB.prepare("UPDATE users SET username=?,username_key=?,updated_at=? WHERE id=?").bind(name,name.toLowerCase(),now(),u.id).run();}catch{return fail("That username is already taken.",409);}return json({username:name});}
 if(p==="/api/auth/recovery/rotate"&&m==="POST"&&u.account_type==="basic")return json({recovery_code:await recovery(env,u.id)});
 if(p==="/api/servers"&&m==="GET"){const a=await env.DB.prepare("SELECT s.id,s.name,s.icon_url,s.is_system,m.joined_at FROM memberships m JOIN servers s ON s.id=m.server_id WHERE m.user_id=? ORDER BY s.is_system DESC,s.name").bind(u.id).all();return json({servers:a.results});}
