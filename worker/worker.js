@@ -73,7 +73,7 @@ if(discordBridgePath){
    await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,userId,now()).run();
    if(everyone)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,everyone.id).run();
    if(memberRole)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,memberRole.id).run();
-   for(const drid of (Array.isArray(mem.roles)?mem.roles:[])){const mr=roleLookup.get(String(drid));if(mr)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,mr).run();}
+   for(const drid of (Array.isArray(mem.roles)?mem.roles:[])){let mr=roleLookup.get(String(drid));if(!mr){const linkedRole=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?").bind(String(drid),system.id).first();mr=linkedRole?.role_id;}if(mr)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,mr).run();}
    synced++;
   }
   return json({ok:true,server_id:system.id,channels:channelMap.length,roles:roleMap.length,members:synced,channel_map:channelMap});
