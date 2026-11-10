@@ -671,3 +671,6 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .discord-linked-channel:hover .discord-channel-mark,.discord-linked-channel.active .discord-channel-mark{opacity:1;background:rgba(88,101,242,.2)}
 .message-embed{display:block;max-width:min(520px,100%);max-height:360px;object-fit:contain;border-radius:7px;margin:6px 0}
 .message-embed-link{display:inline-block;max-width:100%}
+
+/* Channel and server notification context menu */
+#itemContextMenu{min-width:205px;z-index:1200}#itemContextMenu .context-label{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
