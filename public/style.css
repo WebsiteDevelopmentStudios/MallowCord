@@ -646,3 +646,5 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .message-spoiler{background:var(--text-muted);color:transparent;border-radius:3px;padding:0 3px;cursor:pointer;transition:color .12s}.message-spoiler:hover{color:var(--text);background:rgba(110,115,125,.28)}
 
 .chat{position:relative}
+
+.bot-command-icon{width:21px;height:21px;object-fit:contain;border-radius:50%;flex:0 0 21px}.bot-tag{font-size:9px;font-weight:800;letter-spacing:.04em;padding:2px 5px;border-radius:4px;background:var(--main-theme-color);color:#101713;margin-left:6px;vertical-align:middle}.bot-message-group .message-head>b{color:var(--text)}
