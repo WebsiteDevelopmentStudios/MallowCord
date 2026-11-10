@@ -32,7 +32,8 @@ function renderMarkdown(raw){
    return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a>'+tail;
   });
   const mentionItems=[...(mentionDirectory.roles||[]).filter(r=>r.pingable!==0).sort((x,y)=>y.name.length-x.name.length).map(r=>({name:r.name.startsWith("@")?r.name:"@"+r.name,type:"role"})),...(mentionDirectory.users||[]).sort((x,y)=>y.username.length-x.username.length).map(u=>({name:"@"+u.username,type:"user"}))];
-  for(const item of mentionItems){const token=item.name;safe=safe.replace(new RegExp("(^|[^A-Za-z0-9_])("+token+")(?![A-Za-z0-9_])","gi"),(all,prefix,value)=>prefix+'<span class="mention mention-'+item.type+'">'+value+"</span>");}\n  for(const ch of (mentionDirectory.channels||[]).slice().sort((x,y)=>y.name.length-x.name.length)){const token="#"+ch.name;safe=safe.replace(new RegExp("(^|\\s)("+token+")(?![A-Za-z0-9_-])","gi"),(all,prefix,value)=>prefix+'<button type="button" class="channel-mention" data-channel-id="'+esc(ch.id)+'">'+value+"</button>");}
+  for(const item of mentionItems){const token=item.name;safe=safe.replace(new RegExp("(^|[^A-Za-z0-9_])("+token+")(?![A-Za-z0-9_])","gi"),(all,prefix,value)=>prefix+'<span class="mention mention-'+item.type+'">'+value+"</span>");}
+  for(const ch of (mentionDirectory.channels||[]).slice().sort((x,y)=>y.name.length-x.name.length)){const token="#"+ch.name;safe=safe.replace(new RegExp("(^|\\s)("+token+")(?![A-Za-z0-9_-])","gi"),(all,prefix,value)=>prefix+'<button type="button" class="channel-mention" data-channel-id="'+esc(ch.id)+'">'+value+"</button>");}
   safe=safe.replace(/\x60([^\x60\n]+)\x60/g,"<code>$1</code>");
   safe=safe.replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>");
   safe=safe.replace(/__([^_\n]+)__/g,"<u>$1</u>");
@@ -89,11 +90,13 @@ function cancelMessageEdit(){editingMessage=null;const input=$("#messageForm [na
 $("#cancelMessageEdit").onclick=cancelMessageEdit;
 function clearReply(){replyingTo=null;$("#replyingToBar")?.classList.add("hidden")}
 function beginReply(m){replyingTo=m;const bar=$("#replyingToBar");bar.innerHTML='Replying to <b>'+esc(m.username)+'</b>: '+esc(m.content.slice(0,140))+'<button type="button" id="cancelReply">×</button>';bar.classList.remove("hidden");$("#cancelReply").onclick=clearReply;$("#messageForm [name=content]").focus();closeMessageMenu()}
-document.addEventListener("click",e=>{\n const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}\n
+document.addEventListener("click",e=>{
+ const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}\n
  const action=e.target.closest("#messageContextMenu [data-action]");
  if(action&&contextMessage){
   const m=contextMessage,kind=action.dataset.action;closeMessageMenu();
-  if(kind==="reply")beginReply(m);\n  if(kind==="forward")openForwardPicker(m);
+  if(kind==="reply")beginReply(m);
+  if(kind==="forward")openForwardPicker(m);
   if(kind==="copy")navigator.clipboard?.writeText(m.content).then(()=>toast("Message copied")).catch(()=>toast("Clipboard unavailable"));
   if(kind==="copy-id")navigator.clipboard?.writeText(m.id).then(()=>toast("Message ID copied")).catch(()=>toast("Clipboard unavailable"));
   if(kind==="react")toggleReaction(m.id,action.dataset.emoji);
