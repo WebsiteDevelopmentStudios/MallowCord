@@ -148,7 +148,8 @@ const banned=await env.DB.prepare("SELECT id FROM bans WHERE ip_hash=? AND serve
 if(u.timed_out&&p.startsWith("/api/")&&!["/api/auth/me","/api/auth/logout"].includes(p))return fail("Your account is timed out.",403);
 if(p==="/api/notifications"&&m==="GET"){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
- const rows=(await env.DB.prepare("SELECT server_id,channel_id,COUNT(*) AS count FROM message_notifications WHERE user_id=? AND seen_at IS NULL GROUP BY server_id,channel_id").bind(u.id).all()).results;
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),scope_id TEXT NOT NULL,muted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,scope_type,scope_id))").run();
+ const rows=(await env.DB.prepare("SELECT mn.server_id,mn.channel_id,COUNT(*) AS count FROM message_notifications mn WHERE mn.user_id=? AND mn.seen_at IS NULL AND NOT EXISTS(SELECT 1 FROM user_notification_settings ns WHERE ns.user_id=mn.user_id AND ns.muted=1 AND ((ns.scope_type='server' AND ns.scope_id=mn.server_id) OR (ns.scope_type='channel' AND ns.scope_id=mn.channel_id))) GROUP BY mn.server_id,mn.channel_id").bind(u.id).all()).results;
  return json({unread:rows,total:rows.reduce((n,r)=>n+Number(r.count||0),0)});
 }
 if(p==="/api/notifications/read"&&m==="POST"){
@@ -158,6 +159,19 @@ if(p==="/api/notifications/read"&&m==="POST"){
  if(!access)return fail("You cannot mark this channel as read.",403);
  await env.DB.prepare("UPDATE message_notifications SET seen_at=? WHERE user_id=? AND channel_id=? AND seen_at IS NULL").bind(now(),u.id,cid).run();
  return json({ok:true});
+}
+if(p==="/api/notification-settings"&&(m==="GET"||m==="POST")){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),scope_id TEXT NOT NULL,muted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,scope_type,scope_id))").run();
+ if(m==="GET"){const rows=await env.DB.prepare("SELECT scope_type,scope_id,muted FROM user_notification_settings WHERE user_id=? AND muted=1").bind(u.id).all();return json({settings:rows.results})}
+ const b=await body(req),scope=String(b.scope_type||""),id=String(b.scope_id||""),muted=!!b.muted;if(!["server","channel"].includes(scope)||!id)return fail("Invalid notification setting.");
+ const access=scope==="server"?await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(id,u.id).first():await env.DB.prepare("SELECT 1 FROM channels c JOIN memberships m ON m.server_id=c.server_id WHERE c.id=? AND m.user_id=?").bind(id,u.id).first();if(!access)return fail("You cannot change notifications for this item.",403);
+ await env.DB.prepare("INSERT INTO user_notification_settings(user_id,scope_type,scope_id,muted,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,scope_type,scope_id) DO UPDATE SET muted=excluded.muted,updated_at=excluded.updated_at").bind(u.id,scope,id,muted?1:0,now()).run();return json({ok:true,muted});
+}
+if(p==="/api/notifications/clear"&&m==="POST"){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
+ const b=await body(req),scope=String(b.scope_type||""),id=String(b.scope_id||"");if(!["server","channel"].includes(scope)||!id)return fail("Invalid notification target.");
+ const access=scope==="server"?await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(id,u.id).first():await env.DB.prepare("SELECT 1 FROM channels c JOIN memberships m ON m.server_id=c.server_id WHERE c.id=? AND m.user_id=?").bind(id,u.id).first();if(!access)return fail("You cannot clear notifications for this item.",403);
+ if(scope==="server")await env.DB.prepare("UPDATE message_notifications SET seen_at=? WHERE user_id=? AND server_id=? AND seen_at IS NULL").bind(now(),u.id,id).run();else await env.DB.prepare("UPDATE message_notifications SET seen_at=? WHERE user_id=? AND channel_id=? AND seen_at IS NULL").bind(now(),u.id,id).run();return json({ok:true});
 }
 
 
