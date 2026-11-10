@@ -338,7 +338,7 @@ if(memberRoleRoute&&m==="POST"){
  return json({ok:true});
 }
 
-let x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);const a=await env.DB.prepare("SELECT id,name,kind,position FROM channels WHERE server_id=? ORDER BY position").bind(x[1]).all();return json({channels:a.results});}
+let x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,d.category_name FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
