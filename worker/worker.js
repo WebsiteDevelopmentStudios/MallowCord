@@ -68,7 +68,7 @@ if(discordBridgePath){
    const did=String(mem.id||"");if(!did||mem.bot)continue;
    const username="discord_"+did;let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();let userId=user?.id||("discord:"+did);
    if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
-   await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,now()).run();
+   await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",now()).run();
    await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(did,system.id,userId,now()).run();
    await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,userId,now()).run();
    if(everyone)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,everyone.id).run();
@@ -77,6 +77,13 @@ if(discordBridgePath){
    synced++;
   }
   return json({ok:true,server_id:system.id,channels:channelMap.length,roles:roleMap.length,members:synced,channel_map:channelMap});
+ }
+ if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
+  const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
+  const presence=["online","idle","dnd","offline"].includes(b.status)?b.status:"offline";
+  const linked=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(String(b.user_id||""),system.id).first();
+  if(!linked)return json({ok:true,ignored:true});
+  await env.DB.prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=?").bind(presence,now(),linked.user_id).run();return json({ok:true});
  }
  if(p==="/api/integrations/mallowbot/discord/messages"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
