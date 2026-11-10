@@ -282,7 +282,7 @@ if(messageAction){
 }
 
 x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot view this channel.",403);await ensureMessageExtras(env);
-const a=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,u.username,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(x[1]).all();
+await ensureAccountTables(env);const a=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,COALESCE(up.display_name,u.username) AS username,up.avatar_url,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(x[1]).all();
 const results=await Promise.all(a.results.reverse().map(async msg=>{
  const rr=await env.DB.prepare("SELECT emoji,COUNT(*) AS count,MAX(CASE WHEN user_id=? THEN 1 ELSE 0 END) AS mine FROM message_reactions WHERE message_id=? GROUP BY emoji").bind(u.id,msg.id).all();
  return {...msg,reply_to:msg.reply_to_id?{username:msg.reply_username,content:msg.reply_content}:null,reactions:rr.results};
