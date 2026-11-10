@@ -148,7 +148,8 @@ const banned=await env.DB.prepare("SELECT id FROM bans WHERE ip_hash=? AND serve
 if(u.timed_out&&p.startsWith("/api/")&&!["/api/auth/me","/api/auth/logout"].includes(p))return fail("Your account is timed out.",403);
 if(p==="/api/notifications"&&m==="GET"){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
- const rows=(await env.DB.prepare("SELECT server_id,channel_id,COUNT(*) AS count FROM message_notifications WHERE user_id=? AND seen_at IS NULL GROUP BY server_id,channel_id").bind(u.id).all()).results;
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),scope_id TEXT NOT NULL,muted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,scope_type,scope_id))").run();
+ const rows=(await env.DB.prepare("SELECT mn.server_id,mn.channel_id,COUNT(*) AS count FROM message_notifications mn WHERE mn.user_id=? AND mn.seen_at IS NULL AND NOT EXISTS(SELECT 1 FROM user_notification_settings ns WHERE ns.user_id=mn.user_id AND ns.muted=1 AND ((ns.scope_type='server' AND ns.scope_id=mn.server_id) OR (ns.scope_type='channel' AND ns.scope_id=mn.channel_id))) GROUP BY mn.server_id,mn.channel_id").bind(u.id).all()).results;
  return json({unread:rows,total:rows.reduce((n,r)=>n+Number(r.count||0),0)});
 }
 if(p==="/api/notifications/read"&&m==="POST"){
