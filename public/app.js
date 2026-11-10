@@ -27,13 +27,29 @@ async function loadMemberList(){
   }).join("");
  }catch(e){console.warn("Member list:",e.message)}
 }
-async function loadChannels(){try{const ed=await api("/servers/"+serverId+"/emojis");serverEmojis=ed.emojis||[]}catch{serverEmojis=[]}const d=await api("/servers/"+serverId+"/channels");const box=$("#channelList");box.innerHTML="";if(!d.channels.length){box.innerHTML='<div class="empty-state">No channels yet.</div>';return}let lastCategory=null;d.channels.forEach(c=>{const category=c.category_name||"";if(category!==lastCategory){if(category){const heading=document.createElement("div");heading.className="channel-category-label";heading.textContent=category.toUpperCase();box.append(heading)}lastCategory=category}const el=document.createElement("button");el.type="button";el.className="channel";el.dataset.id=c.id;el.innerHTML='<span class="channel-kind">'+(c.kind==="voice"?'<svg class="channel-voice-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"></path></svg>':"#")+"</span>"+esc(c.name);el.onclick=()=>selectChannel(c);box.append(el)});mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0])}
+async function loadChannels(){
+ try{const ed=await api("/servers/"+serverId+"/emojis");serverEmojis=ed.emojis||[]}catch{serverEmojis=[]}
+ const d=await api("/servers/"+serverId+"/channels"),box=$("#channelList");box.innerHTML="";
+ if(!d.channels.length){box.innerHTML='<div class="empty-state">No channels yet.</div>';return}
+ let lastCategory=null;
+ d.channels.forEach(ch=>{
+  const category=ch.category_name||"";
+  if(category!==lastCategory&&category){const heading=document.createElement("div");heading.className="channel-category-label";heading.innerHTML='<span class="channel-category-chevron">⌄</span><span>'+esc(category.toUpperCase())+'</span>';box.append(heading)}
+  lastCategory=category;
+  const el=document.createElement("button");el.type="button";el.className="channel"+(ch.discord_channel_id?" discord-linked-channel":"");el.dataset.id=ch.id;
+  if(ch.discord_channel_id){el.dataset.discordChannelId=ch.discord_channel_id;el.title="Synced with Discord #"+ch.name;}
+  el.innerHTML='<span class="channel-kind">'+(ch.kind==="voice"?'<svg class="channel-voice-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"></path></svg>':"#")+'</span><span class="channel-name">'+esc(ch.name)+'</span>'+(ch.discord_channel_id?'<span class="discord-channel-mark" title="Linked to Discord" aria-label="Linked to Discord">D</span>':"");
+  el.onclick=()=>selectChannel(ch);box.append(el);
+ });
+ mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0]);
+}
 function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").textContent=c.name;document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,1500)}
 function renderMarkdown(raw){
  const tick=String.fromCharCode(96),parts=String(raw??"").split(/(\x60{3}[\s\S]*?\x60{3})/g);
  return parts.map(part=>{
   if(part.startsWith(tick.repeat(3))&&part.endsWith(tick.repeat(3))){const body=part.slice(3,-3).replace(/^[a-zA-Z0-9_-]+\n/,"");return "<pre><code>"+esc(body)+"</code></pre>"}
-  let safe=esc(part);
+  let safe=esc(part),markdownImages=[];
+  safe=safe.replace(/!\[([^\]]*)\]\((https:\/\/[^)\s]+)\)/gi,(all,alt,url)=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<a class="message-embed-link" href="'+url+'" target="_blank" rel="noopener noreferrer"><img class="message-embed image-embed" src="'+url+'" alt="'+esc(alt)+'" loading="lazy"></a>');return key;});
   safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>x.name===name);return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
   safe=safe.replace(/https:\/\/[^\s<>"']+/gi,url=>{
    const clean=url.replace(/[),.!?]+$/,""),tail=url.slice(clean.length),lower=clean.toLowerCase();
@@ -60,7 +76,7 @@ function renderMarkdown(raw){
    if(/^&gt; /.test(line))return "<blockquote>"+line.slice(5)+"</blockquote>";
    if(/^[-*] /.test(line))return "<div class='md-list-line'>• "+line.slice(2)+"</div>";
    return line;
-  }).join("<br>");
+  }).join("<br>").replace(/MALLOWIMAGEPLACEHOLDER(\d+)END/g,(all,index)=>markdownImages[Number(index)]||"");
  }).join("");
 }
 function closeMessageMenu(){$("#messageContextMenu")?.classList.add("hidden")}
