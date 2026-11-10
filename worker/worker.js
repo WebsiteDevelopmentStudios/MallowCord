@@ -4,8 +4,8 @@ const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{"co
 const fail=(e,s=400)=>json({error:e},s),hex=b=>Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
 const sha=async v=>hex(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v)));
 const token=()=>Array.from(crypto.getRandomValues(new Uint8Array(32))).map(x=>x.toString(16).padStart(2,"0")).join("");
-const setCookie=v=>COOKIE+"="+v+"; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age="+(DAYS*86400);
-const clearCookie=()=>COOKIE+"=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
+const setCookie=v=>COOKIE+"="+v+"; Path=/; HttpOnly; Secure; SameSite=None; Max-Age="+(DAYS*86400);
+const clearCookie=()=>COOKIE+"=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0";
 const ip=req=>req.headers.get("CF-Connecting-IP")||"";
 const ipDigest=async(req,env)=>ip(req)?sha(ip(req)+env.IP_HASH_SECRET):null;
 async function passwordHash(password,salt){salt=salt||token().slice(0,32);const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:new TextEncoder().encode(salt),iterations:100000,hash:"SHA-256"},key,256);return "pbkdf2$"+salt+"$"+hex(bits);}
