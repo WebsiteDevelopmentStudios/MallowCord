@@ -91,7 +91,7 @@ $("#cancelMessageEdit").onclick=cancelMessageEdit;
 function clearReply(){replyingTo=null;$("#replyingToBar")?.classList.add("hidden")}
 function beginReply(m){replyingTo=m;const bar=$("#replyingToBar");bar.innerHTML='Replying to <b>'+esc(m.username)+'</b>: '+esc(m.content.slice(0,140))+'<button type="button" id="cancelReply">×</button>';bar.classList.remove("hidden");$("#cancelReply").onclick=clearReply;$("#messageForm [name=content]").focus();closeMessageMenu()}
 document.addEventListener("click",e=>{
- const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}\n
+ const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}
  const action=e.target.closest("#messageContextMenu [data-action]");
  if(action&&contextMessage){
   const m=contextMessage,kind=action.dataset.action;closeMessageMenu();
