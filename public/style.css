@@ -581,3 +581,24 @@ body[data-theme="light"] .account-settings-nav,body[data-theme="opposite"] .acco
 body[data-theme="light"] .account-nav,body[data-theme="opposite"] .account-nav{color:#424954}
 body[data-theme="light"] .account-nav.active,body[data-theme="opposite"] .account-nav.active{color:#20242a;background:#dce1e8}
 body[data-theme="light"] .message-form button,body[data-theme="opposite"] .message-form button{color:#fff}
+
+/* Compact, grouped chat messages */
+.messages{gap:3px;padding:18px 22px 24px}
+.message-group{display:flex;align-items:flex-start;gap:12px;padding:7px 9px;border-radius:7px;max-width:100%;transition:background .12s ease}
+.message-group:hover{background:rgba(0,0,0,.045)}
+.message-group>.avatar{width:38px;height:38px;flex:0 0 38px;margin-top:2px}
+.message-group-body{min-width:0;flex:1}
+.message-group .message-head{display:flex;align-items:baseline;gap:9px;margin:0 0 2px;min-height:22px}
+.message-group .message-head b{font-size:14px;font-weight:650;color:var(--text)}
+.message-group .message-head small{font-size:11px;color:var(--text-faint)}
+.message-entry{position:relative;padding:1px 0 2px;min-width:0}
+.message-entry+.message-entry{margin-top:1px}
+.message-content{margin:0;line-height:1.48;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+.message-time-inline{display:none;position:absolute;right:100%;top:3px;width:58px;padding-right:9px;text-align:right;white-space:nowrap;color:var(--text-faint);font-size:10px}
+.message-entry:hover .message-time-inline{display:block}
+.message-entry .message-reactions{margin:5px 0 3px}
+.message-entry .message-reply-preview{margin:3px 0 5px}
+.message-group .message-content h1,.message-group .message-content h2,.message-group .message-content h3{color:var(--text)}
+.mallowbot-member .avatar img{width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.bot-tag{display:inline-block;vertical-align:2px;margin-left:5px;padding:2px 4px;border-radius:3px;background:#596574;color:#fff;font-size:9px;font-weight:800;letter-spacing:.35px}
+@media(max-width:620px){.messages{padding:12px 8px}.message-group{gap:9px;padding:7px 5px}.message-group>.avatar{width:34px;height:34px;flex-basis:34px}.message-time-inline{display:none!important}}
