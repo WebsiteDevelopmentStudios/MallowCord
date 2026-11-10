@@ -169,8 +169,9 @@ async function showAccountPage(page){
  const root=$("#accountSettingsContent");
  if(page==="account-info"){
   const p=accountProfile,verifiedEmail=!!p.email_verified_at,verifiedPhone=!!p.phone_verified_at;
-  root.innerHTML='<div class="account-panel"><h3>Profile</h3><form id="profileSettingsForm" class="account-form"><label>Username<div class="inline-field"><input name="username" value="'+esc(me.username)+'" minlength="3" maxlength="24" required><button class="secondary" type="button" id="saveUsername">Save</button></div></label><label>Display name<input name="display_name" maxlength="32" value="'+esc(p.display_name||"")+'" placeholder="How others see you"></label><label>Profile picture URL<input name="avatar_url" type="url" value="'+esc(p.avatar_url||"")+'" placeholder="https://example.com/avatar.png"></label><div class="account-avatar-preview">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="Profile preview">':'<span>'+esc((p.display_name||me.username)[0].toUpperCase())+'</span>')+'</div><button class="primary">Save profile</button></form></div><div class="account-panel"><h3>Email verification</h3><p class="account-note">Add an email address and verify it with a one-time code.</p><form id="emailVerifyForm" class="account-form"><label>Email address<input name="value" type="email" value="'+esc(p.email||"")+'" placeholder="you@example.com" required></label><div class="verification-state '+(verifiedEmail?"verified":"")+'">'+(verifiedEmail?"Verified":"Not verified")+'</div><button class="secondary">Send verification code</button></form><form id="emailConfirmForm" class="account-form verify-code-form"><label>Six-digit email code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></label><button class="primary">Confirm email</button></form></div><div class="account-panel"><h3>Phone verification</h3><p class="account-note">Use international format, including the country code (for example +12065550123).</p><form id="phoneVerifyForm" class="account-form"><label>Phone number<input name="value" type="tel" value="'+esc(p.phone||"")+'" placeholder="+12065550123" required></label><div class="verification-state '+(verifiedPhone?"verified":"")+'">'+(verifiedPhone?"Verified":"Not verified")+'</div><button class="secondary">Send SMS code</button></form><form id="phoneConfirmForm" class="account-form verify-code-form"><label>Six-digit SMS code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></label><button class="primary">Confirm phone</button></form></div>';
-  $("#profileSettingsForm").onsubmit=async e=>{e.preventDefault();try{const d=new FormData(e.target);await api("/account/profile",{method:"POST",body:JSON.stringify({display_name:d.get("display_name"),avatar_url:d.get("avatar_url")})});accountProfile=(await api("/account/profile")).profile;applyProfile();toast("Profile updated");showAccountPage("account-info")}catch(x){toast(x.message)}};
+  root.innerHTML='<div class="account-panel"><h3>Profile</h3><form id="profileSettingsForm" class="account-form"><label>Username<div class="inline-field"><input name="username" value="'+esc(me.username)+'" minlength="3" maxlength="24" required><button class="secondary" type="button" id="saveUsername">Save</button></div></label><label>Display name<input name="display_name" maxlength="32" value="'+esc(p.display_name||"")+'" placeholder="How others see you"></label><div class="avatar-upload-section"><label>Profile picture<input id="avatarFileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label><p class="account-note">Choose an image, then drag it inside the square to reposition it. Use the zoom slider to frame the part you want.</p><div class="avatar-crop-stage hidden" id="avatarCropStage"><canvas id="avatarCropCanvas" width="320" height="320" aria-label="Profile picture crop preview"></canvas><span class="avatar-crop-hint">Drag to reposition</span></div><div class="avatar-crop-controls hidden" id="avatarCropControls"><label>Zoom <input id="avatarZoom" type="range" min="1" max="3" step="0.01" value="1"></label><button type="button" class="secondary" id="resetAvatarCrop">Reset crop</button><button type="button" class="secondary" id="clearAvatarCrop">Cancel image</button></div><div class="account-avatar-preview" id="savedAvatarPreview">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="Profile preview">':'<span>'+esc((p.display_name||me.username)[0].toUpperCase())+'</span>')+'</div><label>Or use a profile picture URL<input name="avatar_url" type="url" value="'+(String(p.avatar_url||"").startsWith("data:image/")?"":esc(p.avatar_url||""))+'" placeholder="https://example.com/avatar.png"></label></div><button class="primary">Save profile</button></form></div><div class="account-panel"><h3>Email verification</h3><p class="account-note">Add an email address and verify it with a one-time code.</p><form id="emailVerifyForm" class="account-form"><label>Email address<input name="value" type="email" value="'+esc(p.email||"")+'" placeholder="you@example.com" required></label><div class="verification-state '+(verifiedEmail?"verified":"")+'">'+(verifiedEmail?"Verified":"Not verified")+'</div><button class="secondary">Send verification code</button></form><form id="emailConfirmForm" class="account-form verify-code-form"><label>Six-digit email code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></label><button class="primary">Confirm email</button></form></div><div class="account-panel"><h3>Phone verification</h3><p class="account-note">Use international format, including the country code (for example +12065550123).</p><form id="phoneVerifyForm" class="account-form"><label>Phone number<input name="value" type="tel" value="'+esc(p.phone||"")+'" placeholder="+12065550123" required></label><div class="verification-state '+(verifiedPhone?"verified":"")+'">'+(verifiedPhone?"Verified":"Not verified")+'</div><button class="secondary">Send SMS code</button></form><form id="phoneConfirmForm" class="account-form verify-code-form"><label>Six-digit SMS code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></label><button class="primary">Confirm phone</button></form></div>';
+  initAvatarCropper();
+  $("#profileSettingsForm").onsubmit=async e=>{e.preventDefault();try{const d=new FormData(e.target),cropped=avatarCropImage?await getCroppedAvatar():null,url=String(d.get("avatar_url")||"").trim();if(cropped&&url)throw Error("Choose either your uploaded picture or a picture URL, not both.");await api("/account/profile",{method:"POST",body:JSON.stringify({display_name:d.get("display_name"),avatar_url:cropped||url})});accountProfile=(await api("/account/profile")).profile;avatarCropImage=null;applyProfile();toast("Profile updated");showAccountPage("account-info")}catch(x){toast(x.message)}};
   $("#saveUsername").onclick=async()=>{const val=$("#profileSettingsForm").username.value;try{const d=await api("/auth/username",{method:"POST",body:JSON.stringify({username:val})});me.username=d.username;$("#currentUsername").textContent=me.username;toast("Username updated")}catch(x){toast(x.message)}};
   for(const [form,channel] of [["emailVerifyForm","email"],["phoneVerifyForm","phone"]])$("#"+form).onsubmit=async e=>{e.preventDefault();try{const value=new FormData(e.target).get("value");await api("/account/contact/request",{method:"POST",body:JSON.stringify({channel,value})});accountProfile=(await api("/account/profile")).profile;toast("Verification code sent");showAccountPage("account-info")}catch(x){toast(x.message)}};
   for(const [form,channel] of [["emailConfirmForm","email"],["phoneConfirmForm","phone"]])$("#"+form).onsubmit=async e=>{e.preventDefault();try{await api("/account/contact/confirm",{method:"POST",body:JSON.stringify({channel,code:new FormData(e.target).get("code")})});accountProfile=(await api("/account/profile")).profile;toast("Contact method verified");showAccountPage("account-info")}catch(x){toast(x.message)}};
@@ -206,6 +207,52 @@ async function showAccountPage(page){
  }
  root.classList.remove("settings-page-enter");void root.offsetWidth;root.classList.add("settings-page-enter");
 }
+
+// Profile image cropper: square crop, pointer drag and zoom, exported as optimized JPEG.
+let avatarCropImage=null,avatarCropZoom=1,avatarCropX=0,avatarCropY=0,avatarCropObjectUrl=null,avatarCropPointer=null;
+function avatarCropLayout(){
+ const stage=320,img=avatarCropImage;if(!img)return null;
+ const scale=Math.max(stage/img.naturalWidth,stage/img.naturalHeight)*avatarCropZoom;
+ const width=img.naturalWidth*scale,height=img.naturalHeight*scale;
+ return {scale,left:(stage-width)/2+avatarCropX,top:(stage-height)/2+avatarCropY,width,height};
+}
+function drawAvatarCrop(){
+ const canvas=$("#avatarCropCanvas");if(!canvas||!avatarCropImage)return;
+ const ctx=canvas.getContext("2d"),r=avatarCropLayout();ctx.clearRect(0,0,320,320);ctx.fillStyle="#202329";ctx.fillRect(0,0,320,320);
+ ctx.drawImage(avatarCropImage,r.left,r.top,r.width,r.height);
+}
+function initAvatarCropper(){
+ const input=$("#avatarFileInput"),stage=$("#avatarCropStage"),controls=$("#avatarCropControls"),zoom=$("#avatarZoom"),canvas=$("#avatarCropCanvas");
+ if(!input)return;
+ input.onchange=()=>{
+  const file=input.files?.[0];if(!file)return;
+  if(!["image/png","image/jpeg","image/webp","image/gif"].includes(file.type)){toast("Choose a PNG, JPG, WebP or GIF image.");input.value="";return}
+  if(file.size>10*1024*1024){toast("Choose an image smaller than 10 MB.");input.value="";return}
+  if(avatarCropObjectUrl)URL.revokeObjectURL(avatarCropObjectUrl);
+  avatarCropObjectUrl=URL.createObjectURL(file);const img=new Image();
+  img.onload=()=>{avatarCropImage=img;avatarCropZoom=1;avatarCropX=0;avatarCropY=0;zoom.value="1";stage.classList.remove("hidden");controls.classList.remove("hidden");$("#savedAvatarPreview").classList.add("hidden");drawAvatarCrop()};
+  img.onerror=()=>toast("That image could not be opened.");img.src=avatarCropObjectUrl;
+ };
+ zoom.oninput=()=>{avatarCropZoom=Number(zoom.value)||1;drawAvatarCrop()};
+ $("#resetAvatarCrop").onclick=()=>{avatarCropZoom=1;avatarCropX=0;avatarCropY=0;zoom.value="1";drawAvatarCrop()};
+ $("#clearAvatarCrop").onclick=()=>{avatarCropImage=null;input.value="";stage.classList.add("hidden");controls.classList.add("hidden");$("#savedAvatarPreview").classList.remove("hidden");if(avatarCropObjectUrl)URL.revokeObjectURL(avatarCropObjectUrl);avatarCropObjectUrl=null};
+ const point=e=>({x:e.clientX,y:e.clientY});
+ canvas.onpointerdown=e=>{if(!avatarCropImage)return;avatarCropPointer=point(e);canvas.setPointerCapture(e.pointerId);canvas.classList.add("dragging")};
+ canvas.onpointermove=e=>{if(!avatarCropPointer)return;const p=point(e);avatarCropX+=p.x-avatarCropPointer.x;avatarCropY+=p.y-avatarCropPointer.y;avatarCropPointer=p;drawAvatarCrop()};
+ const stop=()=>{avatarCropPointer=null;canvas.classList.remove("dragging")};canvas.onpointerup=stop;canvas.onpointercancel=stop;canvas.onlostpointercapture=stop;
+}
+async function getCroppedAvatar(){
+ if(!avatarCropImage) return null;
+ const r=avatarCropLayout(),scale=r.scale,sx=Math.max(0,-r.left/scale),sy=Math.max(0,-r.top/scale),size=320/scale;
+ const canvas=document.createElement("canvas");canvas.width=512;canvas.height=512;
+ const ctx=canvas.getContext("2d",{alpha:false});ctx.fillStyle="#202329";ctx.fillRect(0,0,512,512);
+ ctx.drawImage(avatarCropImage,sx,sy,size,size,0,0,512,512);
+ let quality=.88,data=canvas.toDataURL("image/jpeg",quality);
+ while(data.length>650000&&quality>.55){quality-=.07;data=canvas.toDataURL("image/jpeg",quality)}
+ if(data.length>700000)throw Error("This image could not be compressed enough. Try a smaller image.");
+ return data;
+}
+
 function applyProfile(){
  const name=accountProfile.display_name||me.username;$("#currentUsername").textContent=name;
  const avatar=$("#userAvatar");avatar.innerHTML=accountProfile.avatar_url?'<img src="'+esc(accountProfile.avatar_url)+'" alt="">':esc(name[0].toUpperCase());
