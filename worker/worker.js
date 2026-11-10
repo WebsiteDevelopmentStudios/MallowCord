@@ -20,6 +20,18 @@ async function audit(env,actor,target,action,details){await env.DB.prepare("INSE
 async function bootstrap(env,secret){if(!env.BOOTSTRAP_SECRET||secret!==env.BOOTSTRAP_SECRET)throw Error("Invalid bootstrap secret.");if(await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first())return {already_initialized:true};if(!env.OWNER_PASSWORD||env.OWNER_PASSWORD.length<12)throw Error("Set OWNER_PASSWORD to at least 12 characters.");const t=now(),u=uid(),name=env.OWNER_USERNAME||"Blemmished";await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'owner',?,?,?)").bind(u,name,name.toLowerCase(),await passwordHash(env.OWNER_PASSWORD),t,t).run();const s=uid(),r1=uid(),r2=uid(),ch=uid();await env.DB.batch([env.DB.prepare("INSERT INTO servers(id,name,owner_id,icon_url,is_system,created_at) VALUES(?,?,?,?,1,?)").bind(s,"Mallow Swamp",u,env.MALLOWBOT_ICON_URL||null,t),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r1,s),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(r2,s),env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(ch,s),env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u,t),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r1),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r2)]);return {initialized:true,owner:name,server:"Mallow Swamp"};}
 async function handle(req,env){const p=new URL(req.url).pathname,m=req.method;let x;
 if(p==="/api/health")return json({ok:true,service:"mallowcord",time:now()});
+const publicAvatar=p.match(/^\/api\/public\/avatars\/([A-Za-z0-9:_-]+)$/);
+if(publicAvatar&&m==="GET"){
+ await ensureAccountTables(env);
+ const profile=await env.DB.prepare("SELECT avatar_url FROM user_profiles WHERE user_id=?").bind(publicAvatar[1]).first();
+ const value=String(profile?.avatar_url||"");
+ if(value.startsWith("https://"))return Response.redirect(value,302);
+ const match=value.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+ if(!match)return new Response("Avatar not found.",{status:404});
+ const binary=atob(match[2]),bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+ return new Response(bytes,{headers:{"content-type":match[1],"cache-control":"public, max-age=300","x-content-type-options":"nosniff","access-control-allow-origin":"*"}});
+}
+
 if(p!=="/api/bootstrap"&&env.DB){const blocked=await env.DB.prepare("SELECT id FROM bans WHERE ip_hash=? AND server_id IS NULL AND (expires_at IS NULL OR expires_at>?) LIMIT 1").bind(await ipDigest(req,env),now()).first();if(blocked)return fail("Access to MallowCord is blocked.",403);}
 if(p==="/api/bootstrap"&&m==="POST"){try{return json(await bootstrap(env,(await body(req)).secret));}catch(e){return fail(e.message,403);}}
 
@@ -100,7 +112,7 @@ if(discordBridgePath){
   return json({ok:true,message_id:mid},201);
  }
  if(p==="/api/integrations/mallowbot/discord/outbox"&&m==="GET"){
-  const rows=await env.DB.prepare("SELECT o.id,o.discord_channel_id,o.username,o.avatar_url,o.content,o.message_id FROM discord_outbox o WHERE o.processed_at IS NULL ORDER BY o.created_at LIMIT 30").all();return json({events:rows.results});
+  const rows=await env.DB.prepare("SELECT o.id,o.discord_channel_id,o.username,CASE WHEN o.avatar_url LIKE 'data:image/%' THEN 'https://mallowcord-api.wowgrayhaha.workers.dev/api/public/avatars/'||m.author_id ELSE o.avatar_url END AS avatar_url,o.content,o.message_id FROM discord_outbox o LEFT JOIN messages m ON m.id=o.message_id WHERE o.processed_at IS NULL ORDER BY o.created_at LIMIT 30").all();return json({events:rows.results});
  }
  const ack=p.match(/^\/api\/integrations\/mallowbot\/discord\/outbox\/([\w-]+)\/ack$/);
  if(ack&&m==="POST"){const b=await body(req);await env.DB.prepare("UPDATE discord_outbox SET processed_at=?,discord_message_id=? WHERE id=?").bind(now(),String(b.discord_message_id||"").slice(0,32)||null,ack[1]).run();return json({ok:true});}
@@ -353,7 +365,7 @@ if(memberRoleRoute&&m==="POST"){
  return json({ok:true});
 }
 
-x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,d.category_name FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
+x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
