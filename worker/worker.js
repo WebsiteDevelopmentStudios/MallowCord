@@ -55,7 +55,113 @@ if(p==="/api/auth/username"&&m==="POST"){const name=String((await body(req)).use
 if(p==="/api/auth/recovery/rotate"&&m==="POST"&&u.account_type==="basic")return json({recovery_code:await recovery(env,u.id)});
 if(p==="/api/servers"&&m==="GET"){const a=await env.DB.prepare("SELECT s.id,s.name,s.icon_url,s.is_system,m.joined_at FROM memberships m JOIN servers s ON s.id=m.server_id WHERE m.user_id=? ORDER BY s.is_system DESC,s.name").bind(u.id).all();return json({servers:a.results});}
 if(p==="/api/servers"&&m==="POST"){if(u.account_type==="basic")return fail("Full-access accounts are required to create servers.",403);const name=String((await body(req)).name||"").trim().slice(0,50);if(name.length<2)return fail("Server name must be at least 2 characters.");const s=uid(),r=uid(),rm=uid(),c=uid(),t=now();await env.DB.batch([env.DB.prepare("INSERT INTO servers(id,name,owner_id,created_at) VALUES(?,?,?,?)").bind(s,name,u.id,t),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r,s),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(rm,s),env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(c,s),env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u.id,t),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u.id,r),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u.id,rm)]);return json({server:{id:s,name}},201);}
+
+/* Server administration: channels, roles, members, stats and onboarding */
+const serverAdminMatch=p.match(/^\/api\/servers\/([\w-]+)\/(settings|stats|members|roles|onboarding)$/);
+if(serverAdminMatch){
+ const sid=serverAdminMatch[1],section=serverAdminMatch[2];
+ const server=await env.DB.prepare("SELECT id,name,icon_url,is_system,owner_id,created_at FROM servers WHERE id=?").bind(sid).first();
+ if(!server)return fail("Server not found.",404);
+ const membership=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(sid,u.id).first();
+ if(!membership)return fail("You are not a member of this server.",403);
+ const manager=isOwner(u)||server.owner_id===u.id;
+ if(section==="settings"&&m==="GET")return json({server,can_manage:manager});
+ if(section==="settings"&&m==="POST"){
+  if(!manager)return fail("Server owner access required.",403);
+  const b=await body(req),name=String(b.name??server.name).trim().slice(0,50),icon=String(b.icon_url??server.icon_url??"").trim();
+  if(name.length<2)return fail("Server name must be at least 2 characters.");
+  if(icon&&!/^https:\/\//i.test(icon))return fail("Server icon must be an HTTPS URL.");
+  await env.DB.prepare("UPDATE servers SET name=?,icon_url=? WHERE id=?").bind(name,icon||null,sid).run();
+  return json({server:{...server,name,icon_url:icon||null}});
+ }
+ if(section==="stats"&&m==="GET"){
+  const [members,channels,messages,roles]=await Promise.all([
+   env.DB.prepare("SELECT COUNT(*) AS count FROM memberships WHERE server_id=?").bind(sid).first(),
+   env.DB.prepare("SELECT COUNT(*) AS count FROM channels WHERE server_id=?").bind(sid).first(),
+   env.DB.prepare("SELECT COUNT(*) AS count FROM messages m JOIN channels c ON c.id=m.channel_id WHERE c.server_id=?").bind(sid).first(),
+   env.DB.prepare("SELECT COUNT(*) AS count FROM roles WHERE server_id=?").bind(sid).first()
+  ]);
+  return json({stats:{members:members.count,channels:channels.count,messages:messages.count,roles:roles.count,created_at:server.created_at}});
+ }
+ if(section==="members"&&m==="GET"){
+  const a=await env.DB.prepare("SELECT u.id,u.username,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.server_id=? ORDER BY m.joined_at").bind(sid).all();
+  return json({members:a.results,can_manage:manager});
+ }
+ if(section==="roles"&&m==="GET"){
+  const a=await env.DB.prepare("SELECT id,name,is_system,position FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
+  return json({roles:a.results,can_manage:manager});
+ }
+ if(section==="roles"&&m==="POST"){
+  if(!manager)return fail("Server owner access required.",403);
+  const b=await body(req),name=String(b.name||"").trim().slice(0,32);
+  if(!/^[A-Za-z0-9 _-]{2,32}$/.test(name))return fail("Role names must be 2–32 letters, numbers, spaces, _ or -.");
+  const id=uid(),position=Number((await env.DB.prepare("SELECT COALESCE(MAX(position),1)+1 AS n FROM roles WHERE server_id=?").bind(sid).first()).n);
+  try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?,?,0,?)").bind(id,sid,name,position).run();}catch{return fail("A role with that name already exists.",409);}
+  return json({role:{id,name,is_system:0,position}},201);
+ }
+ if(section==="onboarding"){
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_onboarding(server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,enabled INTEGER NOT NULL DEFAULT 0,welcome_text TEXT NOT NULL DEFAULT '',rules_text TEXT NOT NULL DEFAULT '',updated_at INTEGER NOT NULL)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS onboarding_completions(server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,completed_at INTEGER NOT NULL,PRIMARY KEY(server_id,user_id))").run();
+  if(m==="GET"){
+   const config=await env.DB.prepare("SELECT enabled,welcome_text,rules_text FROM server_onboarding WHERE server_id=?").bind(sid).first()||{enabled:0,welcome_text:"Welcome! Please read the rules before chatting.",rules_text:"Be respectful. No spam or harassment."};
+   const done=await env.DB.prepare("SELECT 1 FROM onboarding_completions WHERE server_id=? AND user_id=?").bind(sid,u.id).first();
+   return json({config,completed:!!done,can_manage:manager});
+  }
+  if(m==="POST"){
+   const b=await body(req);
+   if(b.complete===true){
+    await env.DB.prepare("INSERT OR REPLACE INTO onboarding_completions(server_id,user_id,completed_at) VALUES(?,?,?)").bind(sid,u.id,now()).run();
+    return json({ok:true});
+   }
+   if(!manager)return fail("Server owner access required.",403);
+   const enabled=b.enabled?1:0,welcome=String(b.welcome_text||"").trim().slice(0,1000),rules=String(b.rules_text||"").trim().slice(0,3000);
+   await env.DB.prepare("INSERT INTO server_onboarding(server_id,enabled,welcome_text,rules_text,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(server_id) DO UPDATE SET enabled=excluded.enabled,welcome_text=excluded.welcome_text,rules_text=excluded.rules_text,updated_at=excluded.updated_at").bind(sid,enabled,welcome,rules,now()).run();
+   return json({ok:true});
+  }
+ }
+}
+const roleRoute=p.match(/^\/api\/servers\/([\w-]+)\/roles\/([\w-]+)$/);
+if(roleRoute&&(m==="POST"||m==="DELETE")){
+ const sid=roleRoute[1],rid=roleRoute[2],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
+ if(!sv)return fail("Server not found.",404);
+ if(!isOwner(u)&&sv.owner_id!==u.id)return fail("Server owner access required.",403);
+ const role=await env.DB.prepare("SELECT id,is_system FROM roles WHERE id=? AND server_id=?").bind(rid,sid).first();
+ if(!role)return fail("Role not found.",404);
+ if(role.is_system)return fail("System roles cannot be changed or deleted.",403);
+ if(m==="DELETE"){await env.DB.prepare("DELETE FROM roles WHERE id=? AND server_id=?").bind(rid,sid).run();return json({ok:true});}
+ const name=String((await body(req)).name||"").trim().slice(0,32);
+ if(!/^[A-Za-z0-9 _-]{2,32}$/.test(name))return fail("Role names must be 2–32 letters, numbers, spaces, _ or -.");
+ try{await env.DB.prepare("UPDATE roles SET name=? WHERE id=? AND server_id=?").bind(name,rid,sid).run();}catch{return fail("A role with that name already exists.",409);}
+ return json({ok:true,name});
+}
+const memberRoleRoute=p.match(/^\/api\/servers\/([\w-]+)\/members\/([\w-]+)\/roles$/);
+if(memberRoleRoute&&m==="POST"){
+ const sid=memberRoleRoute[1],target=memberRoleRoute[2],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
+ if(!sv)return fail("Server not found.",404);
+ if(!isOwner(u)&&sv.owner_id!==u.id)return fail("Server owner access required.",403);
+ const b=await body(req),rid=String(b.role_id||"");
+ const member=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(sid,target).first();
+ const role=await env.DB.prepare("SELECT id,name FROM roles WHERE id=? AND server_id=?").bind(rid,sid).first();
+ if(!member||!role)return fail("Member or role not found.",404);
+ if(role.name==="@everyone")return fail("The @everyone role is assigned automatically.",403);
+ if(b.remove)await env.DB.prepare("DELETE FROM member_roles WHERE server_id=? AND user_id=? AND role_id=?").bind(sid,target,rid).run();
+ else await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(sid,target,rid).run();
+ return json({ok:true});
+}
+
 let x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);const a=await env.DB.prepare("SELECT id,name,kind,position FROM channels WHERE server_id=? ORDER BY position").bind(x[1]).all();return json({channels:a.results});}
+
+if(x&&m==="POST"){
+ const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
+ if(!sv)return fail("Server not found.",404);
+ if(!isOwner(u)&&sv.owner_id!==u.id)return fail("Server owner access required.",403);
+ const b=await body(req),name=String(b.name||"").trim().toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50),kind=b.kind==="voice"?"voice":"text";
+ if(name.length<2)return fail("Channel name must be at least 2 characters.");
+ const position=Number((await env.DB.prepare("SELECT COALESCE(MAX(position),-1)+1 AS n FROM channels WHERE server_id=?").bind(sid).first()).n),id=uid();
+ try{await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,?,?)").bind(id,sid,name,kind,position).run();}catch{return fail("A channel with that name could not be created.",409);}
+ return json({channel:{id,name,kind,position}},201);
+}
+
 x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot view this channel.",403);const a=await env.DB.prepare("SELECT m.id,m.content,m.created_at,u.username,u.id AS author_id FROM messages m JOIN users u ON u.id=m.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(x[1]).all();return json({messages:a.results.reverse()});}
 if(x&&m==="POST"){const content=String((await body(req)).content||"").trim();if(!content||content.length>4000)return fail("Message must be 1–4000 characters.");const mem=await env.DB.prepare("SELECT 1 FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot send messages here.",403);const mid=uid(),t=now();await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(mid,x[1],u.id,content,t).run();return json({message:{id:mid,content,created_at:t,username:u.username,author_id:u.id}},201);}
 if(p==="/api/integrations/mallowbot/users"&&(m==="GET"||m==="POST")){if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);const ownerRow=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first();if(m==="GET"){const a=await env.DB.prepare("SELECT id,username,account_type,status,timeout_until,created_at FROM users ORDER BY created_at DESC LIMIT 500").all();return json({users:a.results});}const b=await body(req),name=String(b.username||"").trim(),pw=String(b.password||"");if(!/^[A-Za-z0-9_]{3,24}$/.test(name)||pw.length<12)return fail("Use a valid username and password of at least 12 characters.");const id2=uid(),t=now();try{await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'full',?,?,?)").bind(id2,name,name.toLowerCase(),await passwordHash(pw),t,t).run();}catch{return fail("That username is already taken.",409);}await joinSwamp(env,id2);await audit(env,ownerRow?.id,id2,"mallowbot_create_full_account");return json({user:{id:id2,username:name,account_type:"full"}},201);}
