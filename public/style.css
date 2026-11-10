@@ -634,3 +634,9 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .message-link{color:var(--main-theme-hover);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
 .message-link:hover{filter:brightness(1.15)}
 @media(max-width:620px){.message-embed{max-height:300px}.message-embed.gif-embed{max-height:340px}}
+
+.role-ping-toggle{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);white-space:nowrap}
+.role-ping-toggle input{accent-color:var(--main-theme-color)}
+.mention{display:inline-block;padding:0 3px;border-radius:4px;font-weight:600}
+.mention-user{color:#9bc5ff;background:rgba(74,139,220,.16)}
+.mention-role{color:#c7a5ff;background:rgba(150,100,220,.17)}
