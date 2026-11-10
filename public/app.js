@@ -68,7 +68,7 @@ async function loadMessages(){
   const messages=d.messages||[],signature=JSON.stringify(messages);
   if(signature===lastMessagesSignature)return;
   lastMessagesSignature=signature;
-  const messages=d.messages||[],groups=[];
+  const groups=[];
   for(const m of messages){
    const last=groups[groups.length-1],same=last&&last.author_id===m.author_id&&last.username===m.username&&(m.created_at-last.lastTime)<=300;
    if(same&&last.is_bot===!!m.is_bot){last.items.push(m);last.lastTime=m.created_at}else groups.push({author_id:m.author_id,username:m.username,avatar_url:m.avatar_url,is_bot:!!m.is_bot,items:[m],lastTime:m.created_at});
