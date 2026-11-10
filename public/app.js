@@ -82,7 +82,7 @@ async function loadMessages(){
     return '<div class="message-entry" data-message-id="'+m.id+'">'+(m.forwarded_from?'<div class="forwarded-label">Forwarded from <b>'+esc(m.forwarded_from)+'</b></div>':"")+reply+'<div class="message-content">'+renderMarkdown(m.content)+'</div><small class="message-time-inline" title="'+new Date(m.created_at*1000).toLocaleString()+'">'+time+(m.edited_at?' · edited':"")+'</small><div class="message-reactions">'+reactions+'</div></div>';
    }).join("");
    const first=g.items[0],stamp=new Date(first.created_at*1000).toLocaleString();
-   return '<article class="message-group '+(g.is_bot?"bot-message-group":"")+'"><div class="avatar">'+avatar+'</div><div class="message-group-body"><div class="message-head"><b>'+esc(g.username)+'</b>'+(g.is_bot?'<span class="bot-tag">BOT</span>':"")+'<small>'+stamp+'</small></div>'+entries+'</div></article>';
+   return '<article class="message-group '+(g.is_bot?"bot-message-group":"")+'"><button type="button" class="avatar profile-avatar-trigger status-avatar" data-user-id="'+esc(g.author_id)+'" data-status="'+esc(g.items[0].status||"online")+'" aria-label="View '+esc(g.username)+' profile">'+avatar+'</button><div class="message-group-body"><div class="message-head"><b>'+esc(g.username)+'</b>'+(g.is_bot?'<span class="bot-tag">BOT</span>':"")+'<small>'+stamp+'</small></div>'+entries+'</div></article>';
   }).join("");
   box.querySelectorAll(".message-entry").forEach(el=>{const m=messages.find(x=>x.id===el.dataset.messageId);if(m&&!m.is_bot)el.addEventListener("contextmenu",e=>{e.preventDefault();openMessageMenu(m,e.clientX,e.clientY)})});
   if(bottom)box.scrollTop=box.scrollHeight;
@@ -98,8 +98,20 @@ function cancelMessageEdit(){editingMessage=null;const input=$("#messageForm [na
 $("#cancelMessageEdit").onclick=cancelMessageEdit;
 function clearReply(){replyingTo=null;$("#replyingToBar")?.classList.add("hidden")}
 function beginReply(m){replyingTo=m;const bar=$("#replyingToBar");bar.innerHTML='Replying to <b>'+esc(m.username)+'</b>: '+esc(m.content.slice(0,140))+'<button type="button" id="cancelReply">×</button>';bar.classList.remove("hidden");$("#cancelReply").onclick=clearReply;$("#messageForm [name=content]").focus();closeMessageMenu()}
+
+function profileStatusLabel(s){return({online:"Online",idle:"Away",dnd:"Do Not Disturb",invisible:"Invisible"})[s]||"Offline"}
+function renderProfilePopover(p,own=false){
+ const root=$("#profilePopover"),name=p.display_name||p.username||"User",status=p.status||"online",avatar=p.avatar_url?'<img class="profile-popover-avatar" src="'+esc(p.avatar_url)+'" alt="">':'<div class="profile-popover-avatar status-avatar" data-status="'+esc(status)+'">'+esc(name[0].toUpperCase())+'</div>';
+ root.innerHTML='<div class="profile-popover-cover"></div><div class="profile-popover-body">'+avatar+'<div class="profile-popover-name">'+esc(name)+'</div>'+(p.pronouns?'<div class="profile-popover-pronouns">'+esc(p.pronouns)+'</div>':'')+'<div class="profile-popover-status"><span class="presence-dot '+esc(status)+'"></span>'+profileStatusLabel(status)+'</div>'+(p.bio?'<div class="profile-popover-about">'+esc(p.bio)+'</div>':'')+(own?'<div class="profile-popover-actions"><button type="button" id="profileEditButton">Edit profile</button><button type="button" id="profileStatusButton">Change status</button></div>':'')+'</div>';
+ root.classList.remove("hidden");
+}
+async function openUserProfile(userId){
+ try{if(userId===me.id){renderProfilePopover({...accountProfile,username:me.username},true);return}const d=await api("/users/"+userId+"/profile");renderProfilePopover(d.profile,false)}catch(e){toast(e.message)}
+}
+$("#userProfileTrigger").onclick=()=>{const root=$("#profilePopover");if(!root.classList.contains("hidden")){root.classList.add("hidden");return}openUserProfile(me.id)};
+$("#profilePopover").addEventListener("click",e=>{if(e.target.closest("#profileEditButton")){ $("#profilePopover").classList.add("hidden");openAccountSettings()}if(e.target.closest("#profileStatusButton")){$("#profilePopover").classList.add("hidden");openAccountSettings();setTimeout(()=>showAccountPage("account-info"),0)}});
 document.addEventListener("click",e=>{
- const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}
+ const profileAvatar=e.target.closest(".profile-avatar-trigger");if(profileAvatar){openUserProfile(profileAvatar.dataset.userId);return}if(!e.target.closest("#profilePopover")&&!e.target.closest("#userProfileTrigger"))$("#profilePopover").classList.add("hidden");const channelMention=e.target.closest(".channel-mention");if(channelMention){const target=(mentionDirectory.channels||[]).find(c=>c.id===channelMention.dataset.channelId);if(target)selectChannel(target);return}
  const action=e.target.closest("#messageContextMenu [data-action]");
  if(action&&contextMessage){
   const m=contextMessage,kind=action.dataset.action;closeMessageMenu();
