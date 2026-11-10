@@ -31,9 +31,9 @@ if(!/^[A-Za-z0-9_]{3,24}$/.test(name)||pw.length<12)return fail("Use a valid use
 const id2=uid(),t=now();try{await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'full',?,?,?)").bind(id2,name,name.toLowerCase(),await passwordHash(pw),t,t).run();}catch{return fail("That username is already taken.",409);}
 await joinSwamp(env,id2);await audit(env,ownerRow?.id,id2,"mallowbot_create_full_account");return json({user:{id:id2,username:name,account_type:"full"}},201);}
 let botMod=p.match(/^\\/api\\/integrations\\/mallowbot\\/users\\/([\\w-]+)\\/(timeout|ban|unban|delete)$/);
-if(botMod&&m==="POST"){
+if(botMatch&&m==="POST"){
 if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
-const target=botMod[1],action=botMod[2],b=await body(req),ownerRow=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first();
+const target=botParts[5],action=botParts[6],b=await body(req),ownerRow=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first();
 if(!ownerRow)return fail("Owner not initialized.",503);
 if(action==="timeout"){const secs=Math.max(60,Math.min(2592000,Number(b.seconds)||600));await env.DB.prepare("UPDATE users SET status='timed_out',timeout_until=?,updated_at=? WHERE id=?").bind(now()+secs,now(),target).run();}
 if(action==="ban")await env.DB.prepare("UPDATE users SET status='banned',updated_at=? WHERE id=?").bind(now(),target).run();
