@@ -187,11 +187,12 @@ if(discordBridgePath){
  }
  const commandComplete=p.match(/^\/api\/integrations\/mallowbot\/discord\/commands\/([\w-]+)\/complete$/);
  if(commandComplete&&m==="POST"){
-  const row=await env.DB.prepare("SELECT q.id,q.channel_id,c.server_id FROM discord_command_queue q JOIN channels c ON c.id=q.channel_id WHERE q.id=?").bind(commandComplete[1]).first();
+  const row=await env.DB.prepare("SELECT q.id,q.user_id,q.channel_id,c.server_id FROM discord_command_queue q JOIN channels c ON c.id=q.channel_id WHERE q.id=?").bind(commandComplete[1]).first();
   if(!row||row.server_id!==system.id)return fail("Command request not found.",404);
   const b=await body(req),result=String(b.result||"The command finished without a text response.").slice(0,4000);
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
-  await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at) VALUES(?,?,NULL,?,?,?,?)").bind(uid(),row.channel_id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",result,now()+1).run();
+  await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
+  await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at,recipient_user_id) VALUES(?,?,NULL,?,?,?,?,?)").bind(uid(),row.channel_id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",result,now()+1,b.private?row.user_id:null).run();
   await env.DB.prepare("UPDATE discord_command_queue SET status='complete',completed_at=?,result=? WHERE id=?").bind(now(),result,commandComplete[1]).run();
   return json({ok:true});
  }
@@ -687,9 +688,10 @@ x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  await ensureMessageExtras(env);await ensureAccountTables(env);await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_forwards(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,source_message_id TEXT,source_username TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
  const base=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,COALESCE(up.display_name,u.username) AS username,up.avatar_url,up.bio,up.status,up.pronouns,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='mention' AND mn.seen_at IS NULL) AS is_mentioned,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='reply' AND mn.seen_at IS NULL) AS is_reply_to_you,(SELECT mf.source_username FROM message_forwards mf WHERE mf.message_id=m.id) AS forwarded_from FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(u.id,u.id,channelId).all();
  const regular=base.results.reverse();
- const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? ORDER BY created_at DESC LIMIT 75").bind(channelId).all();
+ const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? AND (recipient_user_id IS NULL OR recipient_user_id=?) ORDER BY created_at DESC LIMIT 75").bind(channelId,u.id).all();
  const messages=[...regular.map(msg=>({...msg,is_bot:false,reply_to:msg.reply_to_id?{username:msg.reply_username,content:msg.reply_content}:null,reactions:[]})),...bots.results.map(msg=>({id:msg.id,content:msg.content,created_at:msg.created_at,edited_at:null,username:msg.username,avatar_url:msg.avatar_url,author_id:"mallowcord-bot",is_bot:true,forwarded_from:null,reply_to:null,reactions:[]}))].sort((a,b)=>a.created_at-b.created_at).slice(-75);
  const ids=regular.map(msg=>msg.id),byMessage=new Map(),attachmentsByMessage=new Map();
  await ensureAttachmentTable(env);
