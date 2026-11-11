@@ -32,7 +32,12 @@ async function ensureDiscordImportSchema(env){
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN hoist INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN mentionable INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN managed INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
+ await env.DB.prepare("ALTER TABLE roles ADD COLUMN icon_url TEXT").run().catch(()=>{});
+ await env.DB.prepare("ALTER TABLE roles ADD COLUMN unicode_emoji TEXT").run().catch(()=>{});
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_emojis(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+ await env.DB.prepare("ALTER TABLE server_emojis ADD COLUMN animated INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
+ await env.DB.prepare("ALTER TABLE server_emojis ADD COLUMN available INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
+ await env.DB.prepare("ALTER TABLE server_emojis ADD COLUMN roles_json TEXT NOT NULL DEFAULT '[]'").run().catch(()=>{});
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
@@ -105,7 +110,7 @@ if(discordBridgePath){
    let cid=existing?.mallow_channel_id;
    if(!cid){const same=await env.DB.prepare("SELECT id FROM channels WHERE server_id=? AND name=? AND kind=?").bind(system.id,raw,kind).first();cid=same?.id;}
    const sectionId=sectionMap.get(String(ch.category_id||""))||null;
-   const settings={discord_type:Number(ch.discord_type)||0,topic:String(ch.topic||"").slice(0,1024),nsfw:!!ch.nsfw,slowmode:Number(ch.slowmode)||0,permission_overwrites:Array.isArray(ch.permission_overwrites)?ch.permission_overwrites.slice(0,100):[]};
+   const settings={discord_type:Number(ch.discord_type)||0,topic:String(ch.topic||"").slice(0,1024),nsfw:!!ch.nsfw,slowmode:Number(ch.slowmode)||0,discord_settings:ch.extra_settings&&typeof ch.extra_settings==="object"?ch.extra_settings:{},permission_overwrites:Array.isArray(ch.permission_overwrites)?ch.permission_overwrites.slice(0,100):[]};
    if(raw==="rules"){settings.locked=true;settings.lock_reason="Rules channel is read-only in MallowCord.";settings.permission_overwrites.push({target_type:"role",target_discord_id:String(b.guild_id),target_name:"@everyone",allow:[],deny:["send_messages"]});}
    if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind=?,position=?,section_id=?,topic=?,nsfw=?,slowmode=?,discord_type=?,settings_json=? WHERE id=? AND server_id=?").bind(raw,kind,Number(ch.position)||0,sectionId,settings.topic,settings.nsfw?1:0,settings.slowmode,settings.discord_type,JSON.stringify(settings),cid,system.id).run();
    else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position,section_id,topic,nsfw,slowmode,discord_type,settings_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(cid,system.id,raw,kind,Number(ch.position)||0,sectionId,settings.topic,settings.nsfw?1:0,settings.slowmode,settings.discord_type,JSON.stringify(settings)).run();}
