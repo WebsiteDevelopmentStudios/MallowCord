@@ -79,7 +79,7 @@ async function openChannelSettings(){
   const ch=d.channel||{},settings=ch.settings||{},canManage=!!d.can_manage;
   $("#channelSettingsTitle").textContent="#"+currentChannel.name+" settings";
   form.topic.value=ch.topic||"";form.slowmode.value=Number(ch.slowmode)||0;form.nsfw.checked=!!ch.nsfw;form.locked.checked=!!settings.locked;
-  form.permission_overwrites.value=JSON.stringify(settings.permission_overwrites||[],null,2);
+  form.discord_settings.value=JSON.stringify(settings.discord_settings||{},null,2);form.permission_overwrites.value=JSON.stringify(settings.permission_overwrites||[],null,2);
   form.section_id.innerHTML='<option value="">No section</option>'+(sections.sections||[]).map(s=>'<option value="'+esc(s.id)+'" '+(s.id===currentChannel.section_id?'selected':'')+'>'+esc(s.name)+'</option>').join("");
   for(const el of form.elements)el.disabled=!canManage;
   form.querySelector('button[type="submit"]').hidden=!canManage;
@@ -97,7 +97,7 @@ $("#channelSettingsForm").onsubmit=async e=>{
   $("#channelSettingsModal").classList.add("hidden");toast("Channel settings saved.");await loadChannels();
  }catch(x){toast(x.message)}
 };
-function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").textContent=c.name;$("#channelSettingsBtn").classList.toggle("hidden",c.kind==="voice");document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,1500)}
+function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").textContent=c.name;$("#channelSettingsBtn").classList.remove("hidden");document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,1500)}
 function renderMarkdown(raw){
  const tick=String.fromCharCode(96),parts=String(raw??"").split(/(\x60{3}[\s\S]*?\x60{3})/g);
  return parts.map(part=>{
