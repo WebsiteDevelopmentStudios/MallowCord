@@ -88,36 +88,55 @@ async function loadChannels(){
  mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0]);
 }
 function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").innerHTML=renderChannelLabel(c.name);document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,2500)}
+function normalizedEmojiName(value){return String(value||"").toLowerCase().replace(/[^a-z0-9]/g,"")}
+function customEmojiImage(name,fallbackUrl){
+ const key=normalizedEmojiName(name),item=serverEmojis.find(x=>normalizedEmojiName(x.name)===key);
+ const url=item?.image_url||(fallbackUrl&&/^https:\/\/cdn\.discordapp\.com\/emojis\/\d+\.(?:png|webp|gif)(?:\?[^\s"'<>]*)?$/i.test(fallbackUrl)?fallbackUrl:"");
+ return url?'<img class="inline-custom-emoji" src="'+esc(url)+'" alt=":'+esc(name)+':" title=":'+esc(name)+':" loading="lazy" draggable="false" oncontextmenu="return false">':"";
+}
 function renderMarkdown(raw){
  const tick=String.fromCharCode(96),parts=String(raw??"").split(/(\x60{3}[\s\S]*?\x60{3})/g);
  return parts.map(part=>{
   if(part.startsWith(tick.repeat(3))&&part.endsWith(tick.repeat(3))){const body=part.slice(3,-3).replace(/^[a-zA-Z0-9_-]+\n/,"");return "<pre><code>"+esc(body)+"</code></pre>"}
   let safe=esc(part),markdownImages=[];
-  // Repair legacy malformed emoji/image fragments before normal URL handling.
-  safe=safe.replace(/(?:image)?\[([^\]]*)\]\((https:\/\/[^)\s]+)\)(?:&quot;?\s*alt=&quot;:[A-Za-z0-9_]{2,32}:&quot;?&gt;?)?/gi,(all,alt,url)=>{
-   const emojiMatch=url.match(/cdn\.discordapp\.com\/emojis\/(\d+)\.(png|webp|gif)/i);
-   const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";
-   if(emojiMatch){markdownImages.push('<img class="inline-custom-emoji" src="'+url+'" alt="'+esc(alt||"Custom emoji")+'" loading="lazy">');}
-   else{markdownImages.push('<a class="message-link" href="'+url+'" target="_blank" rel="noopener noreferrer">'+url+'</a><a class="message-embed-link" href="'+url+'" target="_blank" rel="noopener noreferrer"><img class="message-embed image-embed" src="'+url+'" alt="'+esc(alt)+'" loading="lazy"></a>');}
-   return key;
+  const placeholder=html=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push(html);return key};
+  // Convert escaped image tags from legacy Discord/custom-emoji markup into safe inline emoji images.
+  safe=safe.replace(/&lt;img\b[\s\S]*?&gt;/gi,(tag)=>{
+   const src=tag.match(/\bsrc=&quot;(https:\/\/[^&]+?)&quot;/i)?.[1]?.replace(/&amp;/g,"&");
+   const alt=tag.match(/\balt=&quot;:([^&]*?):&quot;/i)?.[1]||"";
+   const image=customEmojiImage(alt,src);
+   return image?placeholder(image):"";
   });
-  // Strip the orphaned alt text suffix left by old malformed emoji markup.
-  safe=safe.replace(/(?:&quot;|")\s*alt=(?:&quot;|"):[A-Za-z0-9_]{2,32}:(?:&quot;|")?&gt;?/gi,"");
-  safe=safe.replace(/&lt;img\b[^&]*?src=&quot;(https:\/\/cdn\.discordapp\.com\/emojis\/\d+\.(?:png|webp|gif)(?:\?[^&]*)?)&quot;[^&]*?&gt;/gi,(all,url)=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<img class="inline-custom-emoji" src="'+url+'" alt="Custom emoji" loading="lazy">');return key;});
-  safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>String(x.name||"").toLowerCase()===name.toLowerCase());return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
+  // Repair malformed markdown-style image fragments, including the trailing alt attribute.
+  safe=safe.replace(/(?:image)?\[([^\]]*)\]\((https:\/\/[^)\s]+)\)(?:&quot;?\s*alt=&quot;:([^"&]*?):&quot;?&gt;?)?/gi,(all,label,url,altName)=>{
+   const name=altName||label.replace(/^Custom emoji$/i,"");
+   const image=customEmojiImage(name,url);
+   if(image)return placeholder(image);
+   if(/cdn\.discordapp\.com\/emojis\/\d+\.(?:png|webp|gif)/i.test(url))return placeholder('<img class="inline-custom-emoji" src="'+esc(url)+'" alt="Custom emoji" loading="lazy" draggable="false" oncontextmenu="return false">');
+   return placeholder('<a class="message-link" href="'+url+'" target="_blank" rel="noopener noreferrer">'+url+'</a>');
+  });
+  // Recover names left behind by old broken <img> conversions; punctuation differences are normalized.
+  safe=safe.replace(/(?:Custom emoji\s*)?&quot;?\s*alt=&quot;:([^"&]*?):&quot;?\s*&gt;?/gi,(all,name)=>{
+   const image=customEmojiImage(name);
+   return image?placeholder(image):"";
+  });
+  safe=safe.replace(/:([a-zA-Z0-9_*.-]{2,40}):/g,(all,name)=>{
+   const image=customEmojiImage(name);
+   return image?placeholder(image):all;
+  });
   safe=safe.replace(/https:\/\/[^\s<>"']+/gi,url=>{
-   const clean=url.replace(/[),.!?]+$/,""),tail=url.slice(clean.length),lower=clean.toLowerCase();
-   const discordEmoji=clean.match(/^https:\/\/cdn\.discordapp\.com\/emojis\/\d+\.(?:png|webp|gif)(?:\?.*)?$/i);
-   if(discordEmoji){const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<img class="inline-custom-emoji" src="'+clean+'" alt="Custom emoji" loading="lazy">');return key+tail;}
-   if(/\.(gif|png|jpe?g|webp)(\?.*)?$/i.test(lower)){
-    const type=/\.gif(\?.*)?$/i.test(lower)?"gif":"image";
+   const clean=url.replace(/[),.!?]+$/,""),tail=url.slice(clean.length);
+   if(/^https:\/\/cdn\.discordapp\.com\/emojis\/\d+\.(?:png|webp|gif)(?:\?.*)?$/i.test(clean))
+    return placeholder('<img class="inline-custom-emoji" src="'+clean+'" alt="Custom emoji" loading="lazy" draggable="false" oncontextmenu="return false">')+tail;
+   if(/\.(gif|png|jpe?g|webp)(\?.*)?$/i.test(clean.toLowerCase())){
+    const type=/\.gif(\?.*)?$/i.test(clean)?"gif":"image";
     return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a><a class="message-embed-link" href="'+clean+'" target="_blank" rel="noopener noreferrer"><img class="message-embed '+type+'-embed" src="'+clean+'" alt="'+(type==="gif"?"GIF":"Image")+'" loading="lazy"></a>'+tail;
    }
    return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a>'+tail;
   });
   const mentionItems=[...(mentionDirectory.roles||[]).filter(r=>r.pingable!==0).sort((x,y)=>y.name.length-x.name.length).map(r=>({name:r.name.startsWith("@")?r.name:"@"+r.name,type:"role"})),...(mentionDirectory.users||[]).sort((x,y)=>y.username.length-x.username.length).map(u=>({name:"@"+u.username,type:"user"}))];
   for(const item of mentionItems){const token=item.name;safe=safe.replace(new RegExp("(^|[^A-Za-z0-9_])("+token+")(?![A-Za-z0-9_])","gi"),(all,prefix,value)=>prefix+'<span class="mention mention-'+item.type+'">'+value+"</span>");}
-  for(const ch of (mentionDirectory.channels||[]).slice().sort((x,y)=>y.name.length-x.name.length)){const token="#"+ch.name;safe=safe.replace(new RegExp("(^|\s)("+token+")(?![A-Za-z0-9_-])","gi"),(all,prefix,value)=>prefix+'<button type="button" class="channel-mention" data-channel-id="'+esc(ch.id)+'">'+value+"</button>");}
+  for(const ch of (mentionDirectory.channels||[]).slice().sort((x,y)=>y.name.length-x.name.length)){const token="#"+ch.name;safe=safe.replace(new RegExp("(^|\\s)("+token+")(?![A-Za-z0-9_-])","gi"),(all,prefix,value)=>prefix+'<button type="button" class="channel-mention" data-channel-id="'+esc(ch.id)+'">'+value+"</button>");}
   safe=safe.replace(/\x60([^\x60\n]+)\x60/g,"<code>$1</code>");
   safe=safe.replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>");
   safe=safe.replace(/__([^_\n]+)__/g,"<u>$1</u>");
@@ -144,9 +163,9 @@ function openMessageMenu(message,x,y){
 async function loadMessages(){
  if(!channelId||messagesLoading)return;
  messagesLoading=true;
- const requestedChannel=channelId,includeDirectory=mentionDirectoryServerId!==serverId;
+ const requestedChannel=channelId,includeDirectory=mentionDirectoryServerId!==serverId,box=$("#messages"),distanceFromBottom=Math.max(0,box.scrollHeight-box.scrollTop-box.clientHeight),wasAtBottom=distanceFromBottom<90;
  try{
-  const d=await api("/channels/"+requestedChannel+"/messages"+(includeDirectory?"?include_directory=1":"")),box=$("#messages"),bottom=box.scrollHeight-box.scrollTop-box.clientHeight<90;
+  const d=await api("/channels/"+requestedChannel+"/messages"+(includeDirectory?"?include_directory=1":""));
   if(requestedChannel!==channelId)return;
   if(d.role_mentions||d.user_mentions||d.channel_mentions){mentionDirectory={roles:d.role_mentions||[],users:d.user_mentions||[],channels:d.channel_mentions||[]};mentionDirectoryServerId=serverId;}
   const messages=d.messages||[],signature=JSON.stringify(messages);
@@ -171,10 +190,10 @@ async function loadMessages(){
    return '<article class="message-group '+(g.is_bot?"bot-message-group":"")+'"><button type="button" class="avatar profile-avatar-trigger status-avatar" data-user-id="'+esc(g.author_id)+'" data-status="'+esc(g.items[0].status||"online")+'" aria-label="View '+esc(g.username)+' profile">'+avatar+'</button><div class="message-group-body"><div class="message-head"><b'+(g.role_color&&/^#[0-9a-f]{6}$/i.test(g.role_color)?' style="color:'+esc(g.role_color)+'"':"")+'>'+esc(g.username)+'</b>'+(g.is_bot?'<span class="bot-tag">BOT</span>':"")+'<small>'+stamp+'</small></div>'+entries+'</div></article>';
   }).join("");
   box.querySelectorAll(".message-entry").forEach(el=>{const m=messages.find(x=>x.id===el.dataset.messageId);if(m&&!m.is_bot)el.addEventListener("contextmenu",e=>{e.preventDefault();openMessageMenu(m,e.clientX,e.clientY)})});
-  if(bottom)requestAnimationFrame(()=>{box.scrollTop=box.scrollHeight});
+  requestAnimationFrame(()=>{if(wasAtBottom){box.scrollTop=box.scrollHeight}else{box.scrollTop=Math.max(0,box.scrollHeight-box.clientHeight-distanceFromBottom)}});
  }catch(e){toast(e.message)}finally{messagesLoading=false}
 }
-$("#messageForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,input=form.querySelector('[name="content"]'),button=form.querySelector('button[type="submit"]');let value=input.value.trim();if((!value&&!selectedAttachments.length)||!channelId||form.dataset.sending==="true")return;const targetChannel=channelId,edit=editingMessage;value=expandComposerCommand(value);if(!value&&!selectedAttachments.length)return;form.dataset.sending="true";if(button){button.disabled=true;button.textContent=edit?"Saving…":"Sending…"}input.value="";hideComposerSuggestions();input.focus({preventScroll:true});let sent=false;const optimistic=document.createElement("article");optimistic.className="message-group optimistic-message";optimistic.innerHTML='<span class="avatar">'+esc((me?.username||"U")[0].toUpperCase())+'</span><div class="message-group-body"><div class="message-head"><b>'+esc(me?.username||"You")+'</b><small>Sending…</small></div><div class="message-content">'+renderMarkdown(value)+'</div></div>';if(!edit&&!selectedAttachments.length&&!(value.toLowerCase().startsWith("-mb ")||value.toLowerCase().startsWith("/mb "))){$("#messages").append(optimistic);$("#messages").scrollTop=$("#messages").scrollHeight;}try{if(!edit&&!selectedAttachments.length&&/^(?:-mb|\/mb)\s+/i.test(value)){await api("/bot/command",{method:"POST",body:JSON.stringify({channel_id:targetChannel,content:value})});sent=true;clearReply();await loadMessages()}else if(edit){await api("/messages/"+edit.id+"/edit",{method:"POST",body:JSON.stringify({content:value})});sent=true;cancelMessageEdit();toast("Message edited")}else{const uploaded=[];for(const item of selectedAttachments){if(!item.id){const data=new FormData();data.append("file",item.file,item.file.name);const result=await api("/channels/"+targetChannel+"/attachments",{method:"POST",body:data});item.id=result.attachment.id}uploaded.push(item.id)}await api("/channels/"+targetChannel+"/messages",{method:"POST",body:JSON.stringify({content:value,reply_to_id:replyingTo?.id||null,attachment_ids:uploaded})});sent=true;clearReply();selectedAttachments=[];renderAttachmentPreview()}optimistic.remove();await loadMessages()}catch(x){optimistic.remove();if(!sent&&!input.value)input.value=value;toast(x.message)}finally{form.dataset.sending="false";if(button){button.disabled=false;button.textContent=editingMessage?"Save":"Send"}}};
+$("#messageForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,input=form.querySelector('[name="content"]'),button=form.querySelector('button[type="submit"]');let value=input.value.trim();if((!value&&!selectedAttachments.length)||!channelId||form.dataset.sending==="true")return;const targetChannel=channelId,edit=editingMessage;value=expandComposerCommand(value);if(!value&&!selectedAttachments.length)return;form.dataset.sending="true";if(button){button.disabled=true;button.textContent=edit?"Saving…":"Sending…"}input.value="";hideComposerSuggestions();let sent=false;const optimistic=document.createElement("article");optimistic.className="message-group optimistic-message";optimistic.innerHTML='<span class="avatar">'+esc((me?.username||"U")[0].toUpperCase())+'</span><div class="message-group-body"><div class="message-head"><b>'+esc(me?.username||"You")+'</b><small>Sending…</small></div><div class="message-content">'+renderMarkdown(value)+'</div></div>';if(!edit&&!selectedAttachments.length&&!(value.toLowerCase().startsWith("-mb ")||value.toLowerCase().startsWith("/mb "))){$("#messages").append(optimistic);$("#messages").scrollTop=$("#messages").scrollHeight;}try{if(!edit&&!selectedAttachments.length&&/^(?:-mb|\/mb)\s+/i.test(value)){await api("/bot/command",{method:"POST",body:JSON.stringify({channel_id:targetChannel,content:value})});sent=true;clearReply();await loadMessages()}else if(edit){await api("/messages/"+edit.id+"/edit",{method:"POST",body:JSON.stringify({content:value})});sent=true;cancelMessageEdit();toast("Message edited")}else{const uploaded=[];for(const item of selectedAttachments){if(!item.id){const data=new FormData();data.append("file",item.file,item.file.name);const result=await api("/channels/"+targetChannel+"/attachments",{method:"POST",body:data});item.id=result.attachment.id}uploaded.push(item.id)}await api("/channels/"+targetChannel+"/messages",{method:"POST",body:JSON.stringify({content:value,reply_to_id:replyingTo?.id||null,attachment_ids:uploaded})});sent=true;clearReply();selectedAttachments=[];renderAttachmentPreview()}optimistic.remove();await loadMessages();requestAnimationFrame(()=>{const messageBox=$("#messages");messageBox.scrollTop=messageBox.scrollHeight})}catch(x){optimistic.remove();if(!sent&&!input.value)input.value=value;toast(x.message)}finally{form.dataset.sending="false";if(button){button.disabled=false;button.textContent=editingMessage?"Save":"Send"}}};
 
 function openForwardPicker(message){const modal=$("#forwardModal"),list=$("#forwardChannelList");if(!modal||!list){toast("Forward menu is unavailable.");return}list.innerHTML=(mentionDirectory.channels||[]).filter(c=>c.kind!=="voice").map(c=>'<button type="button" class="forward-channel-option" data-channel-id="'+esc(c.id)+'"><span>#</span>'+esc(c.name)+'</button>').join("")||'<p class="settings-note">No text channels available.</p>';modal.dataset.messageId=message.id;modal.classList.remove("hidden");closeMessageMenu()}
 $("#closeForwardModal").onclick=()=>$("#forwardModal").classList.add("hidden");
