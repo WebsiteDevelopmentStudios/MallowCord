@@ -169,12 +169,12 @@ if(discordBridgePath){
   const statements=[
    env.DB.prepare("DELETE FROM discord_account_links WHERE user_id=? OR discord_user_id=?").bind(pending.user_id,discordUserId),
    env.DB.prepare("INSERT INTO discord_account_links(discord_user_id,user_id,server_id,linked_at) VALUES(?,?,?,?)").bind(discordUserId,pending.user_id,system.id,now()),
+   env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at").bind(discordUserId,system.id,pending.user_id,now()),
    env.DB.prepare("DELETE FROM discord_link_codes WHERE code_hash=?").bind(await sha(code))
   ];
   if(shadow&&shadow.user_id!==pending.user_id){
    statements.push(env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) SELECT server_id,?,role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(pending.user_id,system.id,shadow.user_id));
    statements.push(env.DB.prepare("DELETE FROM memberships WHERE server_id=? AND user_id=?").bind(system.id,shadow.user_id));
-   statements.push(env.DB.prepare("UPDATE discord_user_links SET user_id=?,updated_at=? WHERE discord_user_id=? AND server_id=?").bind(pending.user_id,now(),discordUserId,system.id));
   }
   await env.DB.batch(statements);
   return json({ok:true,linked:true});
