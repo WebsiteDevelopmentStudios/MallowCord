@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mallowcord-api",
   "main": "worker/worker.js",
-  "compatibility_date": "2026-11-10",
+  "compatibility_date": "2026-11-10",\n  "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "ENVIRONMENT": "production",
     "FRONTEND_ORIGIN": "https://mallowcord-web.onrender.com",
@@ -11,7 +11,7 @@
     "OWNER_DISCORD_ID": "1021068313071210498",
     "OWNER_GOOGLE_EMAIL": "Wowgrayhaha@gmail.com"
   },
-  "d1_databases": [
+  "hyperdrive": [\n    { "binding": "NEON", "id": "a4ab9c94f1b24b1d9a3afc983d8abdba" }\n  ],\n  "d1_databases": [
     {
       "binding": "DB",
       "database_name": "mallowcord",
