@@ -739,3 +739,34 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .oauth-button.secondary{border:1px solid var(--line);background:#30343c;color:#fff}
 .oauth-button:hover{filter:brightness(1.12)}
 .oauth-footnote{font-size:12px;color:var(--text-muted);text-align:center;margin:8px 0 0!important}
+
+/* Friends, DMs, server-only role colors and instant-send feedback */
+.friends-open-button{margin-left:auto;border:1px solid var(--border-color,rgba(255,255,255,.12));background:rgba(255,255,255,.06);color:inherit;border-radius:7px;padding:6px 12px;cursor:pointer}
+.social-modal{width:min(920px,94vw);max-width:920px;max-height:86vh;overflow:hidden}
+.social-modal h2{margin:0 0 14px}
+.social-layout{display:grid;grid-template-columns:minmax(230px,34%) 1fr;gap:14px;min-height:460px;max-height:70vh}
+.social-sidebar{overflow:auto;border-right:1px solid var(--border-color,rgba(255,255,255,.1));padding-right:12px}
+.social-sidebar h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted,#9aa3af);margin:18px 0 8px}
+.social-list{display:grid;gap:6px}
+.social-list button{display:flex;align-items:center;gap:8px;width:100%;padding:8px;border:0;border-radius:7px;background:rgba(255,255,255,.045);color:inherit;text-align:left;cursor:pointer}
+.social-list button:hover{background:rgba(255,255,255,.1)}
+.social-list .social-actions{display:flex;gap:4px;margin-left:auto}
+.social-list .social-actions button{width:auto;padding:4px 7px;font-size:11px}
+.social-person{display:flex;align-items:center;gap:4px}
+.social-person>button{min-width:0;flex:1}
+.social-person small{display:block;color:var(--text-muted,#9aa3af);font-size:10px}
+.social-user-avatar{width:30px;height:30px;border-radius:50%;object-fit:cover;flex:none}
+.social-chat{display:flex;flex-direction:column;min-width:0;min-height:0}
+.social-empty{margin:auto;color:var(--text-muted,#9aa3af);text-align:center}
+.dm-messages{overflow:auto;flex:1;display:flex;flex-direction:column;gap:10px;padding:12px}
+.dm-message{max-width:85%;padding:9px 12px;border-radius:10px;background:rgba(255,255,255,.07);align-self:flex-start;overflow-wrap:anywhere}
+.dm-message.mine{align-self:flex-end;background:rgba(67,181,129,.18)}
+.dm-message small{display:block;color:var(--text-muted,#9aa3af);font-size:10px;margin-bottom:3px}
+.dm-compose{display:flex;gap:8px;padding-top:10px}
+.dm-compose input,.social-sidebar input{min-width:0;flex:1}
+.profile-role-list{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.profile-role-chip{border:1px solid;border-radius:999px;padding:3px 8px;font-size:11px;background:rgba(255,255,255,.04)}
+.role-color-setting{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted,#9aa3af)}
+.role-color-input{width:30px;height:24px;border:0;background:transparent;padding:0;cursor:pointer}
+.optimistic-message{opacity:.72}
+@media(max-width:760px){.social-layout{grid-template-columns:1fr;max-height:75vh}.social-sidebar{max-height:35vh;border-right:0;border-bottom:1px solid rgba(255,255,255,.1);padding:0 0 10px}.social-chat{min-height:300px}}
