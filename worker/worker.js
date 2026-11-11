@@ -600,8 +600,13 @@ if(messageAction){
 if(p==="/api/bot/command"&&m==="POST"){
  const b=await body(req),channelId=String(b.channel_id||""),content=String(b.content||"").trim();
  if(!channelId||!content||content.length>4000)return fail("A channel and command are required.");
- const member=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
+ await ensureDiscordImportSchema(env);
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
+ const member=await env.DB.prepare("SELECT c.server_id,c.settings_json,s.owner_id FROM memberships m JOIN channels c ON c.server_id=m.server_id JOIN servers s ON s.id=c.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
  if(!member)return fail("You cannot run bot commands in this channel.",403);
+ let channelSettings={};try{channelSettings=JSON.parse(member.settings_json||"{}")}catch{}
+ if(channelSettings.locked&&!isOwner(u)&&member.owner_id!==u.id)return fail("This channel is locked.",403);
+ if(!await channelPermissionAllowed(env,member.server_id,u.id,channelSettings,"view_channel")||!await channelPermissionAllowed(env,member.server_id,u.id,channelSettings,"send_messages"))return fail("You do not have permission to run commands in this channel.",403);
  const systemServer=await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(!systemServer||member.server_id!==systemServer.id)return fail("Mallow-Bot commands are currently available only in Mallow Swamp.",403);
  const linkedDiscordChannel=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE mallow_channel_id=? AND server_id=?").bind(channelId,systemServer.id).first();
