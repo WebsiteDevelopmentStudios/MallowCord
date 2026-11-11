@@ -1,4 +1,5 @@
-import { getDatabase } from "./postgres-adapter.js";\nconst COOKIE="mallowcord_device",DAYS=30;
+import { getDatabase } from "./postgres-adapter.js";
+const COOKIE="mallowcord_device",DAYS=30;
 const now=()=>Math.floor(Date.now()/1000),uid=()=>crypto.randomUUID();
 const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const fail=(e,s=400)=>json({error:e},s),hex=b=>Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
