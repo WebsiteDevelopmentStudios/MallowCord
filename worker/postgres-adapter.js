@@ -29,14 +29,14 @@ function convertPlaceholders(sql) {
 }
 
 function translateSql(input) {
-  let sql = String(input).trim().replace(/;s*$/, "");
+  let sql = String(input).trim().replace(/;\\s*$/, "");
   const ignore = /^INSERT\s+OR\s+IGNORE\s+INTO\s+/i.test(sql);
   const replace = /^INSERT\s+OR\s+REPLACE\s+INTO\s+/i.test(sql);
   sql = sql.replace(/^INSERT\s+OR\s+(?:IGNORE|REPLACE)\s+INTO\s+/i, "INSERT INTO ");
 
   // SQLite JSON helpers used by member/profile responses.
-  sql = sql.replace(/json_extract\(pref\.settings_json,\s*'\$\.privacy\.showOnlineStatus'\)/gi,
-    "((pref.settings_json::jsonb #>> '{privacy,showOnlineStatus}')::boolean)");
+  sql = sql.replace(/COALESCE\(json_extract\(pref\.settings_json,\s*'\$\.privacy\.showOnlineStatus'\),\s*1\)\s*=\s*0/gi,
+    "COALESCE((pref.settings_json::jsonb #>> '{privacy,showOnlineStatus}')::boolean, true)=false");
   sql = sql.replace(/group_concat\(r\.name,\s*',\s*'\)/gi, "string_agg(r.name, ', ')");
   sql = sql.replace(/json_group_array\(json_object\(/gi, "json_agg(json_build_object(");
 
