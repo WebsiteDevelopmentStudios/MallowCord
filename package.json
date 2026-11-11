@@ -5,7 +5,7 @@
   "scripts": {
     "dev:worker": "wrangler dev",
     "deploy:worker": "wrangler deploy",
-    "test:worker": "node --test worker/postgres-adapter.test.js worker/legacy-blueprint.test.js"
+    "test:worker": "node --check worker/worker.js && node --test worker/postgres-adapter.test.js worker/legacy-blueprint.test.js"
   },
   "dependencies": {
     "postgres": "^3.4.7"
