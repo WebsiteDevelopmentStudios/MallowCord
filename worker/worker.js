@@ -65,7 +65,7 @@ async function ensureOAuthTables(env){
 }
 async function ensureBridgeSystemServer(env){
  let server=await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
- if(server)return server;
+ if(server){await restoreLegacySystemServer(env,server.id);return server;}
  let owner=await getDatabase(env).prepare("SELECT id FROM users WHERE account_type='owner' ORDER BY created_at LIMIT 1").first();
  if(!owner){
   const id=uid(),t=now();
@@ -82,6 +82,9 @@ async function ensureBridgeSystemServer(env){
 }
 async function restoreLegacySystemServer(env,serverId){
  const db=getDatabase(env),cfg=LEGACY_MALLOW_SWAMP,t=now();
+ await db.prepare("CREATE TABLE IF NOT EXISTS system_config_migrations(server_id TEXT NOT NULL,migration_key TEXT NOT NULL,applied_at INTEGER NOT NULL,PRIMARY KEY(server_id,migration_key))").run();
+ const completed=await db.prepare("SELECT 1 AS ok FROM system_config_migrations WHERE server_id=? AND migration_key='legacy-mallow-swamp-v1'").bind(serverId).first();
+ if(completed)return {skipped:true};
  await db.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
  await ensureChannelPermissionTable(env);
 
@@ -129,6 +132,7 @@ async function restoreLegacySystemServer(env,serverId){
   permissionWrites.push(db.prepare("INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at").bind(channelId,permission.targetType,roleId,JSON.stringify(permission.allow),JSON.stringify(permission.deny),t));
  }
  if(permissionWrites.length)await db.batch(permissionWrites);
+ await db.prepare("INSERT INTO system_config_migrations(server_id,migration_key,applied_at) VALUES(?,'legacy-mallow-swamp-v1',?) ON CONFLICT(server_id,migration_key) DO NOTHING").bind(serverId,t).run();
  return {roles:roleWrites.length,channels:channelWrites.length,categories:sectionWrites.length,permissions:permissionWrites.length};
 }
 async function ensureOAuthSystemServer(env,userId){
@@ -715,7 +719,7 @@ if(p==="/api/account/contact/confirm"&&m==="POST"){
 
 if(p==="/api/auth/username"&&m==="POST"){const name=String((await body(req)).username||"").trim();if(!/^[A-Za-z0-9_]{3,24}$/.test(name))return fail("Username must be 3–24 characters.");try{await getDatabase(env).prepare("UPDATE users SET username=?,username_key=?,updated_at=? WHERE id=?").bind(name,name.toLowerCase(),now(),u.id).run();}catch{return fail("That username is already taken.",409);}return json({username:name});}
 if(p==="/api/auth/recovery/rotate"&&m==="POST")return fail("Recovery-code authentication has been removed. Sign in with Google or Discord.",410);
-if(p==="/api/servers"&&m==="GET"){const a=await getDatabase(env).prepare("SELECT s.id,s.name,COALESCE(s.icon_url,CASE WHEN s.is_system=1 THEN ? END) AS icon_url,s.is_system,m.joined_at FROM memberships m JOIN servers s ON s.id=m.server_id WHERE m.user_id=? ORDER BY s.is_system DESC,s.name").bind(env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",u.id).all();return json({servers:a.results});}
+if(p==="/api/servers"&&m==="GET"){const system=await getDatabase(env).prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();if(system)await restoreLegacySystemServer(env,system.id);const a=await getDatabase(env).prepare("SELECT s.id,s.name,COALESCE(s.icon_url,CASE WHEN s.is_system=1 THEN ? END) AS icon_url,s.is_system,m.joined_at FROM memberships m JOIN servers s ON s.id=m.server_id WHERE m.user_id=? ORDER BY s.is_system DESC,s.name").bind(env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",u.id).all();return json({servers:a.results});}
 if(p==="/api/servers"&&m==="POST")return fail("Server creation is temporarily disabled. Server invitations are coming soon.",403);
 
 /* Server administration: channels, roles, members, stats and onboarding */
