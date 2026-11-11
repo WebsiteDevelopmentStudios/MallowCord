@@ -41,6 +41,133 @@ async function channelPermissionAllowed(env,channelId,userId,permission){
  return true;
 }
 async function bootstrap(env,secret){if(!env.BOOTSTRAP_SECRET||secret!==env.BOOTSTRAP_SECRET)throw Error("Invalid bootstrap secret.");if(await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first())return {already_initialized:true};if(!env.OWNER_PASSWORD||env.OWNER_PASSWORD.length<12)throw Error("Set OWNER_PASSWORD to at least 12 characters.");const t=now(),u=uid(),name=env.OWNER_USERNAME||"Blemmished";await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'owner',?,?,?)").bind(u,name,name.toLowerCase(),await passwordHash(env.OWNER_PASSWORD),t,t).run();const s=uid(),r1=uid(),r2=uid(),ch=uid();await env.DB.batch([env.DB.prepare("INSERT INTO servers(id,name,owner_id,icon_url,is_system,created_at) VALUES(?,?,?,?,1,?)").bind(s,"Mallow Swamp",u,env.MALLOWBOT_ICON_URL||null,t),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r1,s),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(r2,s),env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(ch,s),env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u,t),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r1),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r2)]);return {initialized:true,owner:name,server:"Mallow Swamp"};}
+
+const OAUTH_REDIRECTS={
+ google:"https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/google/callback",
+ discord:"https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/discord/callback"
+};
+async function ensureOAuthTables(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_states(state_hash TEXT PRIMARY KEY,provider TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_accounts(provider TEXT NOT NULL,provider_user_id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,email TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(provider,provider_user_id),UNIQUE(provider,user_id))").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+}
+async function ensureOAuthSystemServer(env,userId){
+ let server=await env.DB.prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
+ if(!server){
+  const sid=uid(),everyone=uid(),member=uid(),channel=uid(),t=now();
+  await env.DB.batch([
+   env.DB.prepare("INSERT INTO servers(id,name,owner_id,icon_url,is_system,created_at) VALUES(?,?,?,?,1,?)").bind(sid,"Mallow Swamp",userId,env.MALLOWBOT_ICON_URL||null,t),
+   env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(everyone,sid),
+   env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(member,sid),
+   env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(channel,sid)
+  ]);
+  server={id:sid,owner_id:userId};
+ }
+ const account=await env.DB.prepare("SELECT account_type FROM users WHERE id=?").bind(userId).first();
+ if(account?.account_type==="owner"&&server.owner_id!==userId){
+  await env.DB.prepare("UPDATE servers SET owner_id=? WHERE id=?").bind(userId,server.id).run();
+ }
+ await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(server.id,userId,now()).run();
+ const roles=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name IN ('@everyone','@Member')").bind(server.id).all();
+ for(const role of roles.results)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(server.id,userId,role.id).run();
+}
+function oauthFailure(env,provider){
+ const origin=String(env.FRONTEND_ORIGIN||"");
+ if(!origin)return new Response("OAuth frontend is not configured.",{status:503});
+ const target=new URL("/",origin);target.searchParams.set("login_error",provider);
+ return Response.redirect(target.toString(),302);
+}
+async function oauthStart(req,env,provider){
+ await ensureOAuthTables(env);
+ const clientId=provider==="google"?env.GOOGLE_CLIENT_ID:env.DISCORD_CLIENT_ID;
+ if(!clientId||!env.FRONTEND_ORIGIN)return fail("OAuth is not configured yet.",503);
+ const state=token(),created=now();
+ await env.DB.prepare("INSERT INTO oauth_states(state_hash,provider,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(state),provider,created+600,created).run();
+ const auth=provider==="google"?"https://accounts.google.com/o/oauth2/v2/auth":"https://discord.com/oauth2/authorize";
+ const params=new URLSearchParams({client_id:clientId,redirect_uri:OAUTH_REDIRECTS[provider],response_type:"code",scope:provider==="google"?"openid email profile":"identify email",state});
+ if(provider==="google")params.set("prompt","select_account");
+ return Response.redirect(auth+"?"+params.toString(),302);
+}
+async function oauthUser(env,provider,profile){
+ await ensureOAuthTables(env);
+ const providerId=String(profile.id||profile.sub||"");
+ if(!providerId)return {error:"The identity provider did not return a user ID."};
+ const email=String(profile.email||"").trim().toLowerCase()||null;
+ const ownerMatch=provider==="google"
+  ? !!profile.email_verified&&!!env.OWNER_GOOGLE_EMAIL&&email===String(env.OWNER_GOOGLE_EMAIL).trim().toLowerCase()
+  : !!env.OWNER_DISCORD_ID&&providerId===String(env.OWNER_DISCORD_ID);
+ let linked=await env.DB.prepare("SELECT u.id,u.username,u.account_type,u.status FROM oauth_accounts a JOIN users u ON u.id=a.user_id WHERE a.provider=? AND a.provider_user_id=?").bind(provider,providerId).first();
+ let user=linked;
+ if(!user&&ownerMatch)user=await env.DB.prepare("SELECT id,username,account_type,status FROM users WHERE account_type='owner' ORDER BY created_at LIMIT 1").first();
+ if(user&&user.status!=="active")return {error:"This MallowCord account is not active."};
+ const display=String(profile.name||profile.global_name||profile.username||profile.email?.split("@")[0]||"MallowUser").trim();
+ const avatar=provider==="discord"&&profile.avatar
+  ?"https://cdn.discordapp.com/avatars/"+providerId+"/"+profile.avatar+".png?size=128"
+  :String(profile.picture||"").startsWith("https://")?profile.picture:null;
+ if(!user){
+  let base=display.normalize("NFKD").replace(/[^A-Za-z0-9_]/g,"").slice(0,18)||"MallowUser";
+  let username=base,id=uid(),t=now(),created=false;
+  for(let i=0;i<12;i++){
+   try{
+    await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,created_at,updated_at) VALUES(?,?,?, ?,?,?)").bind(id,username,username.toLowerCase(),ownerMatch?"owner":"basic",t,t).run();
+    created=true;break;
+   }catch{
+    username=(base.slice(0,Math.max(3,18-5))+"_"+token().slice(0,4)).slice(0,24);
+   }
+  }
+  if(!created)return {error:"Could not create a unique MallowCord username. Please try again."};
+  user={id,username,account_type:ownerMatch?"owner":"basic",status:"active"};
+ }
+ if(ownerMatch&&user.account_type!=="owner"){
+  await env.DB.prepare("UPDATE users SET account_type='owner',updated_at=? WHERE id=?").bind(now(),user.id).run();
+  user.account_type="owner";
+ }
+ await env.DB.prepare("INSERT INTO oauth_accounts(provider,provider_user_id,user_id,email,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(provider,provider_user_id) DO UPDATE SET email=excluded.email,updated_at=excluded.updated_at").bind(provider,providerId,user.id,email,now(),now()).run();
+ await ensureAccountTables(env);
+ await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,email,email_verified_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=COALESCE(excluded.avatar_url,user_profiles.avatar_url),email=COALESCE(excluded.email,user_profiles.email),email_verified_at=CASE WHEN excluded.email_verified_at IS NOT NULL THEN excluded.email_verified_at ELSE user_profiles.email_verified_at END,updated_at=excluded.updated_at").bind(user.id,display,avatar,email,provider==="google"&&profile.email_verified?now():null,now()).run();
+ await ensureOAuthSystemServer(env,user.id);
+ return {user:{id:user.id,username:user.username,account_type:user.account_type}};
+}
+async function oauthCallback(req,env,provider){
+ await ensureOAuthTables(env);
+ const url=new URL(req.url),state=String(url.searchParams.get("state")||""),code=String(url.searchParams.get("code")||"");
+ if(url.searchParams.has("error")||!state||!code)return oauthFailure(env,provider);
+ const stateHash=await sha(state);
+ const saved=await env.DB.prepare("SELECT provider,expires_at FROM oauth_states WHERE state_hash=?").bind(stateHash).first();
+ await env.DB.prepare("DELETE FROM oauth_states WHERE state_hash=?").bind(stateHash).run();
+ if(!saved||saved.provider!==provider||saved.expires_at<now())return oauthFailure(env,provider);
+ try{
+  const clientId=provider==="google"?env.GOOGLE_CLIENT_ID:env.DISCORD_CLIENT_ID;
+  const clientSecret=provider==="google"?env.GOOGLE_CLIENT_SECRET:env.DISCORD_CLIENT_SECRET;
+  if(!clientId||!clientSecret)return oauthFailure(env,provider);
+  const form=new URLSearchParams({client_id:clientId,client_secret:clientSecret,grant_type:"authorization_code",code,redirect_uri:OAUTH_REDIRECTS[provider]});
+  const tokenResponse=await fetch(provider==="google"?"https://oauth2.googleapis.com/token":"https://discord.com/api/oauth2/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:form});
+  const tokenData=await tokenResponse.json();
+  if(!tokenResponse.ok||!tokenData.access_token)return oauthFailure(env,provider);
+  const profileResponse=await fetch(provider==="google"?"https://openidconnect.googleapis.com/v1/userinfo":"https://discord.com/api/users/@me",{headers:{Authorization:"Bearer "+tokenData.access_token}});
+  const profile=await profileResponse.json();
+  if(!profileResponse.ok)return oauthFailure(env,provider);
+  if(provider==="google"&&profile.email_verified!==true)return oauthFailure(env,provider);
+  const result=await oauthUser(env,provider,profile);
+  if(result.error)return oauthFailure(env,provider);
+  const loginCode=token(),t=now();
+  await env.DB.prepare("INSERT INTO oauth_login_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(loginCode),result.user.id,t+90,t).run();
+  const target=new URL("/",env.FRONTEND_ORIGIN);target.searchParams.set("oauth_code",loginCode);
+  return Response.redirect(target.toString(),302);
+ }catch(error){console.error("OAuth callback failed",provider,error);return oauthFailure(env,provider);}
+}
+async function oauthExchange(req,env){
+ await ensureOAuthTables(env);
+ const code=String((await body(req)).code||"");
+ if(!/^[a-f0-9]{64}$/.test(code))return fail("Sign-in code is invalid or expired.",401);
+ const hash=await sha(code),row=await env.DB.prepare("SELECT user_id,expires_at FROM oauth_login_codes WHERE code_hash=?").bind(hash).first();
+ if(!row||row.expires_at<now())return fail("Sign-in code is invalid or expired.",401);
+ await env.DB.prepare("DELETE FROM oauth_login_codes WHERE code_hash=?").bind(hash).run();
+ const user=await env.DB.prepare("SELECT id,username,account_type,status FROM users WHERE id=?").bind(row.user_id).first();
+ if(!user||user.status!=="active")return fail("This MallowCord account is not active.",403);
+ return json({user:{id:user.id,username:user.username,account_type:user.account_type}},200,{"set-cookie":await session(req,env,user.id)});
+}
+
 async function handle(req,env){const p=new URL(req.url).pathname,m=req.method;let x;
 if(p==="/api/health")return json({ok:true,service:"mallowcord",time:now()});
 const publicAvatar=p.match(/^\/api\/public\/avatars\/([A-Za-z0-9:_-]+)$/);
@@ -56,7 +183,7 @@ if(publicAvatar&&m==="GET"){
 }
 
 if(p!=="/api/bootstrap"&&env.DB){const blocked=await env.DB.prepare("SELECT id FROM bans WHERE ip_hash=? AND server_id IS NULL AND (expires_at IS NULL OR expires_at>?) LIMIT 1").bind(await ipDigest(req,env),now()).first();if(blocked)return fail("Access to MallowCord is blocked.",403);}
-if(p==="/api/bootstrap"&&m==="POST"){try{return json(await bootstrap(env,(await body(req)).secret));}catch(e){return fail(e.message,403);}}
+if(p==="/api/bootstrap"&&m==="POST")return fail("Password-based bootstrap has been removed. Sign in with the configured owner Google or Discord account.",410);
 
 /* Two-way Discord bridge for the official Mallow Swamp server. */
 const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
@@ -241,9 +368,12 @@ if(action==="delete")await env.DB.prepare("DELETE FROM users WHERE id=?").bind(t
 if(action==="ban"||action==="delete")await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(target).run();
 await audit(env,ownerRow.id,target,"mallowbot_"+action,JSON.stringify(b));return json({ok:true});}
 
-if(p==="/api/auth/register"&&m==="POST"){const b=await body(req),name=String(b.username||"").trim();if(!/^[A-Za-z0-9_]{3,24}$/.test(name))return fail("Username must be 3–24 letters, numbers or underscores.");if(!await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first())return fail("Mallow Swamp is not initialized yet.",503);const t=now(),u=uid();try{await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,created_at,updated_at) VALUES(?,?,?,'basic',?,?)").bind(u,name,name.toLowerCase(),t,t).run();}catch{return fail("That username is already taken.",409);}await joinSwamp(env,u);const code=await recovery(env,u);return json({user:{id:u,username:name,account_type:"basic"},recovery_code:code},201,{"set-cookie":await session(req,env,u)});}
-if(p==="/api/auth/login"&&m==="POST"){const b=await body(req),name=String(b.username||"").trim().toLowerCase(),u=await env.DB.prepare("SELECT * FROM users WHERE username_key=?").bind(name).first();if(!u||u.status!=="active")return fail("Invalid sign-in details.",401);if(u.account_type==="basic")return fail("Basic accounts use device cookies. Use the recovery screen on a new device.",409);if(!await passwordCheck(String(b.password||""),u.password_hash))return fail("Invalid sign-in details.",401);return json({user:{id:u.id,username:u.username,account_type:u.account_type}},200,{"set-cookie":await session(req,env,u.id)});}
-if(p==="/api/auth/recover"&&m==="POST"){const b=await body(req),name=String(b.username||"").trim().toLowerCase(),code=String(b.recovery_code||"").replace(/-/g,"").toUpperCase(),u=await env.DB.prepare("SELECT * FROM users WHERE username_key=? AND account_type='basic' AND status='active'").bind(name).first();if(!u)return fail("Username or recovery code is incorrect.",401);const c=await env.DB.prepare("SELECT id FROM recovery_codes WHERE user_id=? AND code_hash=? AND used_at IS NULL").bind(u.id,await sha(code)).first();if(!c)return fail("Username or recovery code is incorrect.",401);await env.DB.prepare("UPDATE recovery_codes SET used_at=? WHERE id=?").bind(now(),c.id).run();await env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(u.id).run();const next=await recovery(env,u.id);return json({user:{id:u.id,username:u.username,account_type:"basic"},recovery_code:next},200,{"set-cookie":await session(req,env,u.id)});}
+if(p==="/api/auth/google"&&m==="GET")return oauthStart(req,env,"google");
+if(p==="/api/auth/google/callback"&&m==="GET")return oauthCallback(req,env,"google");
+if(p==="/api/auth/discord"&&m==="GET")return oauthStart(req,env,"discord");
+if(p==="/api/auth/discord/callback"&&m==="GET")return oauthCallback(req,env,"discord");
+if(p==="/api/auth/exchange"&&m==="POST")return oauthExchange(req,env);
+if(["/api/auth/register","/api/auth/login","/api/auth/recover"].includes(p))return fail("Username, password and recovery-code sign-in have been removed. Use Google or Discord.",410);
 if(p==="/api/auth/logout"&&m==="POST"){const u=await userFor(req,env);if(u){await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();await env.DB.prepare("DELETE FROM user_presence WHERE user_id=?").bind(u.id).run();await env.DB.prepare("DELETE FROM sessions WHERE id=?").bind(u.session_id).run();}return json({ok:true},200,{"set-cookie":clearCookie()});}
 const u=await userFor(req,env);
 if(p==="/api/auth/me"&&m==="GET")return u?json({user:{id:u.id,username:u.username,account_type:u.account_type}}):fail("Not signed in.",401);
