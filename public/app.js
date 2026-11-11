@@ -32,7 +32,7 @@ function closeItemMenu(){$("#itemContextMenu")?.classList.add("hidden")}
 function openItemMenu(scope,id,label,x,y){const muted=(scope==="channel"?notificationSettings.channels:notificationSettings.servers).has(id),menu=$("#itemContextMenu");menu.dataset.scope=scope;menu.dataset.id=id;menu.innerHTML='<div class="context-label">'+esc(label)+'</div><button type="button" data-action="mute">'+(muted?"Unmute":"Mute")+' '+(scope==="channel"?"channel":"server")+'</button><button type="button" data-action="clear">Clear message pings</button>';menu.classList.remove("hidden");const rect=menu.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(x,innerWidth-rect.width-8))+"px";menu.style.top=Math.max(8,Math.min(y,innerHeight-rect.height-8))+"px"}
 async function loadNotifications(){if(notificationsLoading||!me)return;notificationsLoading=true;try{const data=await api("/notifications"),rows=data.unread||[],bc=new Map(),bs=new Map();for(const r of rows){bc.set(r.channel_id,(bc.get(r.channel_id)||0)+Number(r.count||0));bs.set(r.server_id,(bs.get(r.server_id)||0)+Number(r.count||0));}document.querySelectorAll("#channelList .channel").forEach(el=>{const n=bc.get(el.dataset.id)||0;let b=el.querySelector(".unread-count");if(n){if(!b){b=document.createElement("span");b.className="unread-count";el.append(b)}b.textContent=n>99?"99+":String(n);el.classList.add("has-unread")}else{b?.remove();el.classList.remove("has-unread")}});document.querySelectorAll(".servers .server-icon[data-server-id]").forEach(el=>{const n=bs.get(el.dataset.serverId)||0;let b=el.querySelector(".server-unread-count");if(n){if(!b){b=document.createElement("span");b.className="server-unread-count";el.append(b)}b.textContent=n>99?"99+":String(n)}else b?.remove()})}catch(e){console.warn("Notifications:",e.message)}finally{notificationsLoading=false}}
 async function loadServers(){const d=await api("/servers");const list=d.servers||[];const rail=document.querySelector(".servers");rail.innerHTML="";for(const s of list){const b=document.createElement("button");b.type="button";b.className="server-icon"+(s.id===serverId?" active":"");b.title=s.name;b.dataset.serverId=s.id;b.textContent=(s.name||"?")[0].toUpperCase();if(s.icon_url){const im=document.createElement("img");im.src=s.icon_url;im.alt=s.name;im.onerror=()=>im.remove();b.textContent="";b.append(im)}b.onclick=()=>selectServer(s);b.addEventListener("contextmenu",e=>{e.preventDefault();openItemMenu("server",s.id,s.name,e.clientX,e.clientY)});rail.append(b)}const divider=document.createElement("div");divider.className="server-divider";rail.append(divider);const add=document.createElement("button");add.id="addServer";add.type="button";add.className="server-icon add";add.title="Create server";add.textContent="+";add.style.display=me.account_type==="basic"?"none":"grid";add.onclick=createServer;rail.append(add);if(!list.length){toast("You have not joined a server yet.");return}const selected=list.find(x=>x.id===serverId)||list.find(x=>x.is_system)||list[0];await selectServer(selected)}
-async function selectServer(s){if(memberPoll)clearInterval(memberPoll);serverId=s.id;mentionDirectoryServerId=null;lastMessagesSignature="";currentServer=s;channelId=null;currentChannel=null;$("#workspaceName").textContent=s.name;$("#channelTitle").textContent="Select a channel";$("#messages").innerHTML="";$("#channelList").innerHTML="";document.querySelectorAll(".server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===s.id));try{const meta=await api("/servers/"+serverId+"/settings");canManageServer=!!meta.can_manage}catch{canManageServer=false}$("#createChannelBtn").style.display=canManageServer?"grid":"none";await Promise.all([loadChannels(),loadMemberList(),loadNotificationSettings()]);loadNotifications();if(notificationPoll)clearInterval(notificationPoll);notificationPoll=setInterval(loadNotifications,5000);memberPoll=setInterval(loadMemberList,15000);checkOnboarding().catch(e=>console.warn("Onboarding:",e))}
+async function selectServer(s){if(memberPoll)clearInterval(memberPoll);serverId=s.id;mentionDirectoryServerId=null;lastMessagesSignature="";currentServer=s;channelId=null;currentChannel=null;$("#workspaceName").textContent=s.name;$("#channelTitle").textContent="Select a channel";$("#messages").innerHTML="";$("#channelList").innerHTML="";document.querySelectorAll(".server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===s.id));try{const meta=await api("/servers/"+serverId+"/settings");canManageServer=!!meta.can_manage}catch{canManageServer=false}$("#createChannelBtn").style.display=canManageServer?"grid":"none";$("#createSectionBtn").style.display=canManageServer?"grid":"none";$("#channelSettingsBtn").hidden=!canManageServer;await Promise.all([loadChannels(),loadMemberList(),loadNotificationSettings()]);loadNotifications();if(notificationPoll)clearInterval(notificationPoll);notificationPoll=setInterval(loadNotifications,5000);memberPoll=setInterval(loadMemberList,15000);checkOnboarding().catch(e=>console.warn("Onboarding:",e))}
 async function loadMemberList(){
  if(!serverId)return;
  try{
@@ -77,7 +77,7 @@ async function loadChannels(){
  });
  mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0]);
 }
-function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").textContent=c.name;document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,1500)}
+function selectChannel(c){channelId=c.id;currentChannel=c;$("#channelSettingsBtn").hidden=!canManageServer||c.kind==="voice";lastMessagesSignature="";$("#channelTitle").textContent=c.name;document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,1500)}
 function renderMarkdown(raw){
  const tick=String.fromCharCode(96),parts=String(raw??"").split(/(\x60{3}[\s\S]*?\x60{3})/g);
  return parts.map(part=>{
@@ -218,6 +218,58 @@ $("#composerSuggestions").addEventListener("mousedown",e=>{const b=e.target.clos
 
 $("#createChannelBtn").onclick=createChannel;
 async function createChannel(){if(!serverId)return;const name=prompt("Channel name (for example: announcements)");if(!name)return;const kind=confirm("Create a voice room? Choose Cancel for a text channel.")?"voice":"text";try{const d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name,kind})});toast((kind==="voice"?"Voice room":"Text channel")+" created.");await loadChannels();const found=(await api("/servers/"+serverId+"/channels")).channels.find(c=>c.id===d.channel.id);if(found)selectChannel(found);if(kind==="voice")toast("Voice room created. Live voice calling is not connected yet.")}catch(e){toast(e.message)}}
+$("#createSectionBtn").onclick=createSection;
+async function createSection(){
+ if(!serverId||!canManageServer)return;
+ const name=prompt("Section name");
+ if(!name)return;
+ try{
+  await api("/servers/"+serverId+"/sections",{method:"POST",body:JSON.stringify({name,channel_ids:channelId?[channelId]:[]})});
+  toast(channelId?"Section created and current channel moved.":"Section created.");
+  await loadChannels();
+ }catch(e){toast(e.message)}
+}
+$("#channelSettingsBtn").onclick=openChannelSettings;
+$("#closeChannelSettings").onclick=()=>$("#channelSettingsModal").classList.add("hidden");
+async function openChannelSettings(){
+ if(!channelId||!canManageServer)return;
+ try{
+  const [data,sectionData]=await Promise.all([api("/channels/"+channelId+"/settings"),api("/servers/"+serverId+"/sections")]);
+  const s=data.settings||{},form=$("#channelSettingsForm"),select=form.elements.section_id;
+  $("#channelSettingsSubtitle").textContent="#"+(currentChannel?.name||"channel");
+  select.innerHTML='<option value="">No section</option>'+(sectionData.sections||[]).map(item=>'<option value="'+esc(item.id)+'">'+esc(item.name)+(item.is_custom?" (custom)":"")+'</option>').join("");
+  form.elements.topic.value=s.topic||"";
+  form.elements.section_id.value=s.section_id||"";
+  form.elements.slowmode.value=Number(s.slowmode||0);
+  form.elements.nsfw.checked=!!s.nsfw;
+  form.elements.is_staff.checked=!!s.is_staff;
+  form.elements.locked.checked=!!s.locked;
+  let overwrites=[];try{overwrites=JSON.parse(s.permission_overwrites_json||"[]")}catch{}
+  form.elements.permission_overwrites.value=JSON.stringify(overwrites,null,2);
+  $("#channelSettingsModal").classList.remove("hidden");
+ }catch(e){toast(e.message)}
+}
+$("#channelSettingsForm").onsubmit=async e=>{
+ e.preventDefault();
+ if(!channelId||!canManageServer)return;
+ const form=e.currentTarget;
+ let overwrites=[];
+ try{overwrites=JSON.parse(form.elements.permission_overwrites.value||"[]");if(!Array.isArray(overwrites))throw Error("Permission overwrites must be a JSON array.")}catch(err){toast("Invalid permission JSON: "+err.message);return}
+ try{
+  await api("/channels/"+channelId+"/settings",{method:"POST",body:JSON.stringify({
+   topic:form.elements.topic.value,
+   section_id:form.elements.section_id.value||null,
+   slowmode:Number(form.elements.slowmode.value)||0,
+   nsfw:form.elements.nsfw.checked,
+   is_staff:form.elements.is_staff.checked,
+   locked:form.elements.locked.checked,
+   permission_overwrites:overwrites
+  })});
+  $("#channelSettingsModal").classList.add("hidden");
+  toast("Channel settings saved.");
+  await loadChannels();
+ }catch(err){toast(err.message)}
+};
 async function createServer(){const name=prompt("New server name");if(!name)return;try{const d=await api("/servers",{method:"POST",body:JSON.stringify({name})});toast("Server created.");await loadServers();const all=await api("/servers");const s=all.servers.find(x=>x.id===d.server.id);if(s)await selectServer(s)}catch(e){toast(e.message)}}
 $("#addServer").onclick=createServer;
 $("#serverMenuBtn").onclick=()=>openServerSettings("overview");
