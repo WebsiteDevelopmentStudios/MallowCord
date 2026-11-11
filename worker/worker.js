@@ -107,8 +107,8 @@ function oauthFailure(env,provider){
 }
 async function oauthDiagnostic(env,provider,stage,detail={}){
  try{
-  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS oauth_diagnostics(id TEXT PRIMARY KEY,provider TEXT NOT NULL,stage TEXT NOT NULL,detail TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
-  await getDatabase(env).prepare("INSERT INTO oauth_diagnostics(id,provider,stage,detail,created_at) VALUES(?,?,?,?,?)").bind(uid(),provider,String(stage).slice(0,100),JSON.stringify(detail).slice(0,4000),now()).run();
+  await getDatabase(env, "oauth_diagnostics").prepare("CREATE TABLE IF NOT EXISTS oauth_diagnostics(id TEXT PRIMARY KEY,provider TEXT NOT NULL,stage TEXT NOT NULL,detail TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+  await getDatabase(env, "oauth_diagnostics").prepare("INSERT INTO oauth_diagnostics(id,provider,stage,detail,created_at) VALUES(?,?,?,?,?)").bind(uid(),provider,String(stage).slice(0,100),JSON.stringify(detail).slice(0,4000),now()).run();
  }catch(error){console.error("OAuth diagnostic logging failed",String(error?.message||error));}
 }
 async function oauthStart(req,env,provider){
