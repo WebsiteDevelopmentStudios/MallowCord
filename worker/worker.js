@@ -428,6 +428,7 @@ if(serverAdminMatch){
   return json({members,roles:roleRows.results,can_manage:manager});
  }
  if(section==="roles"&&m==="GET"){
+  await ensureDiscordImportSchema(env);
   await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
   const a=await env.DB.prepare("SELECT id,name,is_system,position,pingable,color,permissions,hoist,mentionable,managed,icon_url,unicode_emoji FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
   return json({roles:a.results,can_manage:manager});
@@ -605,7 +606,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  const linkedDiscordChannel=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE mallow_channel_id=? AND server_id=?").bind(channelId,systemServer.id).first();
  const prefix=content.match(/^(?:-mb\s+([a-z0-9-]+)|\/mb\s+([a-z0-9-]+))(?:\s+([\s\S]*))?$/i);
  const slash=content.match(/^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
- if(!prefix&&!slash)return fail("Use -mb help, /mb help, or a slash command such as /swears.");
+ if(!prefix&&!slash)return fail("Use -mb help, /mb help, or a slash command such as /balance.");
  const style=prefix?(content.toLowerCase().startsWith("-mb")?"prefix":"slash"):"slash";
  const command=(prefix?(prefix[1]||prefix[2]):slash[1]).toLowerCase();
  const args=prefix?(prefix[3]||"").trim():(slash[2]||"").trim();
