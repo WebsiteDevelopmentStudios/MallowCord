@@ -628,7 +628,7 @@ body .chat{background-color:rgba(8,10,13,.24)!important}
 body .channels,body .members{background-color:rgba(12,14,17,.42)!important}
 body .workspace-head,body .chat-head,body .user-panel,body .message-form{background-color:rgba(8,10,13,.38)!important}
 body .account-settings-main,body .account-settings-nav{background-color:rgba(12,14,17,.70)!important}
-.message-embed-link{display:block;width:fit-content;max-width:min(100%,560px);margin:7px 0}
+.message-embed-link{display:block;clear:both;width:fit-content;max-width:min(100%,560px);margin:7px 0 12px}
 .message-embed{display:block;max-width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--line);background:rgba(0,0,0,.18)}
 .message-embed.gif-embed{max-height:460px}
 .message-link{color:var(--main-theme-hover);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
