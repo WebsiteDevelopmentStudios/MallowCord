@@ -483,8 +483,7 @@ if(x&&m==="GET"){
  if(serverId){
   const inServer=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(serverId,targetId).first();
   const viewerInServer=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(serverId,u.id).first();
-  if(!inServer||!viewerInServer)return fail("You cannot view this server's roles.",403);
-  roles=(await env.DB.prepare("SELECT r.id,r.name,r.color,r.position FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=? AND mr.user_id=? ORDER BY r.position DESC").bind(serverId,targetId).all()).results;
+  if(inServer&&viewerInServer)roles=(await env.DB.prepare("SELECT r.id,r.name,r.color,r.position FROM member_roles mr JOIN roles r ON r.role_id=mr.role_id WHERE mr.server_id=? AND mr.user_id=? ORDER BY r.position DESC").bind(serverId,targetId).all()).results;
  }
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS friendships(user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,PRIMARY KEY(user_low_id,user_high_id))").run();
  const [low,high]=u.id<targetId?[u.id,targetId]:[targetId,u.id];
@@ -511,7 +510,7 @@ if(p==="/api/friends/request"&&m==="POST"){
  await ensureSocialTables(env);
  const b=await body(req),name=String(b.username||"").trim();
  if(!name)return fail("Enter the exact username of the person you want to add.");
- const target=await env.DB.prepare("SELECT u.id,u.username FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id WHERE (u.username_key=? OR lower(up.discord_username)=?) AND u.status='active' LIMIT 1").bind(name.toLowerCase(),name.toLowerCase()).first();
+ await ensureAccountTables(env);const target=await env.DB.prepare("SELECT u.id,u.username FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id WHERE (u.username_key=? OR lower(up.discord_username)=?) AND u.status='active' LIMIT 1").bind(name.toLowerCase(),name.toLowerCase()).first();
  if(!target)return fail("No active user has that username.",404);
  if(target.id===u.id)return fail("You cannot add yourself.");
  const [low,high]=u.id<target.id?[u.id,target.id]:[target.id,u.id];
@@ -986,7 +985,7 @@ if(attachmentDownloadRoute&&m==="GET"){
 x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  const channelId=x[1],mem=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(channelId,u.id).first();
  if(!mem||!await channelPermissionAllowed(env,channelId,u.id,"view_channel")||!await channelPermissionAllowed(env,channelId,u.id,"read_message_history"))return fail("You cannot view this channel.",403);
- await ensureMessageExtras(env);await ensureAccountTables(env);await env.DB.prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
+ await ensureMessageExtras(env);await ensureAccountTables(env);await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_forwards(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,source_message_id TEXT,source_username TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  const base=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,COALESCE(up.display_name,u.username) AS username,up.avatar_url,up.bio,up.status,up.pronouns,u.id AS author_id,COALESCE((SELECT r.color FROM member_roles mr2 JOIN roles r ON r.id=mr2.role_id WHERE mr2.server_id=? AND mr2.user_id=u.id ORDER BY r.position DESC LIMIT 1),'') AS role_color,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='mention' AND mn.seen_at IS NULL) AS is_mentioned,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='reply' AND mn.seen_at IS NULL) AS is_reply_to_you,(SELECT mf.source_username FROM message_forwards mf WHERE mf.message_id=m.id) AS forwarded_from FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(u.id,u.id,mem.server_id,channelId).all();
