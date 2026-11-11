@@ -274,7 +274,8 @@ document.addEventListener("click",e=>{
  if(!e.target.closest("#messageContextMenu"))closeMessageMenu();
  const chip=e.target.closest(".reaction-chip");if(chip)toggleReaction(chip.dataset.message,chip.dataset.emoji);
 });
-document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeMessageMenu();closeItemMenu();clearReply()}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeMessageMenu();closeItemMenu();clearReply();$("#profilePopover")?.classList.add("hidden")}});
+document.addEventListener("click",e=>{const profile=$("#profilePopover");if(!profile||profile.classList.contains("hidden"))return;if(e.target.closest("#profilePopover")||e.target.closest("#userProfileTrigger,.member-profile-trigger,.profile-avatar-trigger"))return;profile.classList.add("hidden")});
 document.addEventListener("scroll",closeMessageMenu,true);document.addEventListener("scroll",closeItemMenu,true);
 document.addEventListener("click",e=>{const target=e.target.closest("#userProfileTrigger,.member-profile-trigger,.profile-avatar-trigger");if(!target)return;e.stopPropagation();if(target.id==="userProfileTrigger"){const root=$("#profilePopover");if(!root.classList.contains("hidden"))root.classList.add("hidden");else openUserProfile(me.id);}else if(target.dataset.userId)openUserProfile(target.dataset.userId);else if(target.dataset.botProfile)renderProfilePopover({username:"MallowBot",display_name:"MallowBot",avatar_url:"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",bio:"Official MallowCord bot",status:"online",pronouns:""});},{capture:true});
 async function toggleReaction(id,emoji){try{await api("/messages/"+id+"/reactions",{method:"POST",body:JSON.stringify({emoji})});await loadMessages()}catch(e){toast(e.message)}}
