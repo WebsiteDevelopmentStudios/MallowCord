@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev:worker": "wrangler dev",
-    "deploy:worker": "wrangler deploy"
+    "deploy:worker": "wrangler deploy",
+    "test:worker": "node --test worker/postgres-adapter.test.js"
   },
   "dependencies": {
     "postgres": "^3.4.7"
