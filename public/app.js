@@ -573,21 +573,50 @@ $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});locatio
  try{me=(await api("/auth/me")).user;await enterApp()}catch{}
 })();
 
-// Mobile channel/member drawers and touch navigation
+// Mobile channel/member drawers and interactive swipe gestures
 (()=>{
- const app=document.querySelector("#app"),toggle=document.querySelector("#mobileChannelsToggle");
- if(!app||!toggle)return;
- let touchStart=null;
+ const app=document.querySelector("#app"),toggle=document.querySelector("#mobileChannelsToggle"),members=document.querySelector(".members");
+ if(!app||!toggle||!members)return;
+ let gesture=null;
  const mobile=()=>window.matchMedia("(max-width:650px)").matches;
- function closeDrawers(){app.classList.remove("mobile-channels-open","mobile-members-open");toggle.setAttribute("aria-expanded","false");toggle.setAttribute("aria-label","Open channels")}
+ function closeDrawers(){app.classList.remove("mobile-channels-open","mobile-members-open");toggle.setAttribute("aria-expanded","false");toggle.setAttribute("aria-label","Open channels");members.style.transform=""}
  function openChannels(){app.classList.remove("mobile-members-open");app.classList.add("mobile-channels-open");toggle.setAttribute("aria-expanded","true");toggle.setAttribute("aria-label","Close channels")}
- function openMembers(){app.classList.remove("mobile-channels-open");app.classList.add("mobile-members-open");toggle.setAttribute("aria-expanded","false")}
+ function openMembers(){app.classList.remove("mobile-channels-open");app.classList.add("mobile-members-open");toggle.setAttribute("aria-expanded","false");members.style.transform=""}
  toggle.addEventListener("click",()=>{if(!mobile())return;if(app.classList.contains("mobile-channels-open"))closeDrawers();else openChannels()});
  const backdrop=document.createElement("button");backdrop.type="button";backdrop.className="mobile-drawer-backdrop";backdrop.setAttribute("aria-label","Close navigation");backdrop.addEventListener("click",closeDrawers);app.append(backdrop);
  document.querySelector("#channelList")?.addEventListener("click",e=>{if(mobile()&&e.target.closest(".channel"))closeDrawers()});
  document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawers()});
- const chat=document.querySelector(".chat");
- chat?.addEventListener("touchstart",e=>{if(!mobile()||e.touches.length!==1)return;const t=e.touches[0];touchStart={x:t.clientX,y:t.clientY};},{passive:true});
- chat?.addEventListener("touchend",e=>{if(!mobile()||!touchStart||!e.changedTouches.length)return;const t=e.changedTouches[0],dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y;touchStart=null;if(Math.abs(dx)<65||Math.abs(dx)<Math.abs(dy)*1.25)return;if(dx<0)openMembers();else if(app.classList.contains("mobile-members-open"))closeDrawers();},{passive:true});
+ function begin(e){
+  if(!mobile()||e.touches.length!==1)return;
+  const t=e.touches[0],memberOpen=app.classList.contains("mobile-members-open");
+  const inMember=!!e.target.closest(".members");
+  const inChat=!!e.target.closest(".chat");
+  if((memberOpen&&!inMember)||(!memberOpen&&!inChat))return;
+  gesture={x:t.clientX,y:t.clientY,dx:0,mode:memberOpen?"close":"open",horizontal:false};
+ }
+ function move(e){
+  if(!gesture||!mobile()||e.touches.length!==1)return;
+  const t=e.touches[0],dx=t.clientX-gesture.x,dy=t.clientY-gesture.y;
+  if(!gesture.horizontal&&Math.abs(dx)>9&&Math.abs(dx)>Math.abs(dy)*1.15)gesture.horizontal=true;
+  if(!gesture.horizontal)return;
+  if((gesture.mode==="open"&&dx>0)||(gesture.mode==="close"&&dx<0))return;
+  gesture.dx=dx;
+  members.classList.add("mobile-drawer-dragging");
+  const width=members.getBoundingClientRect().width||300;
+  members.style.transform=gesture.mode==="open"?"translateX("+Math.max(0,Math.min(105,105+dx/width*105))+"%)":"translateX("+Math.max(0,Math.min(width,dx))+"px)";
+ }
+ function finish(){
+  if(!gesture)return;
+  const g=gesture;gesture=null;members.classList.remove("mobile-drawer-dragging");
+  if(!mobile()){members.style.transform="";return}
+  if(!g.horizontal){members.style.transform="";return}
+  if(g.mode==="open"&&g.dx<-55)openMembers();
+  else if(g.mode==="close"&&g.dx>55)closeDrawers();
+  else members.style.transform="";
+ }
+ app.addEventListener("touchstart",begin,{passive:true});
+ app.addEventListener("touchmove",move,{passive:true});
+ app.addEventListener("touchend",finish,{passive:true});
+ app.addEventListener("touchcancel",finish,{passive:true});
  window.addEventListener("resize",()=>{if(!mobile())closeDrawers()});
 })();
