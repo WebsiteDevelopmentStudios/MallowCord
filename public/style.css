@@ -812,3 +812,120 @@ body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-fil
  .members.mobile-drawer-dragging{transition:none!important}
  .app.mobile-members-open .members{transform:translateX(0)}
 }
+
+
+/* Mobile account settings: use a compact horizontal section bar and give the
+   active settings page the full phone width. */
+@media(max-width:560px){
+  .account-settings-card{
+    width:calc(100vw - 12px);
+    height:calc(100dvh - 12px);
+    max-height:calc(100dvh - 12px);
+    border-radius:12px;
+  }
+  .account-settings-layout{
+    display:flex;
+    flex-direction:column;
+    min-width:0;
+    min-height:0;
+  }
+  .account-settings-nav{
+    display:flex;
+    flex:0 0 54px;
+    align-items:center;
+    gap:5px;
+    width:100%;
+    min-height:54px;
+    height:54px;
+    padding:7px 9px;
+    overflow-x:auto;
+    overflow-y:hidden;
+    white-space:nowrap;
+    border-right:0;
+    border-bottom:1px solid var(--line);
+    scrollbar-width:none;
+  }
+  .account-settings-nav::-webkit-scrollbar{display:none}
+  .account-settings-nav:before,
+  .account-settings-nav h2,
+  .account-settings-nav .settings-group-title{display:none!important}
+  .account-nav{
+    display:inline-flex;
+    flex:0 0 auto;
+    align-items:center;
+    width:auto;
+    min-height:35px;
+    margin:0;
+    padding:7px 10px;
+    border-radius:8px;
+    font-size:11px;
+    line-height:1.2;
+  }
+  .account-nav.active{box-shadow:inset 0 -2px var(--main-theme-color)}
+  .account-logout{margin:0}
+  .account-settings-main{
+    flex:1 1 auto;
+    min-width:0;
+    min-height:0;
+    overflow-x:hidden;
+    overflow-y:auto;
+    padding:15px 12px 20px;
+  }
+  .account-settings-header{padding:0 0 12px;margin:0 0 14px}
+  .account-settings-header h2{font-size:18px;letter-spacing:-.35px;margin:5px 0}
+  .account-settings-header p{font-size:11px;line-height:1.45}
+  .settings-eyebrow{font-size:9px;letter-spacing:1.2px}
+  .account-settings-content{max-width:none;width:100%;min-width:0}
+  .account-panel{padding:12px;margin:0 0 10px;border-radius:9px}
+  .account-panel h3{font-size:13px;margin-bottom:10px}
+  .account-note,.settings-note{font-size:11px;line-height:1.45}
+  .account-form{gap:10px}
+  .account-form label,.account-field{font-size:11px;gap:6px}
+  .account-form input,.account-field select,.css-theme-editor textarea{
+    padding:9px 10px;
+    font-size:12px;
+    min-width:0;
+  }
+  .account-form button,.account-save{min-width:0;min-height:35px;padding:8px 12px;font-size:11px}
+  .account-settings-main button{max-width:100%}
+  .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .stat-card{padding:10px;gap:5px}
+  .stat-card strong{font-size:21px}
+  .stat-card small{font-size:10px}
+  .settings-list{gap:6px}
+  .settings-list-row,.member-setting{gap:8px;padding:9px}
+  .avatar-upload-section{padding:10px;gap:9px}
+  .avatar-crop-stage{width:min(72vw,260px);margin-inline:auto;border-radius:50%}
+  .avatar-crop-stage canvas{border-radius:50%}
+  .avatar-crop-controls{gap:8px}
+  .avatar-crop-controls label{min-width:0}
+}
+@media(max-width:380px){
+  .account-settings-main{padding:12px 9px 16px}
+  .account-panel{padding:10px}
+  .account-nav{padding:7px 8px;font-size:10px}
+}
+
+/* Keep profile pictures consistently framed in every avatar surface. */
+.avatar img,
+#userAvatar img,
+.profile-popover-avatar,
+.account-avatar-preview img,
+.member .avatar img,
+.message-group .avatar img{
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  object-position:50% 38%;
+}
+
+.file-picker-input{
+  position:fixed!important;
+  left:-10000px!important;
+  top:0!important;
+  width:1px!important;
+  height:1px!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
