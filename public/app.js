@@ -43,18 +43,29 @@ async function loadMemberList(){
  }catch(e){console.warn("Member list:",e.message)}
 }
 function renderChannelLabel(name){
- let source=String(name??"");
- // Recover emoji tokens from legacy Discord image-markup strings stored in channel names.
- source=source.replace(/(?:image)?\[([^\]]*)\]\((https:\/\/cdn\.discordapp\.com\/emojis\/(\d+)\.(?:png|webp|gif)(?:\?[^)]*)?)\)(?:["']?\s*alt=["']?:([A-Za-z0-9_]{2,32}):["']?\s*>?)?/gi,(all,label,url,id,altName)=>altName?":"+altName+":":"<:emoji:"+id+">");
- source=source.replace(/<img\b[^>]*\balt=(["'])\:([A-Za-z0-9_]{2,32})\:\1[^>]*>/gi,":$2:");
- source=source.replace(/\s+alt=(?:"|&quot;|&#34;|["']).*$/i,"").replace(/\s+loading=(?:"|&quot;|["']).*$/i,"");
- return esc(source).replace(/&lt;a?:([A-Za-z0-9_]{2,32}):(\d{5,25})&gt;|:([A-Za-z0-9_]{2,32}):/g,(token,discordName,discordId,shortName)=>{
-  const emojiName=discordName||shortName;
-  const emoji=serverEmojis.find(item=>String(item.name||"").toLowerCase()===emojiName.toLowerCase());
-  const imageUrl=emoji?.image_url||(discordId?"https://cdn.discordapp.com/emojis/"+discordId+".webp?size=32&quality=lossless":"");
-  if(!imageUrl)return token;
-  return '<img class="inline-custom-emoji channel-custom-emoji" src="'+esc(imageUrl)+'" alt="'+esc(":"+emojiName+":")+'" title="'+esc(":"+emojiName+":")+'" loading="lazy">';
+ let source=String(name??""),images=[];
+ const placeholder=html=>{const key="MALLOWCHANNELIMAGE"+images.length+"END";images.push(html);return key};
+ const channelImage=(emojiName,url)=>{
+  const image=customEmojiImage(emojiName,url);
+  return image?image.replace("inline-custom-emoji","inline-custom-emoji channel-custom-emoji"):"";
+ };
+ // Repair old malformed Discord image markdown and preserve the actual emoji name.
+ source=source.replace(/(?:image)?\[([^\]]*)\]\((https:\/\/[^)\s]+)\)(?:["']?\s*alt=["']?:([^"']+):["']?\s*>?)?/gi,(all,label,url,altName)=>{
+  const nameMatch=String(label).match(/:([^:]+):/),emojiName=altName||nameMatch?.[1]||"";
+  const image=channelImage(emojiName,url);
+  return image?placeholder(image):"";
  });
+ // Recover orphaned alt fragments such as: Custom emoji" alt=":golden_boots:">
+ source=source.replace(/(?:Custom emoji\s*)?["']?\s*alt=["']?:([^"']+):["']?\s*>?/gi,(all,emojiName)=>{
+  const image=channelImage(emojiName);
+  return image?placeholder(image):"";
+ });
+ // Convert normal :emoji_name: shortcodes using this server's emoji directory.
+ source=esc(source).replace(/:([a-zA-Z0-9_*.-]{2,40}):/g,(all,emojiName)=>{
+  const image=channelImage(emojiName);
+  return image?placeholder(image):all;
+ });
+ return source.replace(/MALLOWCHANNELIMAGE(\d+)END/g,(all,index)=>images[Number(index)]||"");
 }
 async function loadChannels(){
  const [d,emojiData]=await Promise.all([
