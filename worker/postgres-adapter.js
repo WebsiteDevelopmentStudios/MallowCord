@@ -74,6 +74,8 @@ export function getDatabase(env) {
         let query = statement;
         let values = [];
         const bound = {
+          get query() { return query; },
+          get values() { return values; },
           bind(...args) { values = args; return bound; },
           async first(column) {
             const rows = await sql.unsafe(translateSql(query), values);
