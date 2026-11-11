@@ -218,10 +218,11 @@ async function createChannel(){
   const roles=rd.roles||[],sections=sd.sections||[],roleOptions=roles.filter(r=>r.name!=="@everyone").map(r=>'<option value="'+esc(r.id)+'">'+esc(r.name)+'</option>').join("");
   const sectionOptions='<option value="">No section</option>'+sections.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join("");
   showCreatePanel("Create channel",'<label>Channel name<input name="name" placeholder="announcements" minlength="2" maxlength="50" required></label><label>Channel type<select name="kind"><option value="text">Text channel</option><option value="voice">Voice channel</option></select></label><label>Server section<select name="section_id">'+sectionOptions+'</select></label><label class="toggle-line"><input type="checkbox" name="private" value="yes"> Private staff channel</label><label>Staff role<select name="staff_role_id"><option value="">Choose a role</option>'+roleOptions+'</select></label>',async data=>{
-   const kind=data.kind==="voice"?"voice":"text",d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name:data.name,kind,section_id:data.section_id||null})});
+   const kind=data.kind==="voice"?"voice":"text";
+   if(data.private==="yes"&&(!roles.find(r=>r.name==="@everyone")||!data.staff_role_id))throw Error("Choose a staff role to create a private channel.");
+   const d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name:data.name,kind,section_id:data.section_id||null})});
    if(data.private==="yes"){
     const everyone=roles.find(r=>r.name==="@everyone"),staff=data.staff_role_id;
-    if(!everyone||!staff)throw Error("Choose a staff role to create a private channel.");
     await api("/channels/"+d.channel.id+"/permissions",{method:"POST",body:JSON.stringify({target_type:"role",target_id:everyone.id,allow:[],deny:["view_channel"]})});
     await api("/channels/"+d.channel.id+"/permissions",{method:"POST",body:JSON.stringify({target_type:"role",target_id:staff,allow:["view_channel","send_messages","read_message_history","attach_files","embed_links"],deny:[]})});
    }
