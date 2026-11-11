@@ -89,7 +89,7 @@ if(discordBridgePath){
  }
  if(p==="/api/integrations/mallowbot/discord/commands/next"&&m==="GET"){
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_command_jobs(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,channel_id TEXT NOT NULL,user_id TEXT NOT NULL,discord_user_id TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,processed_at INTEGER)").run();
-  const rows=await env.DB.prepare("SELECT id,channel_id,discord_user_id,content FROM discord_command_jobs WHERE status='queued' ORDER BY created_at LIMIT 5").all();
+  const rows=await env.DB.prepare("SELECT j.id,j.channel_id,j.discord_user_id,j.content,cl.discord_channel_id FROM discord_command_jobs j JOIN discord_channel_links cl ON cl.mallow_channel_id=j.channel_id AND cl.server_id=j.server_id WHERE j.status='queued' ORDER BY j.created_at LIMIT 5").all();
   for(const job of rows.results)await env.DB.prepare("UPDATE discord_command_jobs SET status='processing' WHERE id=? AND status='queued'").bind(job.id).run();
   return json({jobs:rows.results});
  }
