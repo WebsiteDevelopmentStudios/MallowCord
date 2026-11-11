@@ -37,11 +37,13 @@ async function loadMemberList(){
  if(!serverId)return;
  try{
   const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[];
+  const discord=members.filter(m=>String(m.id).startsWith("discord:")),native=members.filter(m=>!String(m.id).startsWith("discord:"));
   $("#memberCountLabel").textContent="MEMBERS — "+(members.length+1);
-  box.innerHTML='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>'+members.map(mem=>{
-   const label=mem.display_name||mem.username,avatar=mem.avatar_url?'<img src="'+esc(mem.avatar_url)+'" alt="">':esc(label[0].toUpperCase());
-   return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(mem.id)+'"><span class="avatar status-avatar" data-status="'+esc(mem.presence||"online")+'">'+avatar+'</span><span class="member-copy"><b>'+esc(label)+'</b><small>'+esc(mem.roles||"@everyone")+'</small></span></button>';
-  }).join("");
+  const online=m=>["online","idle","dnd"].includes(m.presence),
+   button=m=>{const label=m.display_name||m.username||"User",avatar=m.avatar_url?'<img src="'+esc(m.avatar_url)+'" alt="">':esc(label[0].toUpperCase()),state=m.presence||"offline";return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(m.id)+'"><span class="avatar status-avatar" data-status="'+esc(state)+'">'+avatar+'</span><span class="member-copy"><b>'+esc(label)+'</b><small class="member-username">'+esc(m.username||"")+'</small><small>'+esc(m.roles||"@everyone")+'</small></span></button>'},
+   group=(name,rows)=>rows.length?'<div class="member-group-title">'+esc(name)+' <span>'+rows.length+'</span></div>'+rows.map(button).join(""):"";
+  const bot='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>';
+  box.innerHTML=bot+group("MallowCord members",native)+group("Discord members — online",discord.filter(online))+group("Discord members — offline",discord.filter(m=>!online(m)));
  }catch(e){console.warn("Member list:",e.message)}
 }
 async function loadChannels(){
