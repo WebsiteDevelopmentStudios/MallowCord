@@ -73,18 +73,26 @@ if(discordBridgePath){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
 
  if(p==="/api/integrations/mallowbot/discord/link/claim"&&m==="POST"){
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
   const b=await body(req),code=String(b.code||"").replace(/[^A-Za-z0-9]/g,"").toUpperCase(),discordId=String(b.discord_user_id||"");
-  if(!/^[A-Z0-9]{8}$/.test(code)||!/^\\d{15,22}$/.test(discordId))return fail("Invalid link code.");
+  if(!/^[A-Z0-9]{8}$/.test(code)||!/^[0-9]{15,22}$/.test(discordId))return fail("Invalid link code.");
   const hash=await sha(code),row=await env.DB.prepare("SELECT user_id,expires_at FROM discord_link_codes WHERE code_hash=?").bind(hash).first();
   if(!row||row.expires_at<now())return fail("Link code is invalid or expired.",404);
-  const existing=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first();
+  const existing=await env.DB.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first();
   if(existing&&existing.user_id!==row.user_id)return fail("This Discord account is already linked to another MallowCord account.",409);
-  const other=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=? AND server_id=?").bind(row.user_id,system.id).first();
+  const other=await env.DB.prepare("SELECT discord_user_id FROM discord_account_links WHERE user_id=? AND server_id=?").bind(row.user_id,system.id).first();
   if(other&&other.discord_user_id!==discordId)return fail("This MallowCord account is already linked to another Discord account.",409);
+  const shadow=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first();
   await env.DB.batch([
-   env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(discordId,system.id,row.user_id,now()),
+   env.DB.prepare("INSERT INTO discord_account_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(discordId,system.id,row.user_id,now()),
+   env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,row.user_id,now()),
+   env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) SELECT server_id,?,role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(row.user_id,system.id,shadow?.user_id||""),
    env.DB.prepare("DELETE FROM discord_link_codes WHERE code_hash=?").bind(hash)
   ]);
+  if(shadow?.user_id&&shadow.user_id!==row.user_id){
+   await env.DB.prepare("DELETE FROM memberships WHERE server_id=? AND user_id=?").bind(system.id,shadow.user_id).run();
+   await env.DB.prepare("UPDATE channel_permissions SET target_id=? WHERE channel_id IN (SELECT id FROM channels WHERE server_id=?) AND target_type='user' AND target_id=?").bind(row.user_id,system.id,shadow.user_id).run().catch(()=>{});
+  }
   return json({ok:true,linked:true});
  }
  if(p==="/api/integrations/mallowbot/discord/commands/next"&&m==="GET"){
@@ -610,16 +618,16 @@ if(messageAction){
 
 
 if(p==="/api/discord/link/status"&&m==="GET"){
- await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
  const server=await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();
- const linked=server?await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=? AND server_id=?").bind(u.id,server.id).first():null;
+ const linked=server?await env.DB.prepare("SELECT discord_user_id FROM discord_account_links WHERE user_id=? AND server_id=?").bind(u.id,server.id).first():null;
  return json({linked:!!linked,discord_user_id:linked?.discord_user_id||null});
 }
 if(p==="/api/discord/link/start"&&m==="POST"){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
- await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
  const server=await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();if(!server)return fail("Mallow Swamp is not initialized.",503);
- const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=? AND server_id=?").bind(u.id,server.id).first();if(linked)return fail("A Discord account is already linked.",409);
+ const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_account_links WHERE user_id=? AND server_id=?").bind(u.id,server.id).first();if(linked)return fail("A Discord account is already linked.",409);
  const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",bytes=crypto.getRandomValues(new Uint8Array(8));let code="";for(const n of bytes)code+=alphabet[n%alphabet.length];
  await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
  await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(code),u.id,now()+600,now()).run();
@@ -634,7 +642,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  if(!/^(?:-mb|\\/mb)\\s+[a-z0-9-]+(?:\\s+[\\s\\S]*)?$/i.test(content))return fail("Use -mb help to see the Mallow-Bot command list.");
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
  const system=await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();
- const linked=system?await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=? AND server_id=?").bind(u.id,system.id).first():null;
+ const linked=system?await env.DB.prepare("SELECT discord_user_id FROM discord_account_links WHERE user_id=? AND server_id=?").bind(u.id,system.id).first():null;
  if(!linked)return fail("Link your Discord account in User Settings → Discord Link before running Mallow-Bot commands.",403);
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_command_jobs(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,channel_id TEXT NOT NULL,user_id TEXT NOT NULL,discord_user_id TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,processed_at INTEGER)").run();
  await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(uid(),channelId,u.id,content,now()).run();
