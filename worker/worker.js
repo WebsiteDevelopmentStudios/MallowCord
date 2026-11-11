@@ -614,7 +614,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  if(!member)return fail("You cannot run bot commands in this channel.",403);
  let channelSettings={};try{channelSettings=JSON.parse(member.settings_json||"{}")}catch{}
  if(channelSettings.locked&&!isOwner(u)&&member.owner_id!==u.id)return fail("This channel is locked.",403);
- if(!await channelPermissionAllowed(env,member.server_id,u.id,channelSettings,"view_channel")||!await channelPermissionAllowed(env,member.server_id,u.id,channelSettings,"send_messages"))return fail("You do not have permission to run commands in this channel.",403);
+ if(!await channelPermissionAllowed(env,member.server_id,u.id,channelSettings,"view_channel")||!await channelPermissionAllowed(env,member.server_id,u.id,channelSettings,channelSettings.discord_settings?.thread?"send_messages_in_threads":"send_messages"))return fail("You do not have permission to run commands in this channel.",403);
  const systemServer=await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(!systemServer||member.server_id!==systemServer.id)return fail("Mallow-Bot commands are currently available only in Mallow Swamp.",403);
  const linkedDiscordChannel=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE mallow_channel_id=? AND server_id=?").bind(channelId,systemServer.id).first();
@@ -735,7 +735,7 @@ if(x&&m==="POST"){
  let channelSettings={};try{channelSettings=JSON.parse(mem.settings_json||"{}")}catch{}
  if(channelSettings.locked&&!isOwner(u)&&mem.owner_id!==u.id)return fail("This channel is locked. You cannot send messages here.",403);
  const overwrites=Array.isArray(channelSettings.permission_overwrites)?channelSettings.permission_overwrites:[];
- if(!await channelPermissionAllowed(env,mem.server_id,u.id,channelSettings,"send_messages")&&!isOwner(u)&&mem.owner_id!==u.id)return fail("You do not have permission to send messages in this channel.",403);
+ if(!await channelPermissionAllowed(env,mem.server_id,u.id,channelSettings,channelSettings.discord_settings?.thread?"send_messages_in_threads":"send_messages")&&!isOwner(u)&&mem.owner_id!==u.id)return fail("You do not have permission to send messages in this channel.",403);
  for(const attachmentId of attachmentIds){const pending=await env.DB.prepare("SELECT id FROM message_attachments WHERE id=? AND channel_id=? AND uploader_id=? AND message_id IS NULL").bind(attachmentId,x[1],u.id).first();if(!pending)return fail("One of the uploaded files is unavailable. Please attach it again.",400);}
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
  const roles=(await env.DB.prepare("SELECT id,name,pingable FROM roles WHERE server_id=?").bind(mem.server_id).all()).results;
