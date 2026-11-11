@@ -91,10 +91,20 @@ function renderMarkdown(raw){
  return parts.map(part=>{
   if(part.startsWith(tick.repeat(3))&&part.endsWith(tick.repeat(3))){const body=part.slice(3,-3).replace(/^[a-zA-Z0-9_-]+\n/,"");return "<pre><code>"+esc(body)+"</code></pre>"}
   let safe=esc(part),markdownImages=[];
-  safe=safe.replace(/!\[([^\]]*)\]\((https:\/\/[^)\s]+)\)/gi,(all,alt,url)=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<a class="message-link" href="'+url+'" target="_blank" rel="noopener noreferrer">'+url+'</a><a class="message-embed-link" href="'+url+'" target="_blank" rel="noopener noreferrer"><img class="message-embed image-embed" src="'+url+'" alt="'+esc(alt)+'" loading="lazy"></a>');return key;});
-  safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>x.name===name);return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
+  // Repair legacy malformed emoji/image fragments before normal URL handling.
+  safe=safe.replace(/(?:image)?\[([^\]]*)\]\((https:\/\/[^)\s]+)\)(?:&quot;?\s*alt=&quot;:[A-Za-z0-9_]{2,32}:&quot;?&gt;?)?/gi,(all,alt,url)=>{
+   const emojiMatch=url.match(/cdn\.discordapp\.com\/emojis\/(\d+)\.(png|webp|gif)/i);
+   const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";
+   if(emojiMatch){markdownImages.push('<img class="inline-custom-emoji" src="'+url+'" alt="'+esc(alt||"Custom emoji")+'" loading="lazy">');}
+   else{markdownImages.push('<a class="message-link" href="'+url+'" target="_blank" rel="noopener noreferrer">'+url+'</a><a class="message-embed-link" href="'+url+'" target="_blank" rel="noopener noreferrer"><img class="message-embed image-embed" src="'+url+'" alt="'+esc(alt)+'" loading="lazy"></a>');}
+   return key;
+  });
+  safe=safe.replace(/&lt;img\b[^&]*?src=&quot;(https:\/\/cdn\.discordapp\.com\/emojis\/\d+\.(?:png|webp|gif)(?:\?[^&]*)?)&quot;[^&]*?&gt;/gi,(all,url)=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<img class="inline-custom-emoji" src="'+url+'" alt="Custom emoji" loading="lazy">');return key;});
+  safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>String(x.name||"").toLowerCase()===name.toLowerCase());return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
   safe=safe.replace(/https:\/\/[^\s<>"']+/gi,url=>{
    const clean=url.replace(/[),.!?]+$/,""),tail=url.slice(clean.length),lower=clean.toLowerCase();
+   const discordEmoji=clean.match(/^https:\/\/cdn\.discordapp\.com\/emojis\/\d+\.(?:png|webp|gif)(?:\?.*)?$/i);
+   if(discordEmoji){const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<img class="inline-custom-emoji" src="'+clean+'" alt="Custom emoji" loading="lazy">');return key+tail;}
    if(/\.(gif|png|jpe?g|webp)(\?.*)?$/i.test(lower)){
     const type=/\.gif(\?.*)?$/i.test(lower)?"gif":"image";
     return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a><a class="message-embed-link" href="'+clean+'" target="_blank" rel="noopener noreferrer"><img class="message-embed '+type+'-embed" src="'+clean+'" alt="'+(type==="gif"?"GIF":"Image")+'" loading="lazy"></a>'+tail;
