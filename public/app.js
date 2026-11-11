@@ -55,7 +55,7 @@ async function loadChannels(){
  if(!d.channels.length){box.innerHTML='<div class="empty-state">No channels yet.</div>';return}
  let lastCategory=null;
  d.channels.forEach(ch=>{
-  const category=ch.category_name||"";
+  const category=ch.section_name||ch.category_name||"";
   if(category!==lastCategory&&category){const heading=document.createElement("div");heading.className="channel-category-label";heading.innerHTML='<span class="channel-category-chevron">⌄</span><span>'+esc(category.toUpperCase())+'</span>';box.append(heading)}
   lastCategory=category;
   const el=document.createElement("button");el.type="button";el.className="channel"+(ch.discord_channel_id?" discord-linked-channel":"");el.dataset.id=ch.id;
@@ -213,10 +213,21 @@ function showCreatePanel(title,fields,submitWork){
 $("#createChannelBtn").onclick=createChannel;
 async function createChannel(){
  if(!serverId)return;
- showCreatePanel("Create channel",'<label>Channel name<input name="name" placeholder="announcements" minlength="2" maxlength="50" required></label><label>Channel type<select name="kind"><option value="text">Text channel</option><option value="voice">Voice channel</option></select></label>',async data=>{
-  const kind=data.kind==="voice"?"voice":"text",d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name:data.name,kind})});
-  await loadChannels();const found=(await api("/servers/"+serverId+"/channels")).channels.find(ch=>ch.id===d.channel.id);if(found)selectChannel(found);toast((kind==="voice"?"Voice room":"Text channel")+" created.");
- });
+ try{
+  const [rd,sd]=await Promise.all([api("/servers/"+serverId+"/roles"),api("/servers/"+serverId+"/sections")]);
+  const roles=rd.roles||[],sections=sd.sections||[],roleOptions=roles.filter(r=>r.name!=="@everyone").map(r=>'<option value="'+esc(r.id)+'">'+esc(r.name)+'</option>').join("");
+  const sectionOptions='<option value="">No section</option>'+sections.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join("");
+  showCreatePanel("Create channel",'<label>Channel name<input name="name" placeholder="announcements" minlength="2" maxlength="50" required></label><label>Channel type<select name="kind"><option value="text">Text channel</option><option value="voice">Voice channel</option></select></label><label>Server section<select name="section_id">'+sectionOptions+'</select></label><label class="toggle-line"><input type="checkbox" name="private" value="yes"> Private staff channel</label><label>Staff role<select name="staff_role_id"><option value="">Choose a role</option>'+roleOptions+'</select></label>',async data=>{
+   const kind=data.kind==="voice"?"voice":"text",d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name:data.name,kind,section_id:data.section_id||null})});
+   if(data.private==="yes"){
+    const everyone=roles.find(r=>r.name==="@everyone"),staff=data.staff_role_id;
+    if(!everyone||!staff)throw Error("Choose a staff role to create a private channel.");
+    await api("/channels/"+d.channel.id+"/permissions",{method:"POST",body:JSON.stringify({target_type:"role",target_id:everyone.id,allow:[],deny:["view_channel"]})});
+    await api("/channels/"+d.channel.id+"/permissions",{method:"POST",body:JSON.stringify({target_type:"role",target_id:staff,allow:["view_channel","send_messages","read_message_history","attach_files","embed_links"],deny:[]})});
+   }
+   await loadChannels();const found=(await api("/servers/"+serverId+"/channels")).channels.find(ch=>ch.id===d.channel.id);if(found)selectChannel(found);toast((data.private==="yes"?"Private staff channel":kind==="voice"?"Voice room":"Text channel")+" created.");
+  });
+ }catch(e){toast(e.message)}
 }
 async function createServer(){
  showCreatePanel("Create server",'<label>Server name<input name="name" placeholder="My server" minlength="2" maxlength="50" required></label>',async data=>{
