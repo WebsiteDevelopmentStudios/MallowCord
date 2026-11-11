@@ -30,7 +30,8 @@ async function canChannelPermission(env,channelId,userId,permission){
  if(!Array.isArray(overwrites))overwrites=[];
  const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=?").bind(userId).first();
  const discordUserId=String(linked?.discord_user_id||"");
- const roleRows=await env.DB.prepare("SELECT dr.discord_role_id FROM member_roles mr JOIN discord_role_links dr ON dr.role_id=mr.role_id WHERE mr.user_id=?").bind(userId).all();
+ const roleRows=await env.DB.prepare("SELECT dr.discord_role_id,r.permissions FROM member_roles mr JOIN discord_role_links dr ON dr.role_id=mr.role_id JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=(SELECT server_id FROM channels WHERE id=?) AND mr.user_id=?").bind(channelId,userId).all();
+ if(roleRows.results.some(r=>{try{return (BigInt(r.permissions||"0")&8n)!==0n}catch{return false}}))return true;
  const roleIds=new Set(roleRows.results.map(r=>String(r.discord_role_id)));
  let everyoneDeny=false,roleDeny=false,roleAllow=false,userDeny=false,userAllow=false;
  for(const overwrite of overwrites){
@@ -157,8 +158,12 @@ if(discordBridgePath){
   let synced=0;
   for(const mem of members){
    const did=String(mem.id||"");if(!did||mem.bot)continue;
-   const username="discord_"+did;let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();let userId=user?.id||("discord:"+did);
-   if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
+   const existingLink=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(did,system.id).first();
+   let userId=existingLink?.user_id||null;
+   if(!userId){
+    const username="discord_"+did;let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||("discord:"+did);
+    if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
+   }
    await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",now()).run();
    await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(did,system.id,userId,now()).run();
    await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,userId,now()).run();
