@@ -43,7 +43,7 @@ async function loadMemberList(){
    return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(mem.id)+'"><span class="avatar status-avatar" data-status="'+esc(mem.presence||"offline")+'">'+avatar+'</span><span class="member-copy"><b>'+esc(label)+'</b><small>'+esc(mem.roles||"@everyone")+'</small></span></button>';
   };
   let html='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span></button>';
-  const roleGroups=roles.filter(role=>role.name!=="@everyone").sort((a,b)=>Number(b.position||0)-Number(a.position||0));
+  const roleGroups=roles.filter(role=>!role.is_system&&role.name!=="@everyone").sort((a,b)=>Number(b.position||0)-Number(a.position||0));
   for(const role of roleGroups){
    const ids=members.filter(mem=>String(mem.role_ids||"").split(",").includes(String(role.id)));
    if(!ids.length)continue;
