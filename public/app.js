@@ -46,7 +46,7 @@ async function loadMemberList(){
   for(const role of roles){
    const group=members.filter(mem=>(mem.role_list||[]).includes(role.name));
    if(!group.length)continue;
-   html+='<div class="member-role-title" '+(role.color?'style="--role-color:'+esc(role.color)+'"':'')+'>'+esc(role.name.toUpperCase())+' — '+group.length+'</div>'+group.map(renderMember).join("");
+   const roleIcon=role.icon_url?'<img class="member-role-icon" src="'+esc(role.icon_url)+'" alt="">':(role.unicode_emoji?'<span class="member-role-icon-emoji">'+esc(role.unicode_emoji)+'</span>':"");html+='<div class="member-role-title" '+(role.color?'style="--role-color:'+esc(role.color)+'"':"")+'>'+roleIcon+esc(role.name.toUpperCase())+' — '+group.length+'</div>'+group.map(renderMember).join("");
   }
   const discordMembers=members.filter(mem=>mem.is_discord_member),online=discordMembers.filter(mem=>mem.presence!=="offline"),offline=discordMembers.filter(mem=>mem.presence==="offline");
   html+='<div class="member-section-label discord-member-section">DISCORD MEMBERS — '+discordMembers.length+'</div><div class="member-subheading">ONLINE — '+online.length+'</div>'+online.map(renderMember).join("")+'<div class="member-subheading">OFFLINE — '+offline.length+'</div>'+offline.map(renderMember).join("");
