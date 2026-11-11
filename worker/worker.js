@@ -287,7 +287,7 @@ if(discordBridgePath){
     await env.DB.prepare("INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at").bind(cid,targetType,targetId,JSON.stringify(allow),JSON.stringify(deny),now()).run();
    }
    if(ch.locked||["rules","server-rules"].includes(String(ch.name||"").toLowerCase())){
-    if(everyone)await env.DB.prepare("INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,'role',?,'[]','[\\"send_messages\\"]',?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET deny_json='[\\"send_messages\\"]',updated_at=excluded.updated_at").bind(cid,everyone.id,now()).run();
+    if(everyone)await env.DB.prepare("INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,'role',?,'[]',?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET deny_json=excluded.deny_json,updated_at=excluded.updated_at").bind(cid,everyone.id,JSON.stringify(["send_messages"]),now()).run();
    }
   }
   const emojis=Array.isArray(b.emojis)?b.emojis.slice(0,250):[];
