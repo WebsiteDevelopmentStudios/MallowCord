@@ -21,3 +21,7 @@ CREATE INDEX IF NOT EXISTS messages_channel_idx ON messages(channel_id,created_a
 CREATE TABLE IF NOT EXISTS bans(id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id) ON DELETE CASCADE,server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,ip_hash TEXT,reason TEXT,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,expires_at INTEGER,CHECK(user_id IS NOT NULL OR ip_hash IS NOT NULL));
 CREATE INDEX IF NOT EXISTS bans_ip_idx ON bans(ip_hash);
 CREATE TABLE IF NOT EXISTS audit_logs(id TEXT PRIMARY KEY,actor_id TEXT,target_user_id TEXT,action TEXT NOT NULL,details TEXT,created_at INTEGER NOT NULL);
+
+CREATE TABLE IF NOT EXISTS oauth_states(state_hash TEXT PRIMARY KEY,provider TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS oauth_accounts(provider TEXT NOT NULL,provider_user_id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,email TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(provider,provider_user_id),UNIQUE(provider,user_id));
+CREATE TABLE IF NOT EXISTS oauth_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);
