@@ -51,6 +51,23 @@ async function ensureOAuthTables(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_accounts(provider TEXT NOT NULL,provider_user_id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,email TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(provider,provider_user_id),UNIQUE(provider,user_id))").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
 }
+async function ensureBridgeSystemServer(env){
+ let server=await env.DB.prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
+ if(server)return server;
+ let owner=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' ORDER BY created_at LIMIT 1").first();
+ if(!owner){
+  const id=uid(),t=now();
+  try{
+   await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,created_at,updated_at) VALUES(?,'MallowSwampSystem','mallowswampsystem','owner',?,?)").bind(id,t,t).run();
+   owner={id};
+  }catch{
+   owner=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' ORDER BY created_at LIMIT 1").first();
+   if(!owner)throw Error("Could not create the Mallow Swamp system owner.");
+  }
+ }
+ await ensureOAuthSystemServer(env,owner.id);
+ return await env.DB.prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
+}
 async function ensureOAuthSystemServer(env,userId){
  let server=await env.DB.prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(!server){
@@ -190,8 +207,8 @@ const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
 if(discordBridgePath){
  if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
  const expectedGuild="1560367587542433812";
- await ensureAccountTables(env);const system=await env.DB.prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
- if(!system)return fail("Mallow Swamp has not been initialized.",503);
+ await ensureAccountTables(env);const system=await ensureBridgeSystemServer(env);
+ if(!system)return fail("Mallow Swamp could not be initialized.",503);
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
