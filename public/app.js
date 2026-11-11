@@ -43,22 +43,40 @@ async function loadMemberList(){
  }catch(e){console.warn("Member list:",e.message)}
 }
 function renderChannelLabel(name){
- const source=String(name??"").replace(/\s+alt=":[A-Za-z0-9_]{2,32}:"\s*>?/gi,"");
+ let source=String(name??"");
+ source=source.replace(/<img\b[^>]*\balt=(["'])\:([A-Za-z0-9_]{2,32})\:\1[^>]*>/gi,":$2:");
+ source=source.replace(/\s+alt=(?:"|&quot;|&#34;).*$/i,"").replace(/\s+loading=(?:"|&quot;).*$/i,"");
  return esc(source).replace(/&lt;a?:([A-Za-z0-9_]{2,32}):(\d{5,25})&gt;|:([A-Za-z0-9_]{2,32}):/g,(token,discordName,discordId,shortName)=>{
   const emojiName=discordName||shortName;
   const emoji=serverEmojis.find(item=>String(item.name||"").toLowerCase()===emojiName.toLowerCase());
-  if(!emoji||!emoji.image_url)return token;
-  return '<img class="inline-custom-emoji channel-custom-emoji" src="'+esc(emoji.image_url)+'" alt=":'+esc(emoji.name)+':" title=":'+esc(emoji.name)+':" loading="lazy">';
+  const imageUrl=emoji?.image_url||(discordId?"https://cdn.discordapp.com/emojis/"+discordId+".webp?size=32&quality=lossless":"");
+  if(!imageUrl)return token;
+  return '<img class="inline-custom-emoji channel-custom-emoji" src="'+esc(imageUrl)+'" alt="'+esc(":"+emojiName+":")+'" title="'+esc(":"+emojiName+":")+'" loading="lazy">';
  });
 }
 async function loadChannels(){
- const emojiLoad=api("/servers/"+serverId+"/emojis").then(ed=>{serverEmojis=ed.emojis||[];document.querySelectorAll(".channel-name").forEach(el=>{const ch=(mentionDirectory.channels||[]).find(x=>x.id===el.closest(".channel")?.dataset.id);if(ch)el.innerHTML=renderChannelLabel(ch.name)});if(currentChannel)$("#channelTitle").innerHTML=renderChannelLabel(currentChannel.name)}).catch(()=>{serverEmojis=[]});
- const d=await api("/servers/"+serverId+"/channels"),box=$("#channelList");box.innerHTML="";
+ const [d,emojiData]=await Promise.all([
+  api("/servers/"+serverId+"/channels"),
+  api("/servers/"+serverId+"/emojis").catch(()=>({emojis:[]}))
+ ]);
+ serverEmojis=emojiData.emojis||[];
+ const box=$("#channelList");box.innerHTML="";
  if(!d.channels.length){box.innerHTML='<div class="empty-state">No channels yet.</div>';mentionDirectory.channels=[];return}
  let lastCategory=null;
+ const toggleSection=heading=>{
+  const collapsed=heading.getAttribute("aria-expanded")!=="false";
+  heading.setAttribute("aria-expanded",String(!collapsed));
+  heading.classList.toggle("collapsed",collapsed);
+  let node=heading.nextElementSibling;
+  while(node&&!node.classList.contains("channel-category-label")){node.hidden=collapsed;node=node.nextElementSibling}
+ };
  d.channels.forEach(ch=>{
   const category=ch.section_name||ch.category_name||"";
-  if(category!==lastCategory&&category){const heading=document.createElement("div");heading.className="channel-category-label";heading.innerHTML='<span class="channel-category-chevron">⌄</span><span>'+esc(category.toUpperCase())+'</span>';box.append(heading)}
+  if(category!==lastCategory&&category){
+   const heading=document.createElement("button");heading.type="button";heading.className="channel-category-label";heading.setAttribute("aria-expanded","true");
+   heading.innerHTML='<span class="channel-category-chevron">⌄</span><span>'+esc(category.toUpperCase())+'</span>';
+   heading.addEventListener("click",()=>toggleSection(heading));box.append(heading);
+  }
   lastCategory=category;
   const el=document.createElement("button");el.type="button";el.className="channel"+(ch.discord_channel_id?" discord-linked-channel":"");el.dataset.id=ch.id;
   if(ch.discord_channel_id){el.dataset.discordChannelId=ch.discord_channel_id;el.title="Synced with Discord #"+ch.name;}
@@ -66,7 +84,6 @@ async function loadChannels(){
   el.onclick=()=>selectChannel(ch);el.addEventListener("contextmenu",e=>{e.preventDefault();openItemMenu("channel",ch.id,"#"+ch.name,e.clientX,e.clientY)});box.append(el);
  });
  mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0]);
- // Emoji metadata loads in parallel and updates labels when ready.
 }
 function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").innerHTML=renderChannelLabel(c.name);document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,2500)}
 function renderMarkdown(raw){
