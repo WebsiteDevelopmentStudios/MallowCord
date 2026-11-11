@@ -134,7 +134,7 @@ if(discordBridgePath){
    const emojiRoles=JSON.stringify(Array.isArray(emoji.roles)?emoji.roles.map(String):[]);
    const existing=await env.DB.prepare("SELECT id FROM server_emojis WHERE server_id=? AND name=?").bind(system.id,ename).first();
    if(existing)await env.DB.prepare("UPDATE server_emojis SET image_url=?,animated=?,available=?,roles_json=? WHERE id=? AND server_id=?").bind(url,emoji.animated?1:0,emoji.available===false?0:1,emojiRoles,existing.id,system.id).run();
-   else{try{await env.DB.prepare("INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at,animated,available,roles_json) VALUES(?,?,?,?,?,?,?,?,?)").bind("discord:"+eid,system.id,ename,url,system.owner_id,now(),emoji.animated?1:0,emoji.available===false?0:1,emojiRoles).run();}catch{}}
+   else{try{await env.DB.prepare("INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at,animated,available,roles_json) VALUES(?,?,?,?,?,?,?,?,?)").bind(eid,system.id,ename,url,system.owner_id,now(),emoji.animated?1:0,emoji.available===false?0:1,emojiRoles).run();}catch{}}
   }
   let synced=0;
   for(const mem of members){
