@@ -123,6 +123,7 @@ if(discordBridgePath){
    await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,userId,now()).run();
    if(everyone)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,everyone.id).run();
    if(memberRole)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,memberRole.id).run();
+   await env.DB.prepare("DELETE FROM member_roles WHERE server_id=? AND user_id=? AND role_id IN (SELECT id FROM roles WHERE server_id=? AND is_system=0)").bind(system.id,userId,system.id).run();
    for(const drid of (Array.isArray(mem.roles)?mem.roles:[])){let mr=roleLookup.get(String(drid));if(!mr){const linkedRole=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?").bind(String(drid),system.id).first();mr=linkedRole?.role_id;}if(mr)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,mr).run();}
    synced++;
   }
@@ -628,7 +629,9 @@ if(x&&m==="POST"){
  if(channelSettings.locked&&!isOwner(u)&&mem.owner_id!==u.id)return fail("This channel is locked. You cannot send messages here.",403);
  const overwrites=Array.isArray(channelSettings.permission_overwrites)?channelSettings.permission_overwrites:[];
  const roleIds=(await env.DB.prepare("SELECT role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(mem.server_id,u.id).all()).results.map(r=>r.role_id);
- const applicable=overwrites.filter(o=>(o.target_type==="role"&&(String(o.target_name)==="@everyone"||roleIds.includes(o.target_id))));
+ const linkedDiscordRoles=roleIds.length?(await env.DB.prepare("SELECT discord_role_id FROM discord_role_links WHERE server_id=? AND role_id IN ("+roleIds.map(()=>"?").join(",")+")").bind(mem.server_id,...roleIds).all()).results.map(r=>String(r.discord_role_id)):[];
+ const linkedDiscordUser=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE server_id=? AND user_id=?").bind(mem.server_id,u.id).first();
+ const applicable=overwrites.filter(o=>(o.target_type==="role"&&(String(o.target_name)==="@everyone"||roleIds.includes(o.target_id)||linkedDiscordRoles.includes(String(o.target_discord_id))))||(o.target_type==="user"&&linkedDiscordUser&&String(o.target_discord_id)===String(linkedDiscordUser.discord_user_id)));
  const denied=applicable.some(o=>Array.isArray(o.deny)&&o.deny.includes("send_messages"));
  const allowed=applicable.some(o=>Array.isArray(o.allow)&&o.allow.includes("send_messages"));
  if(denied&&!allowed&&!isOwner(u)&&mem.owner_id!==u.id)return fail("You do not have permission to send messages in this channel.",403);
