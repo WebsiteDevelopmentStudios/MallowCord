@@ -36,8 +36,8 @@ async function channelPermissionAllowed(env,channelId,userId,permission){
  const roleRows=rows.filter(row=>row.target_type==="role"&&roles.includes(String(row.target_id)));
  if(userRows.some(row=>parse(row.deny_json).includes(permission)))return false;
  if(userRows.some(row=>parse(row.allow_json).includes(permission)))return true;
- if(roleRows.some(row=>parse(row.deny_json).includes(permission)))return false;
  if(roleRows.some(row=>parse(row.allow_json).includes(permission)))return true;
+ if(roleRows.some(row=>parse(row.deny_json).includes(permission)))return false;
  return true;
 }
 async function bootstrap(env,secret){if(!env.BOOTSTRAP_SECRET||secret!==env.BOOTSTRAP_SECRET)throw Error("Invalid bootstrap secret.");if(await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first())return {already_initialized:true};if(!env.OWNER_PASSWORD||env.OWNER_PASSWORD.length<12)throw Error("Set OWNER_PASSWORD to at least 12 characters.");const t=now(),u=uid(),name=env.OWNER_USERNAME||"Blemmished";await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'owner',?,?,?)").bind(u,name,name.toLowerCase(),await passwordHash(env.OWNER_PASSWORD),t,t).run();const s=uid(),r1=uid(),r2=uid(),ch=uid();await env.DB.batch([env.DB.prepare("INSERT INTO servers(id,name,owner_id,icon_url,is_system,created_at) VALUES(?,?,?,?,1,?)").bind(s,"Mallow Swamp",u,env.MALLOWBOT_ICON_URL||null,t),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r1,s),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(r2,s),env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(ch,s),env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u,t),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r1),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r2)]);return {initialized:true,owner:name,server:"Mallow Swamp"};}
@@ -542,7 +542,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  const b=await body(req),channelId=String(b.channel_id||""),content=String(b.content||"").trim();
  if(!channelId||!content||content.length>4000)return fail("A channel and command are required.");
  const member=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
- if(!member)return fail("You cannot run bot commands in this channel.",403);
+ if(!member||!await channelPermissionAllowed(env,channelId,u.id,"view_channel")||!await channelPermissionAllowed(env,channelId,u.id,"send_messages"))return fail("You cannot run bot commands in this channel.",403);
  const match=content.match(/^(?:-mb|\/mb)\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
  if(!match)return fail("Use -mb help to see the Mallow-Bot command list.");
  const command=match[1].toLowerCase(),t=now();
@@ -566,7 +566,7 @@ function attachmentBase64(bytes){
 const attachmentUploadRoute=p.match(/^\/api\/channels\/([\w-]+)\/attachments$/);
 if(attachmentUploadRoute&&m==="POST"){
  const channelId=attachmentUploadRoute[1],member=await env.DB.prepare("SELECT c.server_id FROM channels c JOIN memberships mm ON mm.server_id=c.server_id WHERE c.id=? AND mm.user_id=?").bind(channelId,u.id).first();
- if(!member)return fail("You cannot upload files to this channel.",403);
+ if(!member||!await channelPermissionAllowed(env,channelId,u.id,"view_channel")||!await channelPermissionAllowed(env,channelId,u.id,"attach_files"))return fail("You cannot upload files to this channel.",403);
  if(!env.GITHUB_TOKEN)return fail("GitHub file storage is not configured yet.",503);
  const form=await req.formData(),file=form.get("file");
  if(!file||typeof file.arrayBuffer!=="function")return fail("Choose a file to upload.");
