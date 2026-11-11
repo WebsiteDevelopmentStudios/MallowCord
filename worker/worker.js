@@ -161,13 +161,14 @@ if(discordBridgePath){
   let synced=0;
   for(const mem of members){
    const did=String(mem.id||"");if(!did||mem.bot)continue;
+   const fallbackUsername="discord_"+did;
    const existingLink=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(did,system.id).first();
    let userId=existingLink?.user_id||null;
    if(!userId){
-    const username="discord_"+did;let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||("discord:"+did);
-    if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
+    let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(fallbackUsername.toLowerCase()).first();userId=user?.id||("discord:"+did);
+    if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,fallbackUsername,fallbackUsername.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(fallbackUsername.toLowerCase()).first();userId=user?.id||userId;}
    }
-   await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",now()).run();
+   await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||fallbackUsername).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",now()).run();
    await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(did,system.id,userId,now()).run();
    await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,userId,now()).run();
    if(everyone)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,everyone.id).run();
