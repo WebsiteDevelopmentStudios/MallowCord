@@ -10,10 +10,10 @@ Discord-inspired community chat for Mallow Swamp.
 - Mallow-Bot uses a server-to-server management integration.
 
 ## Implemented foundation
-- Username-only basic registration with case-insensitive unique usernames.
-- Basic accounts have no password and use persistent HttpOnly device cookies.
-- One-time recovery code shown at signup and rotated on recovery.
-- Full-access accounts use passwords and can create servers.
+- Google and Discord OAuth sign-in with provider identities stored server-side.
+- New accounts receive a generated unique username and secure HttpOnly device session.
+- Owner privileges are assigned only to the configured verified Google email or Discord user ID.
+- Username/password registration and recovery-code sign-in are disabled.
 - Automatic Mallow Swamp membership.
 - Server/channel/message foundation with five-second message polling.
 - Owner moderation API primitives for timeout, account ban, account deletion and global IP ban.
