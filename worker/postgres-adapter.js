@@ -57,8 +57,18 @@ function resultMeta(count) {
   return { success: true, meta: { changes: Number(count || 0) } };
 }
 
-export function getDatabase(env) {
-  if (env.MALLOWCORD_DB_BACKEND !== "neon") return env.DB;
+export function shouldUseNeon(env, feature) {
+  if (env.MALLOWCORD_DB_BACKEND === "neon") return true;
+  if (!feature) return false;
+  return String(env.MALLOWCORD_NEON_FEATURES || "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean)
+    .includes(feature);
+}
+
+export function getDatabase(env, feature) {
+  if (!shouldUseNeon(env, feature)) return env.DB;
   if (!env.NEON?.connectionString) throw new Error("Neon Hyperdrive binding NEON is not configured.");
   let client = clients.get(env);
   if (!client) {
