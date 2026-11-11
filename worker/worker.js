@@ -354,8 +354,10 @@ if(serverAdminMatch){
  if(section==="members"&&m==="GET"){
   await ensureAccountTables(env);
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
-  const a=await env.DB.prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-45,sid).all();
-  return json({members:a.results,can_manage:manager});
+  const a=await env.DB.prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles,EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.server_id=m.server_id AND dul.user_id=m.user_id) AS is_discord_member FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-45,sid).all();
+  const roleRows=await env.DB.prepare("SELECT r.id,r.name,r.position,r.color,COUNT(mr.user_id) AS member_count FROM roles r LEFT JOIN member_roles mr ON mr.role_id=r.id AND mr.server_id=r.server_id WHERE r.server_id=? GROUP BY r.id ORDER BY r.position DESC,r.name").bind(sid).all();
+  const members=a.results.map(member=>({...member,role_list:String(member.roles||"@everyone").split(", ").filter(Boolean)}));
+  return json({members,roles:roleRows.results,can_manage:manager});
  }
  if(section==="roles"&&m==="GET"){
   await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
@@ -621,7 +623,15 @@ if(x&&m==="POST"){
  const b=await body(req),content=String(b.content||"").trim(),attachmentIds=Array.isArray(b.attachment_ids)?[...new Set(b.attachment_ids.map(v=>String(v)).filter(v=>/^[\w-]{1,80}$/.test(v)))]:[];
  if((!content&&!attachmentIds.length)||content.length>4000||attachmentIds.length>10)return fail("Add a message or up to 10 attachments.");
  await ensureAttachmentTable(env);
- const mem=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot send messages here.",403);
+ const mem=await env.DB.prepare("SELECT c.server_id,c.settings_json,s.owner_id FROM memberships m JOIN channels c ON c.server_id=m.server_id JOIN servers s ON s.id=c.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot send messages here.",403);
+ let channelSettings={};try{channelSettings=JSON.parse(mem.settings_json||"{}")}catch{}
+ if(channelSettings.locked&&!isOwner(u)&&mem.owner_id!==u.id)return fail("This channel is locked. You cannot send messages here.",403);
+ const overwrites=Array.isArray(channelSettings.permission_overwrites)?channelSettings.permission_overwrites:[];
+ const roleIds=(await env.DB.prepare("SELECT role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(mem.server_id,u.id).all()).results.map(r=>r.role_id);
+ const applicable=overwrites.filter(o=>(o.target_type==="role"&&(String(o.target_name)==="@everyone"||roleIds.includes(o.target_id))));
+ const denied=applicable.some(o=>Array.isArray(o.deny)&&o.deny.includes("send_messages"));
+ const allowed=applicable.some(o=>Array.isArray(o.allow)&&o.allow.includes("send_messages"));
+ if(denied&&!allowed&&!isOwner(u)&&mem.owner_id!==u.id)return fail("You do not have permission to send messages in this channel.",403);
  for(const attachmentId of attachmentIds){const pending=await env.DB.prepare("SELECT id FROM message_attachments WHERE id=? AND channel_id=? AND uploader_id=? AND message_id IS NULL").bind(attachmentId,x[1],u.id).first();if(!pending)return fail("One of the uploaded files is unavailable. Please attach it again.",400);}
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
  const roles=(await env.DB.prepare("SELECT id,name,pingable FROM roles WHERE server_id=?").bind(mem.server_id).all()).results;
