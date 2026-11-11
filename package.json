@@ -1,0 +1,15 @@
+{
+  "name": "mallowcord",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:worker": "wrangler dev",
+    "deploy:worker": "wrangler deploy"
+  },
+  "dependencies": {
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
