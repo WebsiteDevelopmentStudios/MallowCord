@@ -9,7 +9,7 @@
     "FRONTEND_ORIGIN": "https://mallowcord-web.onrender.com",
     "GOOGLE_CLIENT_ID": "122289896698-rskbm2bbfj1advdehfai16mkjmea74f0.apps.googleusercontent.com",
     "DISCORD_CLIENT_ID": "1560534431507419148",
-    "MALLOWCORD_NEON_FEATURES": "oauth_diagnostics",
+    "MALLOWCORD_NEON_FEATURES": "oauth_diagnostics,worker_error_logs",
     "MALLOWBOT_ICON_URL": "https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",
     "OWNER_DISCORD_ID": "1021068313071210498",
     "OWNER_GOOGLE_EMAIL": "Wowgrayhaha@gmail.com"
