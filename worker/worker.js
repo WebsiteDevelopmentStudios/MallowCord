@@ -600,6 +600,9 @@ if(p==="/api/bot/command"&&m==="POST"){
  if(!channelId||!content||content.length>4000)return fail("A channel and command are required.");
  const member=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
  if(!member)return fail("You cannot run bot commands in this channel.",403);
+ const systemServer=await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();
+ if(!systemServer||member.server_id!==systemServer.id)return fail("Mallow-Bot commands are currently available only in Mallow Swamp.",403);
+ const linkedDiscordChannel=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE mallow_channel_id=? AND server_id=?").bind(channelId,systemServer.id).first();
  const prefix=content.match(/^(?:-mb\s+([a-z0-9-]+)|\/mb\s+([a-z0-9-]+))(?:\s+([\s\S]*))?$/i);
  const slash=content.match(/^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
  if(!prefix&&!slash)return fail("Use -mb help, /mb help, or a slash command such as /swears.");
@@ -619,6 +622,7 @@ if(p==="/api/bot/command"&&m==="POST"){
   await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(code),u.id,t+600,t).run();
   return say("Link your Discord account to run Mallow-Bot commands.\n\n1. Copy this one-time code: "+code+"\n2. Open the official Mallow Swamp Discord server.\n3. Send -mb link "+code+" in any channel the bot can read.\n\nThe code expires in 10 minutes. You only need to link once.");
  }
+ if(!linkedDiscordChannel)return say("This channel is not linked to a Discord text channel, so Mallow-Bot commands cannot run here. Try a channel imported from Mallow Swamp Discord.");
  const commandText=style==="prefix"?"-mb "+command+(args?" "+args:""):"/"+command+(args?" "+args:"");
  const id=uid();
  await env.DB.prepare("INSERT INTO discord_command_queue(id,user_id,channel_id,command_text,command_style,status,created_at) VALUES(?,?,?,?,?,'queued',?)").bind(id,u.id,channelId,commandText,style,now()).run();
