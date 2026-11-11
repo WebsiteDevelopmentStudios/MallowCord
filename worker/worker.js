@@ -135,7 +135,7 @@ if(discordBridgePath){
    const kind=ch.kind==="voice"?"voice":"text";
    const existing=await env.DB.prepare("SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=? AND server_id=?").bind(dcid,system.id).first();
    let cid=existing?.mallow_channel_id;
-   if(!cid){const same=await env.DB.prepare("SELECT id FROM channels WHERE server_id=? AND name=? AND kind=?").bind(system.id,raw,kind).first();cid=same?.id;}
+   if(!cid){const same=await env.DB.prepare("SELECT c.id FROM channels c WHERE c.server_id=? AND c.name=? AND c.kind=? AND NOT EXISTS(SELECT 1 FROM discord_channel_links d WHERE d.mallow_channel_id=c.id AND d.server_id=c.server_id)").bind(system.id,raw,kind).first();cid=same?.id;}
    if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind=?,position=? WHERE id=? AND server_id=?").bind(raw,kind,Number(ch.position)||0,cid,system.id).run();
    else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,?,?)").bind(cid,system.id,raw,kind,Number(ch.position)||0).run();}
    const sectionId=sectionLookup.get(String(ch.category_id||""))||null;
