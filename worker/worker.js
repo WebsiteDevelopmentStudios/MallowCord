@@ -98,8 +98,9 @@ if(discordBridgePath){
  }
  if(p==="/api/integrations/mallowbot/discord/commands/next"&&m==="GET"){
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_command_jobs(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,channel_id TEXT NOT NULL,user_id TEXT NOT NULL,discord_user_id TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,processed_at INTEGER)").run();
+  await env.DB.prepare("UPDATE discord_command_jobs SET status='queued',processed_at=NULL WHERE status='processing' AND processed_at<?").bind(now()-120).run();
   const rows=await env.DB.prepare("SELECT j.id,j.channel_id,j.discord_user_id,j.content,cl.discord_channel_id FROM discord_command_jobs j JOIN discord_channel_links cl ON cl.mallow_channel_id=j.channel_id AND cl.server_id=j.server_id WHERE j.status='queued' ORDER BY j.created_at LIMIT 5").all();
-  for(const job of rows.results)await env.DB.prepare("UPDATE discord_command_jobs SET status='processing' WHERE id=? AND status='queued'").bind(job.id).run();
+  for(const job of rows.results)await env.DB.prepare("UPDATE discord_command_jobs SET status='processing',processed_at=? WHERE id=? AND status='queued'").bind(now(),job.id).run();
   return json({jobs:rows.results});
  }
  if(p==="/api/integrations/mallowbot/discord/commands/result"&&m==="POST"){
@@ -648,6 +649,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  if(!linked)return fail("Link your Discord account in User Settings → Discord Link before running Mallow-Bot commands.",403);
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_command_jobs(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,channel_id TEXT NOT NULL,user_id TEXT NOT NULL,discord_user_id TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,processed_at INTEGER)").run();
  await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(uid(),channelId,u.id,content,now()).run();
+ const pending=await env.DB.prepare("SELECT COUNT(*) AS n FROM discord_command_jobs WHERE user_id=? AND status IN ('queued','processing')").bind(u.id).first();if(Number(pending?.n||0)>=5)return fail("You have too many commands waiting. Try again in a moment.",429);
  const jobId=uid();await env.DB.prepare("INSERT INTO discord_command_jobs(id,server_id,channel_id,user_id,discord_user_id,content,status,created_at) VALUES(?,?,?,?,?,?,'queued',?)").bind(jobId,system.id,channelId,u.id,linked.discord_user_id,content,now()).run();
  return json({ok:true,accepted:true,queued:true});
 }
