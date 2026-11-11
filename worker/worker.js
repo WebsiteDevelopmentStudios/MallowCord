@@ -627,7 +627,7 @@ if(p==="/api/bot/command"&&m==="POST"){
   const code=token().slice(0,12).toUpperCase(),t=now();
   await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
   await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(code),u.id,t+600,t).run();
-  return say("Link your Discord account to run Mallow-Bot commands.\n\n1. Copy this one-time code: "+code+"\n2. Open the official Mallow Swamp Discord server.\n3. Send -mb link "+code+" in any channel the bot can read.\n\nThe code expires in 10 minutes. You only need to link once.");
+  return json({ok:true,accepted:true,link_code:code,link_instructions:"Copy this private one-time code and send -mb link CODE in the official Mallow Swamp Discord server. It expires in 10 minutes."});
  }
  if(!linkedDiscordChannel)return say("This channel is not linked to a Discord text channel, so Mallow-Bot commands cannot run here. Try a channel imported from Mallow Swamp Discord.");
  const commandText=style==="prefix"?"-mb "+command+(args?" "+args:""):"/"+command+(args?" "+args:"");
