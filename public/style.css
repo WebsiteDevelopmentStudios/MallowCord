@@ -770,3 +770,11 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .role-color-input{width:30px;height:24px;border:0;background:transparent;padding:0;cursor:pointer}
 .optimistic-message{opacity:.72}
 @media(max-width:760px){.social-layout{grid-template-columns:1fr;max-height:75vh}.social-sidebar{max-height:35vh;border-right:0;border-bottom:1px solid rgba(255,255,255,.1);padding:0 0 10px}.social-chat{min-height:300px}}
+
+.channel-category-label{display:flex;align-items:center;gap:7px;width:100%;padding:12px 8px 5px;border:0;background:transparent;color:var(--text-faint);font:inherit;font-size:10px;font-weight:800;letter-spacing:.08em;text-align:left;cursor:pointer}
+.channel-category-label:hover{color:var(--text)}
+.channel-category-label .channel-category-chevron{display:inline-block;transition:transform .15s ease}
+.channel-category-label.collapsed .channel-category-chevron{transform:rotate(-90deg)}
+.channel-category-label:focus-visible{outline:1px solid var(--main-theme-color);outline-offset:2px}
+.channel[hidden]{display:none!important}
+.inline-custom-emoji.channel-custom-emoji{width:1.35em;height:1.35em;vertical-align:-.25em}
