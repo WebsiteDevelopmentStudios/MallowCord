@@ -191,8 +191,9 @@ if(discordBridgePath){
   await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at,recipient_user_id) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),row.channel_id,row.source_user_id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",result,now(),privateResult?row.source_user_id:null).run();
   return json({ok:true});
  }
- if(p==="/api/integrations/mallowbot/discord/link/consume"&&m==="POST"){
-  const b=await body(req),code=String(b.code||"").replace(/[^A-Z0-9]/gi,"").toUpperCase(),discordId=String(b.discord_user_id||"");
+ if((p==="/api/integrations/mallowbot/discord/link/consume"||p==="/api/integrations/mallowbot/discord/link/complete")&&m==="POST"){
+  const b=await body(req);if(String(b.guild_id||expectedGuild)!==expectedGuild)return fail("Account linking is restricted to Mallow Swamp.",403);
+  const code=String(b.code||"").replace(/[^A-Z0-9]/gi,"").toUpperCase(),discordId=String(b.discord_user_id||"");
   if(code.length!==12||!/^\\d{15,22}$/.test(discordId))return fail("Invalid Discord link code or user ID.");
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
   const codeHash=await sha(code),pending=await env.DB.prepare("SELECT user_id,server_id FROM discord_link_codes WHERE code_hash=? AND expires_at>?").bind(codeHash,now()).first();
