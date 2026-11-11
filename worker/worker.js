@@ -348,7 +348,9 @@ if(discordBridgePath){
  const ack=p.match(/^\/api\/integrations\/mallowbot\/discord\/outbox\/([\w-]+)\/ack$/);
  if(ack&&m==="POST"){const b=await body(req);await env.DB.prepare("UPDATE discord_outbox SET processed_at=?,discord_message_id=? WHERE id=?").bind(now(),String(b.discord_message_id||"").slice(0,32)||null,ack[1]).run();return json({ok:true});}
 }
-if(p==="/api/integrations/mallowbot/users"&&(m==="GET"||m==="POST")){
+if(p==="/api/integrations/mallowbot/users"&&m==="POST")return fail("MallowCord accounts must be created through Google or Discord OAuth.",410);
+if(p==="/api/admin/users"&&m==="POST")return fail("MallowCord accounts must be created through Google or Discord OAuth.",410);
+if(p==="/api/integrations/mallowbot/users"&&m==="GET"){
 if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
 const ownerRow=await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first();
 if(m==="GET"){const a=await env.DB.prepare("SELECT id,username,account_type,status,timeout_until,created_at FROM users ORDER BY created_at DESC LIMIT 500").all();return json({users:a.results});}
@@ -462,17 +464,7 @@ if(p==="/api/account/status"&&m==="GET"){
  const row=await env.DB.prepare("SELECT username,account_type,status,timeout_until,created_at FROM users WHERE id=?").bind(u.id).first();
  return json({account:row});
 }
-if(p==="/api/account/password"&&m==="POST"){
- if(u.account_type==="basic")return fail("Basic accounts use device sign-in and recovery codes. Password login is available on full-access accounts.",403);
- const b=await body(req),old=String(b.current_password||""),next=String(b.new_password||"");
- const stored=await env.DB.prepare("SELECT password_hash FROM users WHERE id=?").bind(u.id).first();
- if(!await passwordCheck(old,stored?.password_hash))return fail("Your current password is incorrect.",401);
- if(next.length<12||next.length>256)return fail("New password must be at least 12 characters.");
- if(next===old)return fail("Choose a password different from your current one.");
- await env.DB.prepare("UPDATE users SET password_hash=?,updated_at=? WHERE id=?").bind(await passwordHash(next),now(),u.id).run();
- await audit(env,u.id,u.id,"change_password");
- return json({ok:true});
-}
+if(p==="/api/account/password"&&m==="POST")return fail("Password authentication has been removed. Manage your sign-in through Google or Discord.",410);
 if(p==="/api/account/contact/request"&&m==="POST"){
  await ensureAccountTables(env);
  const b=await body(req),channel=b.channel==="phone"?"phone":b.channel==="email"?"email":null,target=String(b.value||"").trim();
@@ -514,7 +506,7 @@ if(p==="/api/account/contact/confirm"&&m==="POST"){
 }
 
 if(p==="/api/auth/username"&&m==="POST"){const name=String((await body(req)).username||"").trim();if(!/^[A-Za-z0-9_]{3,24}$/.test(name))return fail("Username must be 3–24 characters.");try{await env.DB.prepare("UPDATE users SET username=?,username_key=?,updated_at=? WHERE id=?").bind(name,name.toLowerCase(),now(),u.id).run();}catch{return fail("That username is already taken.",409);}return json({username:name});}
-if(p==="/api/auth/recovery/rotate"&&m==="POST"&&u.account_type==="basic")return json({recovery_code:await recovery(env,u.id)});
+if(p==="/api/auth/recovery/rotate"&&m==="POST")return fail("Recovery-code authentication has been removed. Sign in with Google or Discord.",410);
 if(p==="/api/servers"&&m==="GET"){const a=await env.DB.prepare("SELECT s.id,s.name,COALESCE(s.icon_url,CASE WHEN s.is_system=1 THEN ? END) AS icon_url,s.is_system,m.joined_at FROM memberships m JOIN servers s ON s.id=m.server_id WHERE m.user_id=? ORDER BY s.is_system DESC,s.name").bind(env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",u.id).all();return json({servers:a.results});}
 if(p==="/api/servers"&&m==="POST"){if(u.account_type==="basic")return fail("Full-access accounts are required to create servers.",403);const name=String((await body(req)).name||"").trim().slice(0,50);if(name.length<2)return fail("Server name must be at least 2 characters.");const s=uid(),r=uid(),rm=uid(),c=uid(),t=now();await env.DB.batch([env.DB.prepare("INSERT INTO servers(id,name,owner_id,created_at) VALUES(?,?,?,?)").bind(s,name,u.id,t),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r,s),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(rm,s),env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(c,s),env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u.id,t),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u.id,r),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u.id,rm)]);return json({server:{id:s,name}},201);}
 
