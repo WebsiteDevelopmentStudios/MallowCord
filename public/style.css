@@ -807,3 +807,8 @@ body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-fil
  .mobile-drawer-backdrop{display:block;position:fixed;inset:0;z-index:149;background:rgba(0,0,0,.58);opacity:0;pointer-events:none;transition:opacity .2s}
  .app.mobile-channels-open .mobile-drawer-backdrop,.app.mobile-members-open .mobile-drawer-backdrop{opacity:1;pointer-events:auto}
 }
+
+@media(max-width:650px){
+ .members.mobile-drawer-dragging{transition:none!important}
+ .app.mobile-members-open .members{transform:translateX(0)}
+}
