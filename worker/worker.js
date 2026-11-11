@@ -46,7 +46,7 @@ async function canChannelPermission(env,channelId,userId,permission){
   }else if(overwrite.target_type==="role"&&roleIds.has(targetId)){
    if(deny.includes(permission))roleDeny=true;
    if(allow.includes(permission))roleAllow=true;
-  }else if(overwrite.target_type==="user"&&((discordUserId&&targetId===discordUserId)||targetId===String(userId)){
+  }else if(overwrite.target_type==="user"&&((discordUserId&&targetId===discordUserId)||targetId===String(userId))){
    if(deny.includes(permission))userDeny=true;
    if(allow.includes(permission))userAllow=true;
   }
