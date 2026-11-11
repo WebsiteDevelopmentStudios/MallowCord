@@ -450,22 +450,36 @@ if(p==="/api/bot/command"&&m==="POST"){
 async function ensureAttachmentTable(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_attachments(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,uploader_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,filename TEXT NOT NULL,content_type TEXT NOT NULL,size INTEGER NOT NULL,object_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)").run();
 }
+function attachmentBase64(bytes){
+ let binary="";for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));
+ return btoa(binary);
+}
+async function attachmentCryptoKey(env){
+ if(!env.GITHUB_ENCRYPTION_KEY)throw new Error("GITHUB_ENCRYPTION_KEY is not configured");
+ const material=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(env.GITHUB_ENCRYPTION_KEY));
+ return crypto.subtle.importKey("raw",material,{name:"AES-GCM"},false,["encrypt","decrypt"]);
+}
 const attachmentUploadRoute=p.match(/^\/api\/channels\/([\w-]+)\/attachments$/);
 if(attachmentUploadRoute&&m==="POST"){
  const channelId=attachmentUploadRoute[1],member=await env.DB.prepare("SELECT c.server_id FROM channels c JOIN memberships mm ON mm.server_id=c.server_id WHERE c.id=? AND mm.user_id=?").bind(channelId,u.id).first();
  if(!member)return fail("You cannot upload files to this channel.",403);
- if(!env.UPLOADS)return fail("File uploads are not configured yet. Please try again later.",503);
+ if(!env.GITHUB_TOKEN||!env.GITHUB_ENCRYPTION_KEY)return fail("GitHub file storage is not configured yet.",503);
  const form=await req.formData(),file=form.get("file");
  if(!file||typeof file.arrayBuffer!=="function")return fail("Choose a file to upload.");
- if(file.size<1||file.size>10*1024*1024)return fail("Files must be between 1 byte and 10 MB.");
+ if(file.size<1||file.size>25*1024*1024)return fail("Files must be between 1 byte and 25 MB.");
  const filename=String(file.name||"attachment").replace(/[\\/\\0-\\x1f\\x7f]/g,"_").trim().slice(0,180)||"attachment";
  const type=String(file.type||"application/octet-stream").toLowerCase().slice(0,120);
  if(/^(text\/html|application\/xhtml\+xml|image\/svg\+xml|application\/javascript|text\/javascript)/i.test(type))return fail("This file type cannot be uploaded.",415);
  await ensureAttachmentTable(env);
- const id=uid(),key="channels/"+channelId+"/"+id;
- await env.UPLOADS.put(key,file.stream(),{httpMetadata:{contentType:type}});
+ const id=uid(),key="mallowcord-uploads/"+channelId+"/"+id+".bin";
+ const plain=new Uint8Array(await file.arrayBuffer()),iv=crypto.getRandomValues(new Uint8Array(12)),cryptoKey=await attachmentCryptoKey(env);
+ const encrypted=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},cryptoKey,plain)),packed=new Uint8Array(iv.length+encrypted.length);
+ packed.set(iv);packed.set(encrypted,iv.length);
+ const apiUrl="https://api.github.com/repos/WebsiteDevelopmentStudios/MallowCord/contents/"+key.split("/").map(encodeURIComponent).join("/");
+ const gh=await fetch(apiUrl,{method:"PUT",headers:{"Authorization":"Bearer "+env.GITHUB_TOKEN,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json"},body:JSON.stringify({message:"Store encrypted MallowCord attachment",content:attachmentBase64(packed),branch:"main"})});
+ if(!gh.ok){const detail=(await gh.text()).slice(0,500);return fail("GitHub storage upload failed ("+gh.status+"). "+detail,502);}
  try{await env.DB.prepare("INSERT INTO message_attachments(id,channel_id,uploader_id,message_id,filename,content_type,size,object_key,created_at) VALUES(?,?,?,NULL,?,?,?,?,?)").bind(id,channelId,u.id,filename,type,file.size,key,now()).run();}
- catch(e){await env.UPLOADS.delete(key);throw e;}
+ catch(e){throw e;}
  return json({attachment:{id,filename,content_type:type,size:file.size}},201);
 }
 const attachmentDownloadRoute=p.match(/^\/api\/attachments\/([\w-]+)$/);
@@ -473,13 +487,18 @@ if(attachmentDownloadRoute&&m==="GET"){
  await ensureAttachmentTable(env);
  const file=await env.DB.prepare("SELECT a.*,c.server_id FROM message_attachments a JOIN channels c ON c.id=a.channel_id JOIN memberships mm ON mm.server_id=c.server_id WHERE a.id=? AND mm.user_id=?").bind(attachmentDownloadRoute[1],u.id).first();
  if(!file)return fail("Attachment not found.",404);
- if(!env.UPLOADS)return fail("File storage is unavailable.",503);
- const object=await env.UPLOADS.get(file.object_key);if(!object)return fail("File not found.",404);
+ if(!env.GITHUB_ENCRYPTION_KEY)return fail("File storage is not configured.",503);
+ const rawUrl="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/MallowCord/main/"+file.object_key.split("/").map(encodeURIComponent).join("/");
+ const stored=await fetch(rawUrl,{headers:{"Cache-Control":"no-cache"}});
+ if(!stored.ok)return fail("File not found in GitHub storage.",404);
+ const packed=new Uint8Array(await stored.arrayBuffer());
+ if(packed.length<29)return fail("Stored attachment is invalid.",500);
+ const iv=packed.slice(0,12),cipher=packed.slice(12),cryptoKey=await attachmentCryptoKey(env);
+ let plain;try{plain=await crypto.subtle.decrypt({name:"AES-GCM",iv},cryptoKey,cipher)}catch(e){return fail("Could not decrypt this attachment.",500);}
  const inline=/^image\/(png|jpeg|gif|webp)$/.test(file.content_type);
  const encoded=encodeURIComponent(file.filename).replace(/['()*]/g,c=>"%"+c.charCodeAt(0).toString(16).toUpperCase());
- const headers=new Headers({"Content-Type":inline?file.content_type:"application/octet-stream","Content-Disposition":(inline?"inline":"attachment")+"; filename*=UTF-8''"+encoded,"X-Content-Type-Options":"nosniff","Cache-Control":"private, no-store"});
- headers.set("Content-Length",String(file.size));
- return new Response(object.body,{headers});
+ const headers=new Headers({"Content-Type":inline?file.content_type:"application/octet-stream","Content-Length":String(file.size),"Content-Disposition":(inline?"inline":"attachment")+"; filename*=UTF-8''"+encoded,"X-Content-Type-Options":"nosniff","Cache-Control":"private, no-store"});
+ return new Response(plain,{headers});
 }
 x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  const channelId=x[1],mem=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(channelId,u.id).first();
