@@ -132,7 +132,7 @@ input:disabled,textarea:disabled,select:disabled{opacity:.55;cursor:not-allowed}
 .welcome-icon{border-radius:50%;width:66px;height:66px;font-size:35px}
 .welcome h1{font-size:25px;line-height:1.2;margin:16px 0 5px;color:#fff}
 .welcome p{color:var(--text-muted);margin:0;line-height:1.5}
-.messages{overflow:auto;padding:20px;display:flex;flex-direction:column;gap:17px;flex:1;min-height:0}
+.messages{overflow:auto;overflow-anchor:none;padding:20px;display:flex;flex-direction:column;gap:17px;flex:1;min-height:0}
 .message{display:flex;gap:11px;align-items:flex-start;max-width:100%;padding:3px 7px;border-radius:5px}
 .message:hover{background:rgba(0,0,0,.12)}
 .message .avatar{width:38px;height:38px;flex-basis:38px}
