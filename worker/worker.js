@@ -1,4 +1,5 @@
 import { getDatabase } from "./postgres-adapter.js";
+import { LEGACY_MALLOW_SWAMP } from "./legacy-blueprint.js";
 const COOKIE="mallowcord_device",DAYS=30;
 const now=()=>Math.floor(Date.now()/1000),uid=()=>crypto.randomUUID();
 const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
@@ -41,7 +42,7 @@ async function channelPermissionAllowed(env,channelId,userId,permission){
  if(roleRows.some(row=>parse(row.deny_json).includes(permission)))return false;
  return true;
 }
-async function bootstrap(env,secret){if(!env.BOOTSTRAP_SECRET||secret!==env.BOOTSTRAP_SECRET)throw Error("Invalid bootstrap secret.");if(await getDatabase(env).prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first())return {already_initialized:true};if(!env.OWNER_PASSWORD||env.OWNER_PASSWORD.length<12)throw Error("Set OWNER_PASSWORD to at least 12 characters.");const t=now(),u=uid(),name=env.OWNER_USERNAME||"Blemmished";await getDatabase(env).prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'owner',?,?,?)").bind(u,name,name.toLowerCase(),await passwordHash(env.OWNER_PASSWORD),t,t).run();const s=uid(),r1=uid(),r2=uid(),ch=uid();await getDatabase(env).batch([getDatabase(env).prepare("INSERT INTO servers(id,name,owner_id,icon_url,is_system,created_at) VALUES(?,?,?,?,1,?)").bind(s,"Mallow Swamp",u,env.MALLOWBOT_ICON_URL||null,t),getDatabase(env).prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r1,s),getDatabase(env).prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(r2,s),getDatabase(env).prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(ch,s),getDatabase(env).prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u,t),getDatabase(env).prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r1),getDatabase(env).prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r2)]);return {initialized:true,owner:name,server:"Mallow Swamp"};}
+async function bootstrap(env,secret){if(!env.BOOTSTRAP_SECRET||secret!==env.BOOTSTRAP_SECRET)throw Error("Invalid bootstrap secret.");if(await getDatabase(env).prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first())return {already_initialized:true};if(!env.OWNER_PASSWORD||env.OWNER_PASSWORD.length<12)throw Error("Set OWNER_PASSWORD to at least 12 characters.");const t=now(),u=uid(),name=env.OWNER_USERNAME||"Blemmished";await getDatabase(env).prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'owner',?,?,?)").bind(u,name,name.toLowerCase(),await passwordHash(env.OWNER_PASSWORD),t,t).run();const s=uid(),r1=uid(),r2=uid(),ch=uid();await getDatabase(env).batch([getDatabase(env).prepare("INSERT INTO servers(id,name,owner_id,icon_url,is_system,created_at) VALUES(?,?,?,?,1,?)").bind(s,"Mallow Swamp",u,env.MALLOWBOT_ICON_URL||null,t),getDatabase(env).prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r1,s),getDatabase(env).prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(r2,s),getDatabase(env).prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(ch,s),getDatabase(env).prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u,t),getDatabase(env).prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r1),getDatabase(env).prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r2)]);await restoreLegacySystemServer(env,s);return {initialized:true,owner:name,server:"Mallow Swamp"};}
 
 const OAUTH_REDIRECTS={
  google:"https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/google/callback",
@@ -79,6 +80,57 @@ async function ensureBridgeSystemServer(env){
  await ensureOAuthSystemServer(env,owner.id);
  return await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
 }
+async function restoreLegacySystemServer(env,serverId){
+ const db=getDatabase(env),cfg=LEGACY_MALLOW_SWAMP,t=now();
+ await db.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+ await ensureChannelPermissionTable(env);
+
+ const sectionWrites=[];
+ for(let i=0;i<cfg.categories.length;i++){
+  const name=cfg.categories[i];
+  sectionWrites.push(db.prepare("INSERT INTO server_sections(id,server_id,name,position,created_at) VALUES(?,?,?,?,?) ON CONFLICT(server_id,name) DO UPDATE SET position=excluded.position").bind(uid(),serverId,name,i,t));
+ }
+ if(sectionWrites.length)await db.batch(sectionWrites);
+ const sectionRows=(await db.prepare("SELECT id,name FROM server_sections WHERE server_id=?").bind(serverId).all()).results||[];
+ const sectionIds=new Map(sectionRows.map(x=>[x.name,x.id]));
+
+ const roleWrites=[];
+ for(const role of cfg.roles){
+  roleWrites.push(db.prepare("INSERT INTO roles(id,server_id,name,is_system,position,pingable,color) VALUES(?,?,?,?,?,?,?) ON CONFLICT(server_id,name) DO UPDATE SET is_system=excluded.is_system,position=excluded.position,pingable=excluded.pingable,color=excluded.color").bind(uid(),serverId,role.name,role.system,role.position,role.pingable,role.color));
+ }
+ if(roleWrites.length)await db.batch(roleWrites);
+ const roleRows=(await db.prepare("SELECT id,name FROM roles WHERE server_id=?").bind(serverId).all()).results||[];
+ const roleIds=new Map(roleRows.map(x=>[x.name,x.id]));
+
+ const existingChannels=(await db.prepare("SELECT id,name FROM channels WHERE server_id=?").bind(serverId).all()).results||[];
+ const channelIds=new Map(existingChannels.map(x=>[x.name,x.id]));
+ const plainGeneral=existingChannels.find(x=>String(x.name).toLowerCase()==="general");
+ const channelWrites=[];
+ for(const channel of cfg.channels){
+  let channelId=channelIds.get(channel.name);
+  if(!channelId&&plainGeneral&&channel.name.toLowerCase().includes("general")){
+   channelId=plainGeneral.id;
+   channelIds.set(channel.name,channelId);
+  }
+  const sectionId=channel.category?sectionIds.get(channel.category)||null:null;
+  if(channelId){
+   channelWrites.push(db.prepare("UPDATE channels SET name=?,kind=?,position=?,section_id=? WHERE id=? AND server_id=?").bind(channel.name,channel.kind,channel.position,sectionId,channelId,serverId));
+  }else{
+   channelId=uid();channelIds.set(channel.name,channelId);
+   channelWrites.push(db.prepare("INSERT INTO channels(id,server_id,name,kind,position,section_id) VALUES(?,?,?,?,?,?)").bind(channelId,serverId,channel.name,channel.kind,channel.position,sectionId));
+  }
+ }
+ if(channelWrites.length)await db.batch(channelWrites);
+
+ const permissionWrites=[];
+ for(const permission of cfg.permissions){
+  const channelId=channelIds.get(permission.channel),roleId=roleIds.get(permission.targetRole);
+  if(!channelId||!roleId)continue;
+  permissionWrites.push(db.prepare("INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at").bind(channelId,permission.targetType,roleId,JSON.stringify(permission.allow),JSON.stringify(permission.deny),t));
+ }
+ if(permissionWrites.length)await db.batch(permissionWrites);
+ return {roles:roleWrites.length,channels:channelWrites.length,categories:sectionWrites.length,permissions:permissionWrites.length};
+}
 async function ensureOAuthSystemServer(env,userId){
  let server=await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(!server){
@@ -91,6 +143,7 @@ async function ensureOAuthSystemServer(env,userId){
   ]);
   server={id:sid,owner_id:userId};
  }
+ await restoreLegacySystemServer(env,server.id);
  const account=await getDatabase(env).prepare("SELECT account_type FROM users WHERE id=?").bind(userId).first();
  if(account?.account_type==="owner"&&server.owner_id!==userId){
   await getDatabase(env).prepare("UPDATE servers SET owner_id=? WHERE id=?").bind(userId,server.id).run();
