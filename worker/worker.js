@@ -46,12 +46,14 @@ async function channelPermissionContext(env,serverId,userId){
  const roleIds=(await env.DB.prepare("SELECT role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(serverId,userId).all()).results.map(r=>r.role_id);
  const discordRoles=roleIds.length?(await env.DB.prepare("SELECT discord_role_id FROM discord_role_links WHERE server_id=? AND role_id IN ("+roleIds.map(()=>"?").join(",")+")").bind(serverId,...roleIds).all()).results.map(r=>String(r.discord_role_id)):[];
  const discordUser=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE server_id=? AND user_id=?").bind(serverId,userId).first();
- return {roleIds,discordRoles,discordUser};
+ const server=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(serverId).first();
+ return {roleIds,discordRoles,discordUser,ownerId:server?.owner_id};
 }
 async function channelPermissionAllowed(env,serverId,userId,settings,permission,context=null){
  const overwrites=Array.isArray(settings?.permission_overwrites)?settings.permission_overwrites:[];
  if(!overwrites.length)return true;
  const access=context||await channelPermissionContext(env,serverId,userId);
+ if(access.ownerId===userId)return true;
  const roles=overwrites.filter(o=>o.target_type==="role"&&(String(o.target_name)==="@everyone"||access.roleIds.includes(o.target_id)||access.discordRoles.includes(String(o.target_discord_id))));
  const user=overwrites.filter(o=>o.target_type==="user"&&access.discordUser&&String(o.target_discord_id)===String(access.discordUser.discord_user_id));
  if(user.some(o=>Array.isArray(o.deny)&&o.deny.includes(permission)))return false;
