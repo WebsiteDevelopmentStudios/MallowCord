@@ -49,21 +49,26 @@ function renderChannelLabel(name){
   const image=customEmojiImage(emojiName,url);
   return image?image.replace("inline-custom-emoji","inline-custom-emoji channel-custom-emoji"):"";
  };
- // Repair old malformed Discord image markdown and preserve the actual emoji name.
- source=source.replace(/(?:image)?\[([^\]]*)\]\((https:\/\/[^)\s]+)\)(?:["']?\s*alt=["']?:([^"']+):["']?\s*>?)?/gi,(all,label,url,altName)=>{
-  const nameMatch=String(label).match(/:([^:]+):/),emojiName=altName||nameMatch?.[1]||"";
+ const insertEmoji=(emojiName,url)=>{
   const image=channelImage(emojiName,url);
-  return image?placeholder(image):"";
+  return image?placeholder(image):null;
+ };
+ // Recover Discord's actual custom-emoji token, including animated emoji and HTML-escaped tokens.
+ source=source.replace(/(?:&lt;|<)(a?):([A-Za-z0-9_*.-]{2,40}):(\d+)(?:&gt;|>)/gi,(all,animated,emojiName,id)=>{
+  return insertEmoji(emojiName,"https://cdn.discordapp.com/emojis/"+id+(animated?".gif":".png"))||all;
  });
- // Recover orphaned alt fragments such as: Custom emoji" alt=":golden_boots:">
- source=source.replace(/(?:Custom emoji\s*)?["']?\s*alt=["']?:([^"']+):["']?\s*>?/gi,(all,emojiName)=>{
-  const image=channelImage(emojiName);
-  return image?placeholder(image):"";
+ // Recover legacy markdown image syntax and its CDN URL even when the name lookup is unavailable.
+ source=source.replace(/(?:!?\[([^\]]*)\])\((https:\/\/cdn\.discordapp\.com\/emojis\/(\d+)\.(?:png|webp|gif)(?:\?[^\s)]*)?)\)/gi,(all,label,url,id)=>{
+  const nameMatch=String(label).match(/:([^:]+):/);
+  return insertEmoji(nameMatch?.[1]||"",url)||placeholder('<img class="inline-custom-emoji channel-custom-emoji" src="'+esc(url)+'" alt="Custom emoji" title="Custom emoji" loading="lazy">');
  });
- // Convert normal :emoji_name: shortcodes using this server's emoji directory.
- source=esc(source).replace(/:([a-zA-Z0-9_*.-]{2,40}):/g,(all,emojiName)=>{
-  const image=channelImage(emojiName);
-  return image?placeholder(image):all;
+ // Recover orphaned alt text left behind by older malformed renderers.
+ source=source.replace(/(?:Custom emoji\s*)?["']?\s*alt\s*=\s*["']?:([^"']+):["']?\s*>?/gi,(all,emojiName)=>{
+  return insertEmoji(emojiName)||all;
+ });
+ // Convert regular shortcodes after escaping all remaining channel-name text.
+ source=esc(source).replace(/:([A-Za-z0-9_*.-]{2,40}):/g,(all,emojiName)=>{
+  return insertEmoji(emojiName)||all;
  });
  return source.replace(/MALLOWCHANNELIMAGE(\d+)END/g,(all,index)=>images[Number(index)]||"");
 }
