@@ -125,7 +125,7 @@ async function loadMessages(){
   const groups=[];
   for(const m of messages){
    const last=groups[groups.length-1],same=last&&last.author_id===m.author_id&&last.username===m.username&&(m.created_at-last.lastTime)<=300;
-   if(same&&last.is_bot===!!m.is_bot){last.items.push(m);last.lastTime=m.created_at}else groups.push({author_id:m.author_id,username:m.username,avatar_url:m.avatar_url,is_bot:!!m.is_bot,items:[m],lastTime:m.created_at});
+   if(same&&last.is_bot===!!m.is_bot){last.items.push(m);last.lastTime=m.created_at}else groups.push({author_id:m.author_id,username:m.username,avatar_url:m.avatar_url,role_color:m.role_color||"",is_bot:!!m.is_bot,items:[m],lastTime:m.created_at});
   }
   box.innerHTML=groups.map(g=>{
    const avatar=g.avatar_url?'<img src="'+esc(g.avatar_url)+'" alt="">':esc((g.username||"?")[0].toUpperCase());
@@ -137,7 +137,7 @@ async function loadMessages(){
     return '<div class="message-entry '+(m.is_mentioned?'is-mentioned ':'')+(m.is_reply_to_you?'is-reply-to-you':'')+'" data-message-id="'+m.id+'">'+(m.forwarded_from?'<div class="forwarded-label">Forwarded from <b>'+esc(m.forwarded_from)+'</b></div>':"")+reply+(m.content?'<div class="message-content">'+renderMarkdown(m.content)+'</div>':"")+attachments+'<small class="message-time-inline" title="'+new Date(m.created_at*1000).toLocaleString()+'">'+time+(m.edited_at?' · edited':"")+'</small><div class="message-reactions">'+reactions+'</div></div>';
    }).join("");
    const first=g.items[0],stamp=new Date(first.created_at*1000).toLocaleString();
-   return '<article class="message-group '+(g.is_bot?"bot-message-group":"")+'"><button type="button" class="avatar profile-avatar-trigger status-avatar" data-user-id="'+esc(g.author_id)+'" data-status="'+esc(g.items[0].status||"online")+'" aria-label="View '+esc(g.username)+' profile">'+avatar+'</button><div class="message-group-body"><div class="message-head"><b>'+esc(g.username)+'</b>'+(g.is_bot?'<span class="bot-tag">BOT</span>':"")+'<small>'+stamp+'</small></div>'+entries+'</div></article>';
+   return '<article class="message-group '+(g.is_bot?"bot-message-group":"")+'"><button type="button" class="avatar profile-avatar-trigger status-avatar" data-user-id="'+esc(g.author_id)+'" data-status="'+esc(g.items[0].status||"online")+'" aria-label="View '+esc(g.username)+' profile">'+avatar+'</button><div class="message-group-body"><div class="message-head"><b'+(g.role_color&&/^#[0-9a-f]{6}$/i.test(g.role_color)?' style="color:'+esc(g.role_color)+'"':"")+'>'+esc(g.username)+'</b>'+(g.is_bot?'<span class="bot-tag">BOT</span>':"")+'<small>'+stamp+'</small></div>'+entries+'</div></article>';
   }).join("");
   box.querySelectorAll(".message-entry").forEach(el=>{const m=messages.find(x=>x.id===el.dataset.messageId);if(m&&!m.is_bot)el.addEventListener("contextmenu",e=>{e.preventDefault();openMessageMenu(m,e.clientX,e.clientY)})});
   if(bottom)box.scrollTop=box.scrollHeight;
