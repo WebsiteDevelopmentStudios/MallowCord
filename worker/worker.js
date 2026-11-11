@@ -33,6 +33,8 @@ async function ensureDiscordImportSchema(env){
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN mentionable INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN managed INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_emojis(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
 }
 async function handle(req,env){const p=new URL(req.url).pathname,m=req.method;let x;
 if(p==="/api/health")return json({ok:true,service:"mallowcord",time:now()});
@@ -362,7 +364,7 @@ if(serverAdminMatch){
  }
  if(section==="roles"&&m==="GET"){
   await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
-  const a=await env.DB.prepare("SELECT id,name,is_system,position,pingable FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
+  const a=await env.DB.prepare("SELECT id,name,is_system,position,pingable,color,permissions,hoist,mentionable,managed FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
   return json({roles:a.results,can_manage:manager});
  }
  if(section==="roles"&&m==="POST"){
@@ -474,6 +476,7 @@ if(channelSettingsRoute&&(m==="GET"||m==="POST")){
  if(Number.isFinite(Number(b.slowmode)))await env.DB.prepare("UPDATE channels SET slowmode=? WHERE id=? AND server_id=?").bind(Math.max(0,Math.min(21600,Number(b.slowmode))),cid,sid).run();
  if(typeof b.locked==="boolean")settings.locked=b.locked;
  if(Array.isArray(b.permission_overwrites))settings.permission_overwrites=b.permission_overwrites.slice(0,100);
+ if(typeof b.section_id==="string"){const sectionId=b.section_id||null;if(sectionId){const section=await env.DB.prepare("SELECT id FROM server_sections WHERE id=? AND server_id=?").bind(sectionId,sid).first();if(!section)return fail("Section not found.",404);}await env.DB.prepare("UPDATE channels SET section_id=? WHERE id=? AND server_id=?").bind(sectionId,cid,sid).run();}
  await env.DB.prepare("UPDATE channels SET settings_json=? WHERE id=? AND server_id=?").bind(JSON.stringify(settings),cid,sid).run();
  return json({ok:true,settings});
 }
