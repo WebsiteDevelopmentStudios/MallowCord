@@ -101,10 +101,18 @@ if(discordBridgePath){
    const linked=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=?").bind(rid).first();
    let mrole=linked?.role_id;
    if(!mrole){const existing=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name=?").bind(system.id,rname).first();mrole=existing?.id;}
-   if(!mrole){mrole=uid();const safeName=rname.replace(/[<>]/g,"").trim()||("discord-role-"+rid.slice(-5));try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?,?,0,?)").bind(mrole,system.id,safeName,Number(role.position)||0).run();}catch{continue;}}
+   if(!mrole){mrole=uid();const safeName=rname.replace(/[<>]/g,"").trim()||("discord-role-"+rid.slice(-5));try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position,color,permissions,hoist,mentionable,managed) VALUES(?,?,?,0,?,?,?,?,?,?)").bind(mrole,system.id,safeName,Number(role.position)||0,String(role.color||"")||null,String(role.permissions||"0"),role.hoist?1:0,role.mentionable?1:0,role.managed?1:0).run();}catch{continue;}}
+   await env.DB.prepare("UPDATE roles SET name=?,position=?,color=?,permissions=?,hoist=?,mentionable=?,managed=? WHERE id=? AND server_id=?").bind(rname,Number(role.position)||0,String(role.color||"")||null,String(role.permissions||"0"),role.hoist?1:0,role.mentionable?1:0,role.managed?1:0,mrole,system.id).run();
    await env.DB.prepare("INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?) ON CONFLICT(discord_role_id) DO UPDATE SET role_id=excluded.role_id").bind(rid,system.id,mrole).run();roleMap.push({discord_id:rid,mallow_id:mrole});
   }
   const roleLookup=new Map(roleMap.map(r=>[r.discord_id,r.mallow_id]));
+  for(const emoji of emojis){
+   const eid=String(emoji.id||""),ename=String(emoji.name||"").trim().toLowerCase().replace(/[^a-z0-9_]/g,"_").slice(0,32),url=String(emoji.image_url||"");
+   if(!eid||!ename||!/^https:\/\//i.test(url))continue;
+   const existing=await env.DB.prepare("SELECT id FROM server_emojis WHERE server_id=? AND name=?").bind(system.id,ename).first();
+   if(existing)await env.DB.prepare("UPDATE server_emojis SET image_url=? WHERE id=? AND server_id=?").bind(url,existing.id,system.id).run();
+   else{try{await env.DB.prepare("INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at) VALUES(?,?,?,?,?,?)").bind("discord:"+eid,system.id,ename,url,system.owner_id,now()).run();}catch{}}
+  }
   let synced=0;
   for(const mem of members){
    const did=String(mem.id||"");if(!did||mem.bot)continue;
@@ -118,7 +126,7 @@ if(discordBridgePath){
    for(const drid of (Array.isArray(mem.roles)?mem.roles:[])){let mr=roleLookup.get(String(drid));if(!mr){const linkedRole=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?").bind(String(drid),system.id).first();mr=linkedRole?.role_id;}if(mr)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,mr).run();}
    synced++;
   }
-  return json({ok:true,server_id:system.id,channels:channelMap.length,roles:roleMap.length,members:synced,channel_map:channelMap});
+  return json({ok:true,server_id:system.id,channels:channelMap.length,sections:sectionMap.size,roles:roleMap.length,members:synced,emojis:emojis.length,channel_map:channelMap});
  }
  if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
