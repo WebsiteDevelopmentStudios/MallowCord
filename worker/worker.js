@@ -428,7 +428,53 @@ if(memberRoleRoute&&m==="POST"){
  return json({ok:true});
 }
 
-x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
+const sectionRoute=p.match(/^\/api\/servers\/([\w-]+)\/sections(?:\/([\w-]+))?$/);
+if(sectionRoute){
+ const sid=sectionRoute[1],sectionId=sectionRoute[2]||null,sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
+ if(!sv)return fail("Server not found.",404);
+ const member=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(sid,u.id).first();
+ if(!member)return fail("Not a server member.",403);
+ const manager=isOwner(u)||sv.owner_id===u.id;
+ await ensureDiscordImportSchema(env);
+ if(m==="GET"){const rows=await env.DB.prepare("SELECT id,name,position,source_discord_id FROM server_sections WHERE server_id=? ORDER BY position,name").bind(sid).all();return json({sections:rows.results,can_manage:manager});}
+ if(m==="POST"){
+  if(!manager)return fail("Server owner access required.",403);
+  const b=await body(req);
+  if(!sectionId){
+   const name=String(b.name||"").trim().slice(0,60);if(name.length<2)return fail("Section names must be 2–60 characters.");
+   const position=Number((await env.DB.prepare("SELECT COALESCE(MAX(position),-1)+1 AS n FROM server_sections WHERE server_id=?").bind(sid).first()).n),id=uid();
+   try{await env.DB.prepare("INSERT INTO server_sections(id,server_id,name,position,created_at) VALUES(?,?,?,?,?)").bind(id,sid,name,position,now()).run();}catch{return fail("A section with that name already exists.",409);}
+   if(b.channel_id)await env.DB.prepare("UPDATE channels SET section_id=? WHERE id=? AND server_id=?").bind(id,String(b.channel_id),sid).run();
+   return json({section:{id,name,position}},201);
+  }
+  const exists=await env.DB.prepare("SELECT id FROM server_sections WHERE id=? AND server_id=?").bind(sectionId,sid).first();if(!exists)return fail("Section not found.",404);
+  if(typeof b.name==="string"){const name=b.name.trim().slice(0,60);if(name.length<2)return fail("Section name is too short.");await env.DB.prepare("UPDATE server_sections SET name=? WHERE id=? AND server_id=?").bind(name,sectionId,sid).run();}
+  if(Number.isFinite(Number(b.position)))await env.DB.prepare("UPDATE server_sections SET position=? WHERE id=? AND server_id=?").bind(Number(b.position),sectionId,sid).run();
+  if(typeof b.channel_id==="string")await env.DB.prepare("UPDATE channels SET section_id=? WHERE id=? AND server_id=?").bind(sectionId,b.channel_id,sid).run();
+  if(typeof b.remove_channel_id==="string")await env.DB.prepare("UPDATE channels SET section_id=NULL WHERE id=? AND server_id=? AND section_id=?").bind(b.remove_channel_id,sid,sectionId).run();
+  return json({ok:true});
+ }
+ if(m==="DELETE"&&sectionId){if(!manager)return fail("Server owner access required.",403);await env.DB.prepare("UPDATE channels SET section_id=NULL WHERE server_id=? AND section_id=?").bind(sid,sectionId).run();await env.DB.prepare("DELETE FROM server_sections WHERE id=? AND server_id=? AND source_discord_id IS NULL").bind(sectionId,sid).run();return json({ok:true});}
+}
+const channelSettingsRoute=p.match(/^\/api\/servers\/([\w-]+)\/channels\/([\w-]+)\/settings$/);
+if(channelSettingsRoute&&(m==="GET"||m==="POST")){
+ const sid=channelSettingsRoute[1],cid=channelSettingsRoute[2],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
+ if(!sv)return fail("Server not found.",404);
+ const member=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(sid,u.id).first();if(!member)return fail("Not a server member.",403);
+ const manager=isOwner(u)||sv.owner_id===u.id;await ensureDiscordImportSchema(env);
+ const ch=await env.DB.prepare("SELECT id,name,topic,nsfw,slowmode,settings_json FROM channels WHERE id=? AND server_id=?").bind(cid,sid).first();if(!ch)return fail("Channel not found.",404);
+ let settings={};try{settings=JSON.parse(ch.settings_json||"{}")}catch{}
+ if(m==="GET")return json({channel:{id:ch.id,name:ch.name,topic:ch.topic||"",nsfw:!!ch.nsfw,slowmode:Number(ch.slowmode)||0,settings},can_manage:manager});
+ if(!manager)return fail("Server owner access required.",403);
+ const b=await body(req);if(typeof b.topic==="string")await env.DB.prepare("UPDATE channels SET topic=? WHERE id=? AND server_id=?").bind(b.topic.slice(0,1024),cid,sid).run();
+ if(typeof b.nsfw==="boolean")await env.DB.prepare("UPDATE channels SET nsfw=? WHERE id=? AND server_id=?").bind(b.nsfw?1:0,cid,sid).run();
+ if(Number.isFinite(Number(b.slowmode)))await env.DB.prepare("UPDATE channels SET slowmode=? WHERE id=? AND server_id=?").bind(Math.max(0,Math.min(21600,Number(b.slowmode))),cid,sid).run();
+ if(typeof b.locked==="boolean")settings.locked=b.locked;
+ if(Array.isArray(b.permission_overwrites))settings.permission_overwrites=b.permission_overwrites.slice(0,100);
+ await env.DB.prepare("UPDATE channels SET settings_json=? WHERE id=? AND server_id=?").bind(JSON.stringify(settings),cid,sid).run();
+ return json({ok:true,settings});
+}
+x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await ensureDiscordImportSchema(env);const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,s.name AS section_name,c.topic,c.nsfw,c.slowmode,c.discord_type,c.settings_json,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections s ON s.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(s.position,9999),COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
