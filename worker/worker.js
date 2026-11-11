@@ -550,19 +550,30 @@ if(p==="/api/bot/command"&&m==="POST"){
  if(!channelId||!content||content.length>4000)return fail("A channel and command are required.");
  const member=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
  if(!member)return fail("You cannot run bot commands in this channel.",403);
- const match=content.match(/^(?:-mb|\/mb)\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
- if(!match)return fail("Use -mb help to see the Mallow-Bot command list.");
- const command=match[1].toLowerCase(),t=now();
- const catalog="Mallow-Bot commands\n\nXP & levels\n- -mb xp\n- -mb level\n- -mb leaderboard\n\nMallow Coins\n- -mb balance\n- -mb daily\n- -mb gamble\n- -mb coinflip\n- -mb slots\n- -mb roulette\n- -mb dice\n- -mb blackjack\n- -mb work\n- -mb pay\n- -mb rob\n\nFun & social\n- -mb vibecheck\n- -mb ship\n- -mb fortune\n- -mb wyr\n- -mb youtube\n\nModeration & tickets\n- -mb purge\n- -mb dm\n- -mb ticket\n- -mb ticket-panel\n- -mb ticket-close\n- -mb timeout-minutes\n\nUtilities & media\n- -mb uptime\n- -mb update\n- -mb countdown\n- -mb movie\n- -mb channel\n- -mb set-log\n- -mb sync\n\nPremium\n- -mb embed\n- -mb snipe\n- -mb sticky\n- -mb backup\n- -mb custom-command\n- -mb vanity\n- -mb premium-status\n\nThe full command set currently runs inside Discord. This MallowCord server is not connected to a Discord guild and member identity yet, so commands that read server data or perform moderation cannot execute here.";
- let reply;
- if(command==="help"||command==="commands")reply=catalog;
- else reply="I received "+content+", but this command needs a linked Discord server and member identity. Run -mb commands to see the available commands. MallowCord does not yet have that Discord link configured.";
- await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(uid(),channelId,u.id,content,t).run();
+ const prefix=content.match(/^(?:-mb\s+([a-z0-9-]+)|\/mb\s+([a-z0-9-]+))(?:\s+([\s\S]*))?$/i);
+ const slash=content.match(/^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
+ if(!prefix&&!slash)return fail("Use -mb help, /mb help, or a slash command such as /swears.");
+ const style=prefix?(content.toLowerCase().startsWith("-mb")?"prefix":"slash"):"slash";
+ const command=(prefix?(prefix[1]||prefix[2]):slash[1]).toLowerCase();
+ const args=prefix?(prefix[3]||"").trim():(slash[2]||"").trim();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
- await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(uid(),channelId,u.id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",reply,t+1).run();
- return json({ok:true,accepted:true});
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_command_queue(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,command_text TEXT NOT NULL,command_style TEXT NOT NULL CHECK(command_style IN ('prefix','slash')),status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,completed_at INTEGER,result TEXT)").run();
+ const say=async message=>{await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(uid(),channelId,u.id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",message,now()+1).run();return json({ok:true,accepted:true,linked:false});};
+ const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_account_links WHERE user_id=? AND server_id=?").bind(u.id,member.server_id).first();
+ if(command==="link"||command==="connect"||!linked){
+  if(linked)return say("Your MallowCord account is already linked to Discord. You can now run Mallow-Bot commands here.");
+  const code=token().slice(0,12).toUpperCase(),t=now();
+  await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
+  await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(code),u.id,t+600,t).run();
+  return say("Link your Discord account to run Mallow-Bot commands.\n\n1. Copy this one-time code: "+code+"\n2. Open the official Mallow Swamp Discord server.\n3. Send -mb link "+code+" in any channel the bot can read.\n\nThe code expires in 10 minutes. You only need to link once.");
+ }
+ const commandText=style==="prefix"?"-mb "+command+(args?" "+args:""):"/"+command+(args?" "+args:"");
+ const id=uid();
+ await env.DB.prepare("INSERT INTO discord_command_queue(id,user_id,channel_id,command_text,command_style,status,created_at) VALUES(?,?,?,?,?,'queued',?)").bind(id,u.id,channelId,commandText,style,now()).run();
+ return json({ok:true,accepted:true,queued:true,command_id:id});
 }
-
 async function ensureAttachmentTable(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_attachments(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,uploader_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,filename TEXT NOT NULL,content_type TEXT NOT NULL,size INTEGER NOT NULL,object_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)").run();
 }
