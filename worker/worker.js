@@ -19,6 +19,11 @@ async function joinSwamp(env,userId){const s=await env.DB.prepare("SELECT id FRO
 async function audit(env,actor,target,action,details){await env.DB.prepare("INSERT INTO audit_logs(id,actor_id,target_user_id,action,details,created_at) VALUES(?,?,?,?,?,?)").bind(uid(),actor||null,target||null,action,details||"",now()).run();}
 
 async function canChannelPermission(env,channelId,userId,permission){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_settings(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,topic TEXT,nsfw INTEGER NOT NULL DEFAULT 0,slowmode INTEGER NOT NULL DEFAULT 0,discord_type INTEGER,extra_settings_json TEXT NOT NULL DEFAULT '{}',permission_overwrites_json TEXT NOT NULL DEFAULT '[]',is_staff INTEGER NOT NULL DEFAULT 0,locked INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
+ const owner=await env.DB.prepare("SELECT s.owner_id FROM channels c JOIN servers s ON s.id=c.server_id WHERE c.id=?").bind(channelId).first();
+ if(owner?.owner_id===userId)return true;
  const settings=await env.DB.prepare("SELECT locked,permission_overwrites_json FROM discord_channel_settings WHERE channel_id=?").bind(channelId).first();
  if(!settings)return true;
  let overwrites=[];try{overwrites=JSON.parse(settings.permission_overwrites_json||"[]")}catch{}
@@ -612,14 +617,15 @@ if(p==="/api/bot/command"&&m==="POST"){
  const member=await env.DB.prepare("SELECT c.server_id,s.is_system FROM memberships m JOIN channels c ON c.server_id=m.server_id JOIN servers s ON s.id=c.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
  if(!member)return fail("You cannot run bot commands in this channel.",403);
  const prefix=content.match(/^-mb\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
- const slash=content.match(/^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
  const legacy=content.match(/^\/mb\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+ const slash=content.match(/^\/(?!mb\b)([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
  if(!prefix&&!slash&&!legacy)return fail("Use -mb command or /command to run a Mallow-Bot command.");
  const style=prefix||legacy?"prefix":"slash",command=(prefix||slash||legacy)[1].toLowerCase(),t=now(),messageId=uid();
  await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(messageId,channelId,u.id,content,t).run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,recipient_user_id TEXT)").run();
  await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
  if(command==="link"){
+  if(!member.is_system)return fail("Discord account linking is only available in Mallow Swamp.",403);
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
   const code=token().slice(0,12).toUpperCase();
   await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
