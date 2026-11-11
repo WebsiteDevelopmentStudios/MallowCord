@@ -731,3 +731,11 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .create-panel-actions .primary{width:auto;margin:0}
 .create-panel-actions button{min-width:92px}
 @media(max-width:760px){.create-panel-card{padding:22px}}
+
+.oauth-form{display:grid;gap:12px}
+.oauth-form h1{margin-bottom:0}
+.oauth-form p{margin-bottom:8px}
+.oauth-button{display:flex;align-items:center;justify-content:center;width:100%;min-height:46px;padding:12px 16px;border-radius:7px;text-decoration:none;font-weight:700;box-sizing:border-box}
+.oauth-button.secondary{border:1px solid var(--line);background:#30343c;color:#fff}
+.oauth-button:hover{filter:brightness(1.12)}
+.oauth-footnote{font-size:12px;color:var(--text-muted);text-align:center;margin:8px 0 0!important}
