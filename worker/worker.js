@@ -535,6 +535,7 @@ if(channelSettingsRoute&&(m==="GET"||m==="POST")){
  const manager=isOwner(u)||sv.owner_id===u.id;await ensureDiscordImportSchema(env);
  const ch=await env.DB.prepare("SELECT id,name,topic,nsfw,slowmode,settings_json FROM channels WHERE id=? AND server_id=?").bind(cid,sid).first();if(!ch)return fail("Channel not found.",404);
  let settings={};try{settings=JSON.parse(ch.settings_json||"{}")}catch{}
+ if(!await channelPermissionAllowed(env,sid,u.id,settings,"view_channel"))return fail("You do not have permission to view this channel.",403);
  if(m==="GET")return json({channel:{id:ch.id,name:ch.name,topic:ch.topic||"",nsfw:!!ch.nsfw,slowmode:Number(ch.slowmode)||0,settings},can_manage:manager});
  if(!manager)return fail("Server owner access required.",403);
  const b=await body(req);if(typeof b.topic==="string")await env.DB.prepare("UPDATE channels SET topic=? WHERE id=? AND server_id=?").bind(b.topic.slice(0,1024),cid,sid).run();
