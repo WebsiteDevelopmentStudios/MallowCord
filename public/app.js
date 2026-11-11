@@ -207,7 +207,7 @@ $("#composerSuggestions").addEventListener("mousedown",e=>{const b=e.target.clos
 function showCreatePanel(title,fields,submitWork,actionLabel="Create"){
  let panel=$("#createPanel");
  if(!panel){panel=document.createElement("div");panel.id="createPanel";panel.className="create-panel hidden";panel.innerHTML='<section class="create-panel-card"><button type="button" class="close" id="closeCreatePanel">×</button><h2 id="createPanelTitle"></h2><form id="createPanelForm"><div id="createPanelFields"></div><div class="create-panel-actions"><button type="button" class="secondary" id="cancelCreatePanel">Cancel</button><button type="submit" class="primary">'+esc(actionLabel)+'</button></div></form></section>';document.body.append(panel);$("#closeCreatePanel").onclick=()=>panel.classList.add("hidden");$("#cancelCreatePanel").onclick=()=>panel.classList.add("hidden");}
- $("#createPanelTitle").textContent=title;$("#createPanelFields").innerHTML=fields;panel.classList.remove("hidden");
+ $("#createPanelTitle").textContent=title;$("#createPanelFields").innerHTML=fields;$("#createPanelForm").querySelector('[type="submit"]').textContent=actionLabel;panel.classList.remove("hidden");
  $("#createPanelForm").onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.currentTarget).entries()),button=e.currentTarget.querySelector('[type="submit"]');button.disabled=true;try{await submitWork(data);panel.classList.add("hidden")}catch(err){toast(err.message)}finally{button.disabled=false}};
 }
 $("#createChannelBtn").onclick=createChannel;
