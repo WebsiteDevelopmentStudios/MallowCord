@@ -778,3 +778,9 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .channel-category-label:focus-visible{outline:1px solid var(--main-theme-color);outline-offset:2px}
 .channel[hidden]{display:none!important}
 .inline-custom-emoji.channel-custom-emoji{width:1.35em;height:1.35em;vertical-align:-.25em}
+
+/* User-selectable account background */
+body{background-image:var(--mallow-custom-background,none),var(--theme-background-image);background-position:center,center;background-size:cover,cover;background-attachment:fixed,fixed}
+body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-filter:blur(var(--mallow-background-blur,0px));-webkit-backdrop-filter:blur(var(--mallow-background-blur,0px))}
+.background-options{display:grid;gap:12px;margin-top:22px;padding:16px;border:1px solid var(--line);border-radius:7px;background:rgba(0,0,0,.2)}
+.background-options h3{margin:0}.background-options label{display:grid;gap:7px;color:var(--text-muted);font-size:13px}.background-options input[type=range]{padding:0}.background-options .background-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.background-options .background-toggle-row label{display:flex;align-items:center;gap:8px}.background-options input[type=checkbox]{width:18px;height:18px}
