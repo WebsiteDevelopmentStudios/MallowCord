@@ -690,3 +690,20 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .error-log-entry summary{cursor:pointer;font-size:13px}
 .error-log-entry pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;background:rgba(0,0,0,.22);padding:12px;border-radius:8px;font-size:12px}
 @media(max-width:650px){.error-log-top time{width:100%;margin-left:0}.error-log-toolbar{display:block}.error-log-actions{margin-top:12px}}
+
+/* Chat file attachments */
+.attachment-preview{display:flex;flex-wrap:wrap;gap:7px;padding:8px 14px 0;max-height:112px;overflow:auto}
+.attachment-pending{display:flex;align-items:center;gap:8px;max-width:260px;padding:6px 9px;border:1px solid var(--border,#34383f);border-radius:9px;background:var(--panel,#202329);font-size:12px}
+.attachment-pending span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:155px}
+.attachment-pending small{color:var(--muted,#9aa0aa);white-space:nowrap}
+.attachment-pending button{border:0;background:transparent;color:var(--muted,#aaa);cursor:pointer;font-size:17px;padding:0 2px}
+.message-attachment{display:flex;align-items:center;gap:10px;width:fit-content;max-width:min(420px,100%);margin-top:8px;color:inherit;text-decoration:none;border:1px solid var(--border,#34383f);border-radius:10px;overflow:hidden;background:var(--panel,#202329)}
+.file-attachment{padding:10px 12px}
+.attachment-file-icon{display:grid;place-items:center;width:36px;height:36px;border-radius:8px;background:rgba(128,128,128,.14);font-size:21px}
+.file-attachment span:last-child{display:flex;flex-direction:column;min-width:0}
+.file-attachment b{font-size:13px;overflow-wrap:anywhere}
+.file-attachment small{font-size:11px;color:var(--muted,#9aa0aa);margin-top:3px}
+.image-attachment{flex-direction:column;align-items:flex-start;padding:6px}
+.image-attachment img{display:block;max-width:min(360px,70vw);max-height:280px;object-fit:contain;border-radius:6px}
+.image-attachment span{font-size:11px;color:var(--muted,#9aa0aa);padding:0 3px 2px;max-width:100%;overflow-wrap:anywhere}
+.message-compose-row #attachFilesBtn{font-size:22px}
