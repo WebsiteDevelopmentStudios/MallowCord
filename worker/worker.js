@@ -17,6 +17,48 @@ async function session(req,env,userId){const raw=token(),t=now();await env.DB.pr
 async function recovery(env,userId){const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";let c="";const b=crypto.getRandomValues(new Uint8Array(20));for(let i=0;i<b.length;i++)c+=chars[b[i]%chars.length];c=c.match(/.{1,4}/g).join("-");await env.DB.prepare("DELETE FROM recovery_codes WHERE user_id=?").bind(userId).run();await env.DB.prepare("INSERT INTO recovery_codes(id,user_id,code_hash,created_at) VALUES(?,?,?,?)").bind(uid(),userId,await sha(c.replace(/-/g,"")),now()).run();return c;}
 async function joinSwamp(env,userId){const s=await env.DB.prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();if(!s)return;await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s.id,userId,now()).run();const rs=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name IN ('@everyone','@Member')").bind(s.id).all();for(const r of rs.results)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s.id,userId,r.id).run();}
 async function audit(env,actor,target,action,details){await env.DB.prepare("INSERT INTO audit_logs(id,actor_id,target_user_id,action,details,created_at) VALUES(?,?,?,?,?,?)").bind(uid(),actor||null,target||null,action,details||"",now()).run();}
+
+async function canChannelPermission(env,channelId,userId,permission){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_settings(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,topic TEXT,nsfw INTEGER NOT NULL DEFAULT 0,slowmode INTEGER NOT NULL DEFAULT 0,discord_type INTEGER,extra_settings_json TEXT NOT NULL DEFAULT '{}',permission_overwrites_json TEXT NOT NULL DEFAULT '[]',is_staff INTEGER NOT NULL DEFAULT 0,locked INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
+ const owner=await env.DB.prepare("SELECT s.owner_id FROM channels c JOIN servers s ON s.id=c.server_id WHERE c.id=?").bind(channelId).first();
+ if(owner?.owner_id===userId)return true;
+ const settings=await env.DB.prepare("SELECT locked,is_staff,permission_overwrites_json FROM discord_channel_settings WHERE channel_id=?").bind(channelId).first();
+ if(!settings)return true;
+ let overwrites=[];try{overwrites=JSON.parse(settings.permission_overwrites_json||"[]")}catch{}
+ if(!Array.isArray(overwrites))overwrites=[];
+ const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=?").bind(userId).first();
+ const discordUserId=String(linked?.discord_user_id||"");
+ const roleRows=await env.DB.prepare("SELECT r.id,r.name,r.permissions,COALESCE(dr.discord_role_id,'') AS discord_role_id FROM member_roles mr JOIN roles r ON r.id=mr.role_id LEFT JOIN discord_role_links dr ON dr.role_id=mr.role_id AND dr.server_id=mr.server_id WHERE mr.server_id=(SELECT server_id FROM channels WHERE id=?) AND mr.user_id=?").bind(channelId,userId).all();
+ const isAdministrator=roleRows.results.some(r=>{try{return (BigInt(r.permissions||"0")&8n)!==0n}catch{return false}});
+ if(isAdministrator)return true;
+ const isStaffMember=roleRows.results.some(r=>{if(/staff|moderator|moderation|admin|helper|(^|[^a-z])mod([^a-z]|$)/i.test(String(r.name||"")))return true;try{return (BigInt(r.permissions||"0")&(16n|32n|8192n))!==0n}catch{return false}});
+ if(settings.is_staff&&!isStaffMember)return false;
+ const roleIds=new Set(roleRows.results.flatMap(r=>[String(r.discord_role_id||""),String(r.id)]));
+ let everyoneDeny=false,roleDeny=false,roleAllow=false,userDeny=false,userAllow=false;
+ for(const overwrite of overwrites){
+  const allow=Array.isArray(overwrite.allow)?overwrite.allow:[],deny=Array.isArray(overwrite.deny)?overwrite.deny:[];
+  const targetId=String(overwrite.target_discord_id||"");
+  if(overwrite.target_type==="role"&&String(overwrite.target_name||"").toLowerCase()==="@everyone"){
+   if(deny.includes(permission))everyoneDeny=true;
+   if(allow.includes(permission))roleAllow=true;
+  }else if(overwrite.target_type==="role"&&roleIds.has(targetId)){
+   if(deny.includes(permission))roleDeny=true;
+   if(allow.includes(permission))roleAllow=true;
+  }else if(overwrite.target_type==="user"&&((discordUserId&&targetId===discordUserId)||targetId===String(userId))){
+   if(deny.includes(permission))userDeny=true;
+   if(allow.includes(permission))userAllow=true;
+  }
+ }
+ if(userDeny)return false;
+ if(userAllow)return true;
+ if(roleAllow)return true;
+ if(roleDeny||everyoneDeny)return false;
+ if(permission==="send_messages"&&settings.locked)return false;
+ return true;
+}
+
 async function bootstrap(env,secret){if(!env.BOOTSTRAP_SECRET||secret!==env.BOOTSTRAP_SECRET)throw Error("Invalid bootstrap secret.");if(await env.DB.prepare("SELECT id FROM users WHERE account_type='owner' LIMIT 1").first())return {already_initialized:true};if(!env.OWNER_PASSWORD||env.OWNER_PASSWORD.length<12)throw Error("Set OWNER_PASSWORD to at least 12 characters.");const t=now(),u=uid(),name=env.OWNER_USERNAME||"Blemmished";await env.DB.prepare("INSERT INTO users(id,username,username_key,account_type,password_hash,created_at,updated_at) VALUES(?,?,?,'owner',?,?,?)").bind(u,name,name.toLowerCase(),await passwordHash(env.OWNER_PASSWORD),t,t).run();const s=uid(),r1=uid(),r2=uid(),ch=uid();await env.DB.batch([env.DB.prepare("INSERT INTO servers(id,name,owner_id,icon_url,is_system,created_at) VALUES(?,?,?,?,1,?)").bind(s,"Mallow Swamp",u,env.MALLOWBOT_ICON_URL||null,t),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r1,s),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(r2,s),env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(ch,s),env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u,t),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r1),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u,r2)]);return {initialized:true,owner:name,server:"Mallow Swamp"};}
 async function handle(req,env){const p=new URL(req.url).pathname,m=req.method;let x;
 if(p==="/api/health")return json({ok:true,service:"mallowcord",time:now()});
@@ -49,46 +91,137 @@ if(discordBridgePath){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
  if(p==="/api/integrations/mallowbot/discord/sync"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to the configured official Discord server.",403);
-  const channels=Array.isArray(b.channels)?b.channels.slice(0,250):[],roles=Array.isArray(b.roles)?b.roles.slice(0,250):[],members=Array.isArray(b.members)?b.members.slice(0,250):[];
+  const categories=Array.isArray(b.categories)?b.categories.slice(0,500):[];
+  const channels=Array.isArray(b.channels)?b.channels.slice(0,1000):[];
+  const roles=Array.isArray(b.roles)?b.roles.slice(0,250):[];
+  const members=Array.isArray(b.members)?b.members.slice(0,250):[];
+  const emojis=Array.isArray(b.emojis)?b.emojis.slice(0,1000):[];
   await env.DB.prepare("UPDATE servers SET icon_url=COALESCE(?,icon_url) WHERE id=?").bind(typeof b.icon_url==="string"?b.icon_url:null,system.id).run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,discord_category_id TEXT,is_custom INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS channel_section_links(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,section_id TEXT NOT NULL REFERENCES server_sections(id) ON DELETE CASCADE)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_settings(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,topic TEXT,nsfw INTEGER NOT NULL DEFAULT 0,slowmode INTEGER NOT NULL DEFAULT 0,discord_type INTEGER,extra_settings_json TEXT NOT NULL DEFAULT '{}',permission_overwrites_json TEXT NOT NULL DEFAULT '[]',is_staff INTEGER NOT NULL DEFAULT 0,locked INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_emojis(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+  await env.DB.prepare("ALTER TABLE discord_channel_links ADD COLUMN section_id TEXT").run().catch(()=>{});
+  for(const ddl of [
+   "ALTER TABLE roles ADD COLUMN color TEXT",
+   "ALTER TABLE roles ADD COLUMN permissions TEXT",
+   "ALTER TABLE roles ADD COLUMN hoist INTEGER NOT NULL DEFAULT 0",
+   "ALTER TABLE roles ADD COLUMN mentionable INTEGER NOT NULL DEFAULT 0",
+   "ALTER TABLE server_emojis ADD COLUMN discord_emoji_id TEXT",
+   "ALTER TABLE server_emojis ADD COLUMN animated INTEGER NOT NULL DEFAULT 0",
+   "ALTER TABLE server_emojis ADD COLUMN available INTEGER NOT NULL DEFAULT 1",
+   "ALTER TABLE server_emojis ADD COLUMN roles_json TEXT NOT NULL DEFAULT '[]'"
+  ])await env.DB.prepare(ddl).run().catch(()=>{});
+  const sectionLookup=new Map();
+  for(const category of categories){
+   const did=String(category.id||""),name=String(category.name||"").trim().slice(0,80);
+   if(!did||!name)continue;
+   let row=await env.DB.prepare("SELECT id FROM server_sections WHERE server_id=? AND discord_category_id=?").bind(system.id,did).first();
+   if(row){try{await env.DB.prepare("UPDATE server_sections SET name=?,position=? WHERE id=?").bind(name,Number(category.position)||0,row.id).run();}catch{await env.DB.prepare("UPDATE server_sections SET position=? WHERE id=?").bind(Number(category.position)||0,row.id).run();}sectionLookup.set(did,row.id);}
+   else{
+    const id=uid();let safeName=name;
+    const conflict=await env.DB.prepare("SELECT id FROM server_sections WHERE server_id=? AND name=?").bind(system.id,safeName).first();
+    if(conflict)safeName=(name+" (Discord)").slice(0,80);
+    try{await env.DB.prepare("INSERT INTO server_sections(id,server_id,name,position,discord_category_id,is_custom,created_at) VALUES(?,?,?,?,?,0,?)").bind(id,system.id,safeName,Number(category.position)||0,did,now()).run();sectionLookup.set(did,id);}catch{}
+   }
+  }
   const everyone=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name='@everyone'").bind(system.id).first();
   const memberRole=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name='@Member'").bind(system.id).first();
   const channelMap=[];
   for(const ch of channels){
-   const dcid=String(ch.id||"");const raw=String(ch.name||"").toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50);
+   const dcid=String(ch.id||"");
+   const raw=String(ch.name||"").toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50);
    if(!dcid||raw.length<2)continue;
-   const existing=await env.DB.prepare("SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=?").bind(dcid).first();
+   const kind=ch.kind==="voice"?"voice":"text";
+   const existing=await env.DB.prepare("SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=? AND server_id=?").bind(dcid,system.id).first();
    let cid=existing?.mallow_channel_id;
-   if(!cid){const same=await env.DB.prepare("SELECT id FROM channels WHERE server_id=? AND name=? AND kind='text'").bind(system.id,raw).first();cid=same?.id;}
-   if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind='text',position=? WHERE id=? AND server_id=?").bind(raw,Number(ch.position)||0,cid,system.id).run();
-   else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?)").bind(cid,system.id,raw,Number(ch.position)||0).run();}
-   await env.DB.prepare("INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET mallow_channel_id=excluded.mallow_channel_id,category_name=excluded.category_name,updated_at=excluded.updated_at").bind(dcid,system.id,cid,String(ch.category||"").slice(0,100)||null,now()).run();
-   channelMap.push({discord_id:dcid,mallow_id:cid,name:raw});
+   if(!cid){const same=await env.DB.prepare("SELECT c.id FROM channels c WHERE c.server_id=? AND c.name=? AND c.kind=? AND NOT EXISTS(SELECT 1 FROM discord_channel_links d WHERE d.mallow_channel_id=c.id AND d.server_id=c.server_id)").bind(system.id,raw,kind).first();cid=same?.id;}
+   if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind=?,position=? WHERE id=? AND server_id=?").bind(raw,kind,Number(ch.position)||0,cid,system.id).run();
+   else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,?,?)").bind(cid,system.id,raw,kind,Number(ch.position)||0).run();}
+   const sectionId=sectionLookup.get(String(ch.category_id||""))||null;
+   await env.DB.prepare("INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,section_id,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET mallow_channel_id=excluded.mallow_channel_id,category_name=excluded.category_name,section_id=excluded.section_id,updated_at=excluded.updated_at").bind(dcid,system.id,cid,String(ch.category_name||"").slice(0,100)||null,sectionId,now()).run();
+   const overwrites=Array.isArray(ch.permission_overwrites)?ch.permission_overwrites:[];
+   const locked=raw==="rules"||overwrites.some(o=>String(o.target_name||"").toLowerCase()==="@everyone"&&(Array.isArray(o.deny)?o.deny:[]).includes("send_messages"));
+   const staff=/(staff|moderator|mod-|admin|logs?|tickets?)/i.test(raw);
+   await env.DB.prepare("INSERT INTO discord_channel_settings(channel_id,topic,nsfw,slowmode,discord_type,extra_settings_json,permission_overwrites_json,is_staff,locked,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id) DO UPDATE SET topic=excluded.topic,nsfw=excluded.nsfw,slowmode=excluded.slowmode,discord_type=excluded.discord_type,extra_settings_json=excluded.extra_settings_json,permission_overwrites_json=excluded.permission_overwrites_json,is_staff=excluded.is_staff,locked=excluded.locked,updated_at=excluded.updated_at").bind(cid,String(ch.topic||"").slice(0,1024)||null,ch.nsfw?1:0,Math.max(0,Math.min(21600,Number(ch.slowmode)||0)),Number.isFinite(Number(ch.discord_type))?Number(ch.discord_type):null,JSON.stringify(ch.extra_settings||{}),JSON.stringify(overwrites),staff?1:0,locked?1:0,now()).run();
+   channelMap.push({discord_id:dcid,mallow_id:cid,name:raw,section_id:sectionId});
   }
   const roleMap=[];
   for(const role of roles){
    const rid=String(role.id||""),rname=String(role.name||"").trim().slice(0,32);if(!rid||!rname||rname==="@everyone")continue;
-   const linked=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=?").bind(rid).first();
+   const linked=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?").bind(rid,system.id).first();
    let mrole=linked?.role_id;
    if(!mrole){const existing=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name=?").bind(system.id,rname).first();mrole=existing?.id;}
-   if(!mrole){mrole=uid();const safeName=rname.replace(/[<>]/g,"").trim()||("discord-role-"+rid.slice(-5));try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?,?,0,?)").bind(mrole,system.id,safeName,Number(role.position)||0).run();}catch{continue;}}
-   await env.DB.prepare("INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?) ON CONFLICT(discord_role_id) DO UPDATE SET role_id=excluded.role_id").bind(rid,system.id,mrole).run();roleMap.push({discord_id:rid,mallow_id:mrole});
+   if(!mrole){mrole=uid();const safeName=rname.replace(/[<>]/g,"").trim()||("discord-role-"+rid.slice(-5));try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position,color,permissions,hoist,mentionable) VALUES(?,?,?,0,?,?,?,?,?)").bind(mrole,system.id,safeName,Number(role.position)||0,String(role.color||"").slice(0,7)||null,String(role.permissions||"").slice(0,32)||null,role.hoist?1:0,role.mentionable?1:0).run();}catch{continue;}}
+   try{await env.DB.prepare("UPDATE roles SET name=?,position=?,color=?,permissions=?,hoist=?,mentionable=? WHERE id=? AND server_id=?").bind(rname,Number(role.position)||0,String(role.color||"").slice(0,7)||null,String(role.permissions||"").slice(0,32)||null,role.hoist?1:0,role.mentionable?1:0,mrole,system.id).run();}catch{await env.DB.prepare("UPDATE roles SET position=?,color=?,permissions=?,hoist=?,mentionable=? WHERE id=? AND server_id=?").bind(Number(role.position)||0,String(role.color||"").slice(0,7)||null,String(role.permissions||"").slice(0,32)||null,role.hoist?1:0,role.mentionable?1:0,mrole,system.id).run();}
+   await env.DB.prepare("INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?) ON CONFLICT(discord_role_id) DO UPDATE SET role_id=excluded.role_id").bind(rid,system.id,mrole).run();
+   roleMap.push({discord_id:rid,mallow_id:mrole});
   }
   const roleLookup=new Map(roleMap.map(r=>[r.discord_id,r.mallow_id]));
   let synced=0;
   for(const mem of members){
    const did=String(mem.id||"");if(!did||mem.bot)continue;
-   const username="discord_"+did;let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();let userId=user?.id||("discord:"+did);
-   if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
-   await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",now()).run();
+   const fallbackUsername="discord_"+did;
+   const existingLink=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(did,system.id).first();
+   let userId=existingLink?.user_id||null;
+   if(!userId){
+    let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(fallbackUsername.toLowerCase()).first();userId=user?.id||("discord:"+did);
+    if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,fallbackUsername,fallbackUsername.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(fallbackUsername.toLowerCase()).first();userId=user?.id||userId;}
+   }
+   await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||fallbackUsername).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",now()).run();
    await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(did,system.id,userId,now()).run();
    await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,userId,now()).run();
    if(everyone)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,everyone.id).run();
    if(memberRole)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,memberRole.id).run();
+   await env.DB.prepare("DELETE FROM member_roles WHERE server_id=? AND user_id=? AND role_id NOT IN (SELECT id FROM roles WHERE server_id=? AND name IN ('@everyone','@Member'))").bind(system.id,userId,system.id).run();
    for(const drid of (Array.isArray(mem.roles)?mem.roles:[])){let mr=roleLookup.get(String(drid));if(!mr){const linkedRole=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?").bind(String(drid),system.id).first();mr=linkedRole?.role_id;}if(mr)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,mr).run();}
    synced++;
   }
-  return json({ok:true,server_id:system.id,channels:channelMap.length,roles:roleMap.length,members:synced,channel_map:channelMap});
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_emojis(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+  let emojiCount=0;
+  for(const emoji of emojis){
+   const name=String(emoji.name||"").toLowerCase().replace(/[^a-z0-9_]/g,"").slice(0,32),image=String(emoji.image_url||"").slice(0,1000),did=String(emoji.id||"");
+   if(name.length<2||!image.startsWith("https://")||!did)continue;
+   const id=uid();
+   await env.DB.prepare("INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at,discord_emoji_id,animated,available,roles_json) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(server_id,name) DO UPDATE SET image_url=excluded.image_url,discord_emoji_id=excluded.discord_emoji_id,animated=excluded.animated,available=excluded.available,roles_json=excluded.roles_json").bind(id,system.id,name,image,system.owner_id,now(),did,emoji.animated?1:0,emoji.available===false?0:1,JSON.stringify(Array.isArray(emoji.roles)?emoji.roles:[])).run();
+   emojiCount++;
+  }
+  return json({ok:true,server_id:system.id,channels:channelMap.length,roles:roleMap.length,members:synced,emojis:emojiCount,categories:sectionLookup.size,channel_map:channelMap});
+ }
+ if(p==="/api/integrations/mallowbot/discord/commands"&&m==="GET"){
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS mallowcord_command_queue(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,discord_user_id TEXT NOT NULL,discord_channel_id TEXT NOT NULL,command_style TEXT NOT NULL,command_text TEXT NOT NULL,created_at INTEGER NOT NULL,claimed_at INTEGER,processed_at INTEGER,result TEXT,private INTEGER NOT NULL DEFAULT 0)").run();
+  const rows=await env.DB.prepare("SELECT id,discord_user_id,discord_channel_id,command_style,command_text FROM mallowcord_command_queue WHERE server_id=? AND processed_at IS NULL AND (claimed_at IS NULL OR claimed_at<?) ORDER BY created_at LIMIT 15").bind(system.id,now()-90).all();
+  for(const row of rows.results)await env.DB.prepare("UPDATE mallowcord_command_queue SET claimed_at=? WHERE id=? AND processed_at IS NULL").bind(now(),row.id).run();
+  return json({commands:rows.results});
+ }
+ const commandComplete=p.match(/^\/api\/integrations\/mallowbot\/discord\/commands\/([\w-]+)\/complete$/);
+ if(commandComplete&&m==="POST"){
+  const b=await body(req),row=await env.DB.prepare("SELECT id,channel_id,source_user_id FROM mallowcord_command_queue WHERE id=? AND processed_at IS NULL").bind(commandComplete[1]).first();
+  if(!row)return fail("Command request not found or already completed.",404);
+  const result=String(b.result||"Command completed.").slice(0,4000),privateResult=b.private?1:0;
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,recipient_user_id TEXT)").run();
+  await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
+  await env.DB.prepare("UPDATE mallowcord_command_queue SET processed_at=?,result=?,private=? WHERE id=?").bind(now(),result,privateResult,row.id).run();
+  await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at,recipient_user_id) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),row.channel_id,row.source_user_id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",result,now(),privateResult?row.source_user_id:null).run();
+  return json({ok:true});
+ }
+ if((p==="/api/integrations/mallowbot/discord/link/consume"||p==="/api/integrations/mallowbot/discord/link/complete")&&m==="POST"){
+  const b=await body(req);if(String(b.guild_id||expectedGuild)!==expectedGuild)return fail("Account linking is restricted to Mallow Swamp.",403);
+  const code=String(b.code||"").replace(/[^A-Z0-9]/gi,"").toUpperCase(),discordId=String(b.discord_user_id||"");
+  if(code.length!==12||!/^\\d{15,22}$/.test(discordId))return fail("Invalid Discord link code or user ID.");
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+  const codeHash=await sha(code),pending=await env.DB.prepare("SELECT user_id,server_id FROM discord_link_codes WHERE code_hash=? AND expires_at>?").bind(codeHash,now()).first();
+  if(!pending)return fail("That link code is invalid or expired.",404);
+  const previous=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,pending.server_id).first();
+  if(previous&&previous.user_id!==pending.user_id){
+   await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) SELECT server_id,?,role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(pending.user_id,pending.server_id,previous.user_id).run();
+   await env.DB.prepare("DELETE FROM memberships WHERE server_id=? AND user_id=?").bind(pending.server_id,previous.user_id).run();
+  }
+  await env.DB.prepare("DELETE FROM discord_user_links WHERE server_id=? AND user_id=? AND discord_user_id<>?").bind(pending.server_id,pending.user_id,discordId).run();
+  await env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?) ON CONFLICT(server_id,user_id) DO NOTHING").bind(pending.server_id,pending.user_id,now()).run();
+  await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at").bind(discordId,pending.server_id,pending.user_id,now()).run();
+  await env.DB.prepare("DELETE FROM discord_link_codes WHERE code_hash=?").bind(codeHash).run();
+  return json({ok:true,linked:true});
  }
  if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
@@ -316,12 +449,15 @@ if(serverAdminMatch){
  if(section==="members"&&m==="GET"){
   await ensureAccountTables(env);
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
-  const a=await env.DB.prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-45,sid).all();
-  return json({members:a.results,can_manage:manager});
+  await env.DB.prepare("ALTER TABLE roles ADD COLUMN color TEXT").run().catch(()=>{});
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
+  const a=await env.DB.prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.server_id=m.server_id AND dul.user_id=u.id) THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles,COALESCE((SELECT group_concat(r.id, ',') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'') AS role_ids,EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.server_id=m.server_id AND dul.user_id=u.id) AS discord_linked FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-45,sid).all();
+  const roleRows=await env.DB.prepare("SELECT id,name,position,color,is_system FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
+  return json({members:a.results,roles:roleRows.results,can_manage:manager});
  }
  if(section==="roles"&&m==="GET"){
   await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
-  const a=await env.DB.prepare("SELECT id,name,is_system,position,pingable FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
+  await env.DB.prepare("ALTER TABLE roles ADD COLUMN color TEXT").run().catch(()=>{});await env.DB.prepare("ALTER TABLE roles ADD COLUMN permissions TEXT").run().catch(()=>{});const a=await env.DB.prepare("SELECT id,name,is_system,position,pingable,color,permissions FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
   return json({roles:a.results,can_manage:manager});
  }
  if(section==="roles"&&m==="POST"){
@@ -390,7 +526,60 @@ if(memberRoleRoute&&m==="POST"){
  return json({ok:true});
 }
 
-x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
+const sectionRoute=p.match(/^\/api\/servers\/([\w-]+)\/sections(?:\/([\w-]+))?$/);
+if(sectionRoute){
+ const sid=sectionRoute[1],sectionId=sectionRoute[2]||null;
+ const server=await env.DB.prepare("SELECT id,owner_id FROM servers WHERE id=?").bind(sid).first();
+ if(!server)return fail("Server not found.",404);
+ const member=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(sid,u.id).first();
+ if(!member)return fail("You are not a member of this server.",403);
+ const manager=isOwner(u)||server.owner_id===u.id;
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,discord_category_id TEXT,is_custom INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS channel_section_links(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,section_id TEXT NOT NULL REFERENCES server_sections(id) ON DELETE CASCADE)").run();
+ if(m==="GET"){const rows=await env.DB.prepare("SELECT s.id,s.name,s.position,s.is_custom,COUNT(cl.channel_id) AS channel_count FROM server_sections s LEFT JOIN channel_section_links cl ON cl.section_id=s.id WHERE s.server_id=? GROUP BY s.id ORDER BY s.position,s.name").bind(sid).all();return json({sections:rows.results,can_manage:manager});}
+ if(m==="POST"){
+  if(!manager)return fail("Server owner access required.",403);
+  const b=await body(req),name=String(b.name||"").trim().slice(0,80);
+  if(name.length<2)return fail("Section names must be at least 2 characters.");
+  const id=uid(),position=Number((await env.DB.prepare("SELECT COALESCE(MAX(position),-1)+1 AS n FROM server_sections WHERE server_id=?").bind(sid).first()).n);
+  try{await env.DB.prepare("INSERT INTO server_sections(id,server_id,name,position,is_custom,created_at) VALUES(?,?,?,?,1,?)").bind(id,sid,name,position,now()).run();}catch{return fail("A section with that name already exists.",409);}
+  const channelIds=Array.isArray(b.channel_ids)?b.channel_ids.slice(0,100).map(String):[];
+  for(const cid of channelIds){const owned=await env.DB.prepare("SELECT id FROM channels WHERE id=? AND server_id=?").bind(cid,sid).first();if(owned)await env.DB.prepare("INSERT OR REPLACE INTO channel_section_links(channel_id,section_id) VALUES(?,?)").bind(cid,id).run();}
+  return json({section:{id,name,position,is_custom:1}},201);
+ }
+ if(m==="DELETE"&&sectionId){
+  if(!manager)return fail("Server owner access required.",403);
+  const row=await env.DB.prepare("SELECT id,is_custom FROM server_sections WHERE id=? AND server_id=?").bind(sectionId,sid).first();
+  if(!row)return fail("Section not found.",404);
+  if(!row.is_custom)return fail("Discord-imported categories cannot be deleted here.",403);
+  await env.DB.prepare("DELETE FROM channel_section_links WHERE section_id=?").bind(sectionId).run();
+  await env.DB.prepare("DELETE FROM server_sections WHERE id=? AND server_id=?").bind(sectionId,sid).run();
+  return json({ok:true});
+ }
+}
+const channelSettingsRoute=p.match(/^\/api\/channels\/([\w-]+)\/settings$/);
+if(channelSettingsRoute){
+ const cid=channelSettingsRoute[1],channel=await env.DB.prepare("SELECT c.id,c.server_id,s.owner_id FROM channels c JOIN servers s ON s.id=c.server_id WHERE c.id=?").bind(cid).first();
+ if(!channel)return fail("Channel not found.",404);
+ const member=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(channel.server_id,u.id).first();
+ if(!member)return fail("You are not a member of this server.",403);
+ const manager=isOwner(u)||channel.owner_id===u.id;
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,discord_category_id TEXT,is_custom INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS channel_section_links(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,section_id TEXT NOT NULL REFERENCES server_sections(id) ON DELETE CASCADE)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("ALTER TABLE discord_channel_links ADD COLUMN section_id TEXT").run().catch(()=>{});
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_settings(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,topic TEXT,nsfw INTEGER NOT NULL DEFAULT 0,slowmode INTEGER NOT NULL DEFAULT 0,discord_type INTEGER,extra_settings_json TEXT NOT NULL DEFAULT '{}',permission_overwrites_json TEXT NOT NULL DEFAULT '[]',is_staff INTEGER NOT NULL DEFAULT 0,locked INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)").run();
+ if(m==="GET"){const settings=await env.DB.prepare("SELECT st.topic,st.nsfw,st.slowmode,st.discord_type,st.extra_settings_json,st.permission_overwrites_json,st.is_staff,st.locked,COALESCE(cl.section_id,d.section_id) AS section_id FROM channels c LEFT JOIN discord_channel_settings st ON st.channel_id=c.id LEFT JOIN channel_section_links cl ON cl.channel_id=c.id LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.id=?").bind(cid).first()||{};return json({settings,can_manage:manager});}
+ if(m==="POST"){
+  if(!manager)return fail("Server owner access required.",403);
+  const b=await body(req),overwrites=Array.isArray(b.permission_overwrites)?b.permission_overwrites.slice(0,150):[];
+  if(overwrites.some(o=>!o||typeof o!=="object"||!["role","user"].includes(o.target_type)||!Array.isArray(o.allow)||!Array.isArray(o.deny)))return fail("Invalid channel permission overwrites.");
+  await env.DB.prepare("INSERT INTO discord_channel_settings(channel_id,topic,nsfw,slowmode,discord_type,extra_settings_json,permission_overwrites_json,is_staff,locked,updated_at) VALUES(?,?,?,?,NULL,'{}',?,?,?,?) ON CONFLICT(channel_id) DO UPDATE SET topic=excluded.topic,nsfw=excluded.nsfw,slowmode=excluded.slowmode,permission_overwrites_json=excluded.permission_overwrites_json,is_staff=excluded.is_staff,locked=excluded.locked,updated_at=excluded.updated_at").bind(cid,String(b.topic||"").slice(0,1024)||null,b.nsfw?1:0,Math.max(0,Math.min(21600,Number(b.slowmode)||0)),JSON.stringify(overwrites),b.is_staff?1:0,b.locked?1:0,now()).run();
+  if(b.section_id){const section=await env.DB.prepare("SELECT id FROM server_sections WHERE id=? AND server_id=?").bind(String(b.section_id),channel.server_id).first();if(!section)return fail("Section not found in this server.",404);await env.DB.prepare("INSERT OR REPLACE INTO channel_section_links(channel_id,section_id) VALUES(?,?)").bind(cid,section.id).run();}else await env.DB.prepare("DELETE FROM channel_section_links WHERE channel_id=?").bind(cid).run();
+  return json({ok:true});
+ }
+}
+x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,discord_category_id TEXT,is_custom INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();await env.DB.prepare("CREATE TABLE IF NOT EXISTS channel_section_links(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,section_id TEXT NOT NULL REFERENCES server_sections(id) ON DELETE CASCADE)").run();await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_settings(channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,topic TEXT,nsfw INTEGER NOT NULL DEFAULT 0,slowmode INTEGER NOT NULL DEFAULT 0,discord_type INTEGER,extra_settings_json TEXT NOT NULL DEFAULT '{}',permission_overwrites_json TEXT NOT NULL DEFAULT '[]',is_staff INTEGER NOT NULL DEFAULT 0,locked INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)").run();await env.DB.prepare("ALTER TABLE discord_channel_links ADD COLUMN section_id TEXT").run().catch(()=>{});const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,COALESCE(cs.name,ds.name,d.category_name) AS category_name,d.discord_channel_id,st.topic,st.nsfw,st.slowmode,st.discord_type,st.extra_settings_json,st.permission_overwrites_json,st.is_staff,st.locked FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections ds ON ds.id=d.section_id LEFT JOIN channel_section_links cl ON cl.channel_id=c.id LEFT JOIN server_sections cs ON cs.id=cl.section_id LEFT JOIN discord_channel_settings st ON st.channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(cs.position,ds.position,d.category_name,''),c.position").bind(x[1]).all();const visible=[];for(const ch of a.results)if(await canChannelPermission(env,ch.id,u.id,"view_channel"))visible.push(ch);return json({channels:visible});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
@@ -443,19 +632,36 @@ if(messageAction){
 if(p==="/api/bot/command"&&m==="POST"){
  const b=await body(req),channelId=String(b.channel_id||""),content=String(b.content||"").trim();
  if(!channelId||!content||content.length>4000)return fail("A channel and command are required.");
- const member=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
+ const member=await env.DB.prepare("SELECT c.server_id,s.is_system FROM memberships m JOIN channels c ON c.server_id=m.server_id JOIN servers s ON s.id=c.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
  if(!member)return fail("You cannot run bot commands in this channel.",403);
- const match=content.match(/^(?:-mb|\/mb)\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
- if(!match)return fail("Use -mb help to see the Mallow-Bot command list.");
- const command=match[1].toLowerCase(),t=now();
- const catalog="Mallow-Bot commands\n\nXP & levels\n- -mb xp\n- -mb level\n- -mb leaderboard\n\nMallow Coins\n- -mb balance\n- -mb daily\n- -mb gamble\n- -mb coinflip\n- -mb slots\n- -mb roulette\n- -mb dice\n- -mb blackjack\n- -mb work\n- -mb pay\n- -mb rob\n\nFun & social\n- -mb vibecheck\n- -mb ship\n- -mb fortune\n- -mb wyr\n- -mb youtube\n\nModeration & tickets\n- -mb purge\n- -mb dm\n- -mb ticket\n- -mb ticket-panel\n- -mb ticket-close\n- -mb timeout-minutes\n\nUtilities & media\n- -mb uptime\n- -mb update\n- -mb countdown\n- -mb movie\n- -mb channel\n- -mb set-log\n- -mb sync\n\nPremium\n- -mb embed\n- -mb snipe\n- -mb sticky\n- -mb backup\n- -mb custom-command\n- -mb vanity\n- -mb premium-status\n\nThe full command set currently runs inside Discord. This MallowCord server is not connected to a Discord guild and member identity yet, so commands that read server data or perform moderation cannot execute here.";
- let reply;
- if(command==="help"||command==="commands")reply=catalog;
- else reply="I received "+content+", but this command needs a linked Discord server and member identity. Run -mb commands to see the available commands. MallowCord does not yet have that Discord link configured.";
- await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(uid(),channelId,u.id,content,t).run();
- await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
- await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(uid(),channelId,u.id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",reply,t+1).run();
- return json({ok:true,accepted:true});
+ const prefix=content.match(/^-mb\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+ const legacy=content.match(/^\/mb\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+ const slash=content.match(/^\/(?!mb\b)([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+ if(!prefix&&!slash&&!legacy)return fail("Use -mb command or /command to run a Mallow-Bot command.");
+ const style=prefix||legacy?"prefix":"slash",command=(prefix||slash||legacy)[1].toLowerCase(),t=now(),messageId=uid();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,recipient_user_id TEXT)").run();
+ await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
+ if(command==="link"){
+  if(!member.is_system)return fail("Discord account linking is only available in Mallow Swamp.",403);
+  await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(messageId,channelId,u.id,content,t).run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+  const code=token().slice(0,12).toUpperCase();
+  await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
+  await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,server_id,expires_at,created_at) VALUES(?,?,?,?,?)").bind(await sha(code),u.id,member.server_id,t+600,t).run();
+  const reply="Your one-time Discord link code is: "+code+"\nIn the Mallow Swamp Discord server, run -mb link "+code+". This code expires in 10 minutes.";
+  await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at,recipient_user_id) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),channelId,u.id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",reply,t+1,u.id).run();
+  return json({ok:true,accepted:true,link_required:true});
+ }
+ if(!member.is_system)return fail("Mallow-Bot commands are currently linked only to Mallow Swamp.",403);
+ const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE server_id=? AND user_id=?").bind(member.server_id,u.id).first();
+ if(!linked)return fail("Link your Discord account first: run -mb link here, then use the one-time code with -mb link CODE in Mallow Swamp Discord.",403);
+ const discordChannel=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE server_id=? AND mallow_channel_id=?").bind(member.server_id,channelId).first();
+ if(!discordChannel)return fail("This channel is not linked to a Discord text channel.",403);
+ await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(messageId,channelId,u.id,content,t).run();
+ const id=uid();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS mallowcord_command_queue(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,discord_user_id TEXT NOT NULL,discord_channel_id TEXT NOT NULL,command_style TEXT NOT NULL,command_text TEXT NOT NULL,created_at INTEGER NOT NULL,claimed_at INTEGER,processed_at INTEGER,result TEXT,private INTEGER NOT NULL DEFAULT 0)").run();
+ await env.DB.prepare("INSERT INTO mallowcord_command_queue(id,server_id,channel_id,source_user_id,discord_user_id,discord_channel_id,command_style,command_text,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,member.server_id,channelId,u.id,linked.discord_user_id,discordChannel.discord_channel_id,style,content,t).run();
+ return json({ok:true,accepted:true,command_id:id});
 }
 
 async function ensureAttachmentTable(env){
@@ -469,6 +675,7 @@ const attachmentUploadRoute=p.match(/^\/api\/channels\/([\w-]+)\/attachments$/);
 if(attachmentUploadRoute&&m==="POST"){
  const channelId=attachmentUploadRoute[1],member=await env.DB.prepare("SELECT c.server_id FROM channels c JOIN memberships mm ON mm.server_id=c.server_id WHERE c.id=? AND mm.user_id=?").bind(channelId,u.id).first();
  if(!member)return fail("You cannot upload files to this channel.",403);
+ if(!await canChannelPermission(env,channelId,u.id,"send_messages"))return fail("You do not have permission to upload files in this channel.",403);
  if(!env.GITHUB_TOKEN)return fail("GitHub file storage is not configured yet.",503);
  const form=await req.formData(),file=form.get("file");
  if(!file||typeof file.arrayBuffer!=="function")return fail("Choose a file to upload.");
@@ -480,7 +687,7 @@ if(attachmentUploadRoute&&m==="POST"){
  const id=uid(),key="mallowcord-uploads/"+channelId+"/"+id+".bin";
  const bytes=new Uint8Array(await file.arrayBuffer());
  const apiUrl="https://api.github.com/repos/WebsiteDevelopmentStudios/MallowCord/contents/"+key.split("/").map(encodeURIComponent).join("/");
- const gh=await fetch(apiUrl,{method:"PUT",headers:{"Authorization":"Bearer "+env.GITHUB_TOKEN,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json"},body:JSON.stringify({message:"Store MallowCord attachment",content:attachmentBase64(bytes),branch:"main"})});
+ const gh=await fetch(apiUrl,{method:"PUT",headers:{"Authorization":"Bearer "+env.GITHUB_TOKEN,"User-Agent":"MallowCord/1.0 (+https://github.com/WebsiteDevelopmentStudios/MallowCord)","Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json"},body:JSON.stringify({message:"Store MallowCord attachment",content:attachmentBase64(bytes),branch:"main"})});
  if(!gh.ok){const detail=(await gh.text()).slice(0,500);return fail("GitHub storage upload failed ("+gh.status+"). "+detail,502);}
  try{await env.DB.prepare("INSERT INTO message_attachments(id,channel_id,uploader_id,message_id,filename,content_type,size,object_key,created_at) VALUES(?,?,?,NULL,?,?,?,?,?)").bind(id,channelId,u.id,filename,type,file.size,key,now()).run();}
  catch(e){throw e;}
@@ -503,12 +710,14 @@ if(attachmentDownloadRoute&&m==="GET"){
 x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  const channelId=x[1],mem=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(channelId,u.id).first();
  if(!mem)return fail("You cannot view this channel.",403);
+ if(!await canChannelPermission(env,channelId,u.id,"view_channel"))return fail("You do not have permission to view this channel.",403);
  await ensureMessageExtras(env);await ensureAccountTables(env);await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_forwards(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,source_message_id TEXT,source_username TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  const base=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,COALESCE(up.display_name,u.username) AS username,up.avatar_url,up.bio,up.status,up.pronouns,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='mention' AND mn.seen_at IS NULL) AS is_mentioned,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='reply' AND mn.seen_at IS NULL) AS is_reply_to_you,(SELECT mf.source_username FROM message_forwards mf WHERE mf.message_id=m.id) AS forwarded_from FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(u.id,u.id,channelId).all();
  const regular=base.results.reverse();
- const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? ORDER BY created_at DESC LIMIT 75").bind(channelId).all();
+ await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
+ const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? AND (recipient_user_id IS NULL OR recipient_user_id=?) ORDER BY created_at DESC LIMIT 75").bind(channelId,u.id).all();
  const messages=[...regular.map(msg=>({...msg,is_bot:false,reply_to:msg.reply_to_id?{username:msg.reply_username,content:msg.reply_content}:null,reactions:[]})),...bots.results.map(msg=>({id:msg.id,content:msg.content,created_at:msg.created_at,edited_at:null,username:msg.username,avatar_url:msg.avatar_url,author_id:"mallowcord-bot",is_bot:true,forwarded_from:null,reply_to:null,reactions:[]}))].sort((a,b)=>a.created_at-b.created_at).slice(-75);
  const ids=regular.map(msg=>msg.id),byMessage=new Map(),attachmentsByMessage=new Map();
  await ensureAttachmentTable(env);
@@ -538,6 +747,7 @@ if(x&&m==="POST"){
  if((!content&&!attachmentIds.length)||content.length>4000||attachmentIds.length>10)return fail("Add a message or up to 10 attachments.");
  await ensureAttachmentTable(env);
  const mem=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot send messages here.",403);
+ if(!await canChannelPermission(env,x[1],u.id,"send_messages"))return fail("You do not have permission to send messages in this channel.",403);
  for(const attachmentId of attachmentIds){const pending=await env.DB.prepare("SELECT id FROM message_attachments WHERE id=? AND channel_id=? AND uploader_id=? AND message_id IS NULL").bind(attachmentId,x[1],u.id).first();if(!pending)return fail("One of the uploaded files is unavailable. Please attach it again.",400);}
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
  const roles=(await env.DB.prepare("SELECT id,name,pingable FROM roles WHERE server_id=?").bind(mem.server_id).all()).results;
