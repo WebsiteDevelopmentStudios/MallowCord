@@ -65,21 +65,35 @@ if(discordBridgePath){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
  if(p==="/api/integrations/mallowbot/discord/sync"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to the configured official Discord server.",403);
-  const channels=Array.isArray(b.channels)?b.channels.slice(0,250):[],roles=Array.isArray(b.roles)?b.roles.slice(0,250):[],members=Array.isArray(b.members)?b.members.slice(0,250):[];
+  await ensureDiscordImportSchema(env);
+  const channels=Array.isArray(b.channels)?b.channels.slice(0,1000):[],categories=Array.isArray(b.categories)?b.categories.slice(0,250):[],roles=Array.isArray(b.roles)?b.roles.slice(0,250):[],members=Array.isArray(b.members)?b.members.slice(0,250):[],emojis=Array.isArray(b.emojis)?b.emojis.slice(0,500):[];
   await env.DB.prepare("UPDATE servers SET icon_url=COALESCE(?,icon_url) WHERE id=?").bind(typeof b.icon_url==="string"?b.icon_url:null,system.id).run();
   const everyone=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name='@everyone'").bind(system.id).first();
   const memberRole=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name='@Member'").bind(system.id).first();
+  const sectionMap=new Map();
+  for(const category of categories){
+   const did=String(category.id||""),name=String(category.name||"").trim().slice(0,80);if(!did||!name)continue;
+   const linked=await env.DB.prepare("SELECT section_id FROM discord_section_links WHERE discord_section_id=? AND server_id=?").bind(did,system.id).first();
+   let sectionId=linked?.section_id;
+   if(sectionId)await env.DB.prepare("UPDATE server_sections SET name=?,position=? WHERE id=? AND server_id=?").bind(name,Number(category.position)||0,sectionId,system.id).run();
+   else{const same=await env.DB.prepare("SELECT id FROM server_sections WHERE server_id=? AND name=?").bind(system.id,name).first();sectionId=same?.id||uid();if(!same)await env.DB.prepare("INSERT INTO server_sections(id,server_id,name,position,source_discord_id,created_at) VALUES(?,?,?,?,?,?)").bind(sectionId,system.id,name,Number(category.position)||0,did,now()).run();await env.DB.prepare("INSERT INTO discord_section_links(discord_section_id,server_id,section_id) VALUES(?,?,?) ON CONFLICT(discord_section_id) DO UPDATE SET section_id=excluded.section_id").bind(did,system.id,sectionId).run();}
+   sectionMap.set(did,sectionId);
+  }
   const channelMap=[];
   for(const ch of channels){
-   const dcid=String(ch.id||"");const raw=String(ch.name||"").toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50);
-   if(!dcid||raw.length<2)continue;
+   const dcid=String(ch.id||""),name=String(ch.name||"").trim().slice(0,80);if(!dcid||!name)continue;
+   const raw=name.toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50)||("channel-"+dcid.slice(-5));
+   const kind=["voice","stage"].includes(String(ch.kind))?"voice":"text";
    const existing=await env.DB.prepare("SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=?").bind(dcid).first();
    let cid=existing?.mallow_channel_id;
-   if(!cid){const same=await env.DB.prepare("SELECT id FROM channels WHERE server_id=? AND name=? AND kind='text'").bind(system.id,raw).first();cid=same?.id;}
-   if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind='text',position=? WHERE id=? AND server_id=?").bind(raw,Number(ch.position)||0,cid,system.id).run();
-   else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?)").bind(cid,system.id,raw,Number(ch.position)||0).run();}
-   await env.DB.prepare("INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET mallow_channel_id=excluded.mallow_channel_id,category_name=excluded.category_name,updated_at=excluded.updated_at").bind(dcid,system.id,cid,String(ch.category||"").slice(0,100)||null,now()).run();
-   channelMap.push({discord_id:dcid,mallow_id:cid,name:raw});
+   if(!cid){const same=await env.DB.prepare("SELECT id FROM channels WHERE server_id=? AND name=? AND kind=?").bind(system.id,raw,kind).first();cid=same?.id;}
+   const sectionId=sectionMap.get(String(ch.category_id||""))||null;
+   const settings={discord_type:Number(ch.discord_type)||0,topic:String(ch.topic||"").slice(0,1024),nsfw:!!ch.nsfw,slowmode:Number(ch.slowmode)||0,permission_overwrites:Array.isArray(ch.permission_overwrites)?ch.permission_overwrites.slice(0,100):[]};
+   if(raw==="rules"){settings.locked=true;settings.lock_reason="Rules channel is read-only in MallowCord.";settings.permission_overwrites.push({target_type:"role",target_discord_id:String(b.guild_id),target_name:"@everyone",allow:[],deny:["send_messages"]});}
+   if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind=?,position=?,section_id=?,topic=?,nsfw=?,slowmode=?,discord_type=?,settings_json=? WHERE id=? AND server_id=?").bind(raw,kind,Number(ch.position)||0,sectionId,settings.topic,settings.nsfw?1:0,settings.slowmode,settings.discord_type,JSON.stringify(settings),cid,system.id).run();
+   else{cid=uid();await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position,section_id,topic,nsfw,slowmode,discord_type,settings_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(cid,system.id,raw,kind,Number(ch.position)||0,sectionId,settings.topic,settings.nsfw?1:0,settings.slowmode,settings.discord_type,JSON.stringify(settings)).run();}
+   await env.DB.prepare("INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET mallow_channel_id=excluded.mallow_channel_id,category_name=excluded.category_name,updated_at=excluded.updated_at").bind(dcid,system.id,cid,String(ch.category_name||"").slice(0,100)||null,now()).run();
+   channelMap.push({discord_id:dcid,mallow_id:cid,name:raw,kind,section_id:sectionId});
   }
   const roleMap=[];
   for(const role of roles){
