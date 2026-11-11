@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL
 
 CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name));
 CREATE TABLE IF NOT EXISTS channel_permissions(channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,target_type TEXT NOT NULL CHECK(target_type IN('role','user')),target_id TEXT NOT NULL,allow_json TEXT NOT NULL DEFAULT '[]',deny_json TEXT NOT NULL DEFAULT '[]',updated_at INTEGER NOT NULL,PRIMARY KEY(channel_id,target_type,target_id));
+
+CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id));
+CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS discord_command_jobs(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,channel_id TEXT NOT NULL,user_id TEXT NOT NULL,discord_user_id TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,processed_at INTEGER);
 CREATE INDEX IF NOT EXISTS messages_channel_idx ON messages(channel_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS bans(id TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id) ON DELETE CASCADE,server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,ip_hash TEXT,reason TEXT,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,expires_at INTEGER,CHECK(user_id IS NOT NULL OR ip_hash IS NOT NULL));
 CREATE INDEX IF NOT EXISTS bans_ip_idx ON bans(ip_hash);
