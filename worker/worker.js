@@ -94,6 +94,12 @@ function oauthFailure(env,provider){
  const target=new URL("/",origin);target.searchParams.set("login_error",provider);
  return Response.redirect(target.toString(),302);
 }
+async function oauthDiagnostic(env,provider,stage,detail={}){
+ try{
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_diagnostics(id TEXT PRIMARY KEY,provider TEXT NOT NULL,stage TEXT NOT NULL,detail TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+  await env.DB.prepare("INSERT INTO oauth_diagnostics(id,provider,stage,detail,created_at) VALUES(?,?,?,?,?)").bind(uid(),provider,String(stage).slice(0,100),JSON.stringify(detail).slice(0,4000),now()).run();
+ }catch(error){console.error("OAuth diagnostic logging failed",String(error?.message||error));}
+}
 async function oauthStart(req,env,provider){
  await ensureOAuthTables(env);
  const clientId=provider==="google"?env.GOOGLE_CLIENT_ID:env.DISCORD_CLIENT_ID;
@@ -148,41 +154,44 @@ async function oauthUser(env,provider,profile){
 async function oauthCallback(req,env,provider){
  await ensureOAuthTables(env);
  const url=new URL(req.url),state=String(url.searchParams.get("state")||""),code=String(url.searchParams.get("code")||"");
- if(url.searchParams.has("error")||!state||!code){console.error("OAuth provider returned an error or callback parameters were missing",provider,url.searchParams.get("error")||"missing_code_or_state");return oauthFailure(env,provider);}
+ if(url.searchParams.has("error")||!state||!code){const reason=url.searchParams.get("error")||"missing_code_or_state";await oauthDiagnostic(env,provider,"callback_parameters_missing",{reason,hasState:!!state,hasCode:!!code});console.error("OAuth provider returned an error or callback parameters were missing",provider,reason);return oauthFailure(env,provider);}
  const stateHash=await sha(state);
  const saved=await env.DB.prepare("SELECT provider,expires_at FROM oauth_states WHERE state_hash=?").bind(stateHash).first();
  await env.DB.prepare("DELETE FROM oauth_states WHERE state_hash=?").bind(stateHash).run();
- if(!saved||saved.provider!==provider||saved.expires_at<now()){console.error("OAuth state validation failed",provider,{found:!!saved,providerMatches:saved?.provider===provider,expired:saved?.expires_at<now()});return oauthFailure(env,provider);}
+ if(!saved||saved.provider!==provider||saved.expires_at<now()){const detail={found:!!saved,providerMatches:saved?.provider===provider,expired:!!saved&&saved.expires_at<now()};await oauthDiagnostic(env,provider,"state_validation_failed",detail);console.error("OAuth state validation failed",provider,detail);return oauthFailure(env,provider);}
  try{
   const clientId=provider==="google"?env.GOOGLE_CLIENT_ID:env.DISCORD_CLIENT_ID;
   const clientSecret=provider==="google"?env.GOOGLE_CLIENT_SECRET:env.DISCORD_CLIENT_SECRET;
-  if(!clientId||!clientSecret){console.error("OAuth credentials are missing",provider,{clientIdPresent:!!clientId,clientSecretPresent:!!clientSecret});return oauthFailure(env,provider);}
+  if(!clientId||!clientSecret){const detail={clientIdPresent:!!clientId,clientSecretPresent:!!clientSecret};await oauthDiagnostic(env,provider,"credentials_missing",detail);console.error("OAuth credentials are missing",provider,detail);return oauthFailure(env,provider);}
   const form=new URLSearchParams({client_id:clientId,client_secret:clientSecret,grant_type:"authorization_code",code,redirect_uri:OAUTH_REDIRECTS[provider]});
   const tokenResponse=await fetch(provider==="google"?"https://oauth2.googleapis.com/token":"https://discord.com/api/oauth2/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:form});
   const tokenData=await tokenResponse.json();
-  if(!tokenResponse.ok||!tokenData.access_token){console.error("OAuth token exchange rejected",provider,{status:tokenResponse.status,error:tokenData.error,errorDescription:tokenData.error_description});return oauthFailure(env,provider);}
+  if(!tokenResponse.ok||!tokenData.access_token){const detail={status:tokenResponse.status,error:tokenData.error||"missing_access_token",errorDescription:tokenData.error_description||null};await oauthDiagnostic(env,provider,"token_exchange_failed",detail);console.error("OAuth token exchange rejected",provider,detail);return oauthFailure(env,provider);}
   const profileResponse=await fetch(provider==="google"?"https://openidconnect.googleapis.com/v1/userinfo":"https://discord.com/api/users/@me",{headers:{Authorization:"Bearer "+tokenData.access_token}});
   const profile=await profileResponse.json();
-  if(!profileResponse.ok){console.error("OAuth profile request failed",provider,{status:profileResponse.status});return oauthFailure(env,provider);}
-  if(provider==="google"&&profile.email_verified!==true){console.error("Google account email is not verified");return oauthFailure(env,provider);}
+  if(!profileResponse.ok){const detail={status:profileResponse.status};await oauthDiagnostic(env,provider,"profile_fetch_failed",detail);console.error("OAuth profile request failed",provider,detail);return oauthFailure(env,provider);}
+  if(provider==="google"&&profile.email_verified!==true){await oauthDiagnostic(env,provider,"email_not_verified",{});console.error("Google account email is not verified");return oauthFailure(env,provider);}
   const result=await oauthUser(env,provider,profile);
-  if(result.error){console.error("OAuth account provisioning failed",provider,result.error);return oauthFailure(env,provider);}
+  if(result.error){await oauthDiagnostic(env,provider,"account_provisioning_failed",{reason:result.error});console.error("OAuth account provisioning failed",provider,result.error);return oauthFailure(env,provider);}
   const loginCode=token(),t=now();
   await env.DB.prepare("INSERT INTO oauth_login_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(loginCode),result.user.id,t+90,t).run();
+  await oauthDiagnostic(env,provider,"callback_success_code_issued",{userId:result.user.id});
   const target=new URL("/",env.FRONTEND_ORIGIN);target.searchParams.set("oauth_code",loginCode);
   return Response.redirect(target.toString(),302);
- }catch(error){console.error("OAuth callback failed",provider,error);return oauthFailure(env,provider);}
+ }catch(error){await oauthDiagnostic(env,provider,"callback_exception",{message:String(error?.message||error),stack:String(error?.stack||"").slice(0,2500)});console.error("OAuth callback failed",provider,error);return oauthFailure(env,provider);}
 }
 async function oauthExchange(req,env){
  await ensureOAuthTables(env);
  const code=String((await body(req)).code||"");
- if(!/^[a-f0-9]{64}$/.test(code))return fail("Sign-in code is invalid or expired.",401);
+ if(!/^[a-f0-9]{64}$/.test(code)){await oauthDiagnostic(env,"unknown","exchange_invalid_code_format",{});return fail("Sign-in code is invalid or expired.",401);}
  const hash=await sha(code),row=await env.DB.prepare("SELECT user_id,expires_at FROM oauth_login_codes WHERE code_hash=?").bind(hash).first();
- if(!row||row.expires_at<now())return fail("Sign-in code is invalid or expired.",401);
+ if(!row||row.expires_at<now()){await oauthDiagnostic(env,"unknown","exchange_code_not_found_or_expired",{found:!!row,expired:!!row&&row.expires_at<now()});return fail("Sign-in code is invalid or expired.",401);}
  await env.DB.prepare("DELETE FROM oauth_login_codes WHERE code_hash=?").bind(hash).run();
  const user=await env.DB.prepare("SELECT id,username,account_type,status FROM users WHERE id=?").bind(row.user_id).first();
- if(!user||user.status!=="active")return fail("This MallowCord account is not active.",403);
- return json({user:{id:user.id,username:user.username,account_type:user.account_type}},200,{"set-cookie":await session(req,env,user.id)});
+ if(!user||user.status!=="active"){await oauthDiagnostic(env,"unknown","exchange_user_inactive_or_missing",{found:!!user,status:user?.status||null});return fail("This MallowCord account is not active.",403);}
+ const cookie=await session(req,env,user.id);
+ await oauthDiagnostic(env,"unknown","exchange_session_created",{userId:user.id});
+ return json({user:{id:user.id,username:user.username,account_type:user.account_type}},200,{"set-cookie":cookie});
 }
 
 async function handle(req,env){const p=new URL(req.url).pathname,m=req.method;let x;
