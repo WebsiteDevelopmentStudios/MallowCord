@@ -1,6 +1,6 @@
 const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const $=s=>document.querySelector(s);
-let selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
+let selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],serverSections=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
 async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
 let presenceHeartbeatTimer=null;
 async function sendPresenceHeartbeat(){
@@ -36,31 +36,68 @@ async function selectServer(s){if(memberPoll)clearInterval(memberPoll);serverId=
 async function loadMemberList(){
  if(!serverId)return;
  try{
-  const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[];
+  const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[],roles=d.roles||[];
   $("#memberCountLabel").textContent="MEMBERS — "+(members.length+1);
-  box.innerHTML='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>'+members.map(mem=>{
+  const renderMember=mem=>{
    const label=mem.display_name||mem.username,avatar=mem.avatar_url?'<img src="'+esc(mem.avatar_url)+'" alt="">':esc(label[0].toUpperCase());
-   return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(mem.id)+'"><span class="avatar status-avatar" data-status="'+esc(mem.presence||"online")+'">'+avatar+'</span><span class="member-copy"><b>'+esc(label)+'</b><small>'+esc(mem.roles||"@everyone")+'</small></span></button>';
-  }).join("");
+   return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(mem.id)+'"><span class="avatar status-avatar" data-status="'+esc(mem.presence||"offline")+'">'+avatar+'</span><span class="member-copy"><b>'+esc(label)+'</b><small>'+esc((mem.role_list||[]).join(", ")||"@everyone")+'</small></span></button>';
+  };
+  let html='<div class="member-section-label">MALLOW BOT</div><button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>';
+  for(const role of roles){
+   const group=members.filter(mem=>(mem.role_list||[]).includes(role.name));
+   if(!group.length)continue;
+   html+='<div class="member-role-title" '+(role.color?'style="--role-color:'+esc(role.color)+'"':'')+'>'+esc(role.name.toUpperCase())+' — '+group.length+'</div>'+group.map(renderMember).join("");
+  }
+  const discordMembers=members.filter(mem=>mem.is_discord_member),online=discordMembers.filter(mem=>mem.presence!=="offline"),offline=discordMembers.filter(mem=>mem.presence==="offline");
+  html+='<div class="member-section-label discord-member-section">DISCORD MEMBERS — '+discordMembers.length+'</div><div class="member-subheading">ONLINE — '+online.length+'</div>'+online.map(renderMember).join("")+'<div class="member-subheading">OFFLINE — '+offline.length+'</div>'+offline.map(renderMember).join("");
+  box.innerHTML=html;
  }catch(e){console.warn("Member list:",e.message)}
 }
 async function loadChannels(){
  try{const ed=await api("/servers/"+serverId+"/emojis");serverEmojis=ed.emojis||[]}catch{serverEmojis=[]}
+ try{const sd=await api("/servers/"+serverId+"/sections");serverSections=sd.sections||[]}catch{serverSections=[]}
  const d=await api("/servers/"+serverId+"/channels"),box=$("#channelList");box.innerHTML="";
  if(!d.channels.length){box.innerHTML='<div class="empty-state">No channels yet.</div>';return}
- let lastCategory=null;
+ let lastGroup=null;
  d.channels.forEach(ch=>{
-  const category=ch.category_name||"";
-  if(category!==lastCategory&&category){const heading=document.createElement("div");heading.className="channel-category-label";heading.innerHTML='<span class="channel-category-chevron">⌄</span><span>'+esc(category.toUpperCase())+'</span>';box.append(heading)}
-  lastCategory=category;
+  const category=ch.section_name||ch.category_name||"",groupKey=ch.section_id||category;
+  if(groupKey!==lastGroup&&category){const heading=document.createElement("div");heading.className="channel-category-label";heading.innerHTML='<span class="channel-category-chevron">⌄</span><span>'+esc(category.toUpperCase())+'</span>';box.append(heading)}
+  lastGroup=groupKey;
   const el=document.createElement("button");el.type="button";el.className="channel"+(ch.discord_channel_id?" discord-linked-channel":"");el.dataset.id=ch.id;
   if(ch.discord_channel_id){el.dataset.discordChannelId=ch.discord_channel_id;el.title="Synced with Discord #"+ch.name;}
-  el.innerHTML='<span class="channel-kind">'+(ch.kind==="voice"?'<svg class="channel-voice-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"></path></svg>':"#")+'</span><span class="channel-name">'+esc(ch.name)+'</span>'+(ch.discord_channel_id?'<span class="discord-channel-mark" title="Linked to Discord" aria-label="Linked to Discord">D</span>':"");
+  el.innerHTML='<span class="channel-kind">'+(ch.kind==="voice"?'<svg class="channel-voice-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"></path></svg>':"#")+'</span><span class="channel-name">'+esc(ch.name)+'</span>'+(ch.settings_json&&(()=>{try{return JSON.parse(ch.settings_json).locked}catch{return false}})()?'<span class="channel-lock-mark" title="Locked channel">▣</span>':"")+(ch.discord_channel_id?'<span class="discord-channel-mark" title="Linked to Discord" aria-label="Linked to Discord">D</span>':"");
   el.onclick=()=>selectChannel(ch);el.addEventListener("contextmenu",e=>{e.preventDefault();openItemMenu("channel",ch.id,"#"+ch.name,e.clientX,e.clientY)});box.append(el);
  });
  mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0]);
 }
-function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").textContent=c.name;document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,1500)}
+
+async function openChannelSettings(){
+ if(!serverId||!currentChannel)return;
+ const modal=$("#channelSettingsModal"),form=$("#channelSettingsForm");
+ try{
+  const [d,sections]=await Promise.all([api("/servers/"+serverId+"/channels/"+currentChannel.id+"/settings"),api("/servers/"+serverId+"/sections")]);
+  const ch=d.channel||{},settings=ch.settings||{},canManage=!!d.can_manage;
+  $("#channelSettingsTitle").textContent="#"+currentChannel.name+" settings";
+  form.topic.value=ch.topic||"";form.slowmode.value=Number(ch.slowmode)||0;form.nsfw.checked=!!ch.nsfw;form.locked.checked=!!settings.locked;
+  form.permission_overwrites.value=JSON.stringify(settings.permission_overwrites||[],null,2);
+  form.section_id.innerHTML='<option value="">No section</option>'+(sections.sections||[]).map(s=>'<option value="'+esc(s.id)+'" '+(s.id===currentChannel.section_id?'selected':'')+'>'+esc(s.name)+'</option>').join("");
+  for(const el of form.elements)el.disabled=!canManage;
+  form.querySelector('button[type="submit"]').hidden=!canManage;
+  modal.classList.remove("hidden");
+ }catch(e){toast(e.message)}
+}
+$("#channelSettingsBtn").onclick=openChannelSettings;
+$("#closeChannelSettings").onclick=()=>$("#channelSettingsModal").classList.add("hidden");
+$("#channelSettingsForm").onsubmit=async e=>{
+ e.preventDefault();if(!currentChannel)return;
+ try{
+  let overwrites=[];try{overwrites=JSON.parse(e.target.permission_overwrites.value||"[]")}catch{throw Error("Permission overwrites must be valid JSON.")}
+  if(!Array.isArray(overwrites))throw Error("Permission overwrites must be a JSON array.");
+  await api("/servers/"+serverId+"/channels/"+currentChannel.id+"/settings",{method:"POST",body:JSON.stringify({topic:e.target.topic.value,section_id:e.target.section_id.value,slowmode:Number(e.target.slowmode.value)||0,nsfw:e.target.nsfw.checked,locked:e.target.locked.checked,permission_overwrites:overwrites})});
+  $("#channelSettingsModal").classList.add("hidden");toast("Channel settings saved.");await loadChannels();
+ }catch(x){toast(x.message)}
+};
+function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").textContent=c.name;$("#channelSettingsBtn").classList.toggle("hidden",c.kind==="voice");document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(loadMessages,1500)}
 function renderMarkdown(raw){
  const tick=String.fromCharCode(96),parts=String(raw??"").split(/(\x60{3}[\s\S]*?\x60{3})/g);
  return parts.map(part=>{
@@ -200,6 +237,8 @@ $("#messageForm [name=content]").addEventListener("keydown",e=>{if(!composerMatc
 $("#composerSuggestions").addEventListener("mousedown",e=>{const b=e.target.closest("[data-index]");if(b){e.preventDefault();chooseComposerSuggestion(Number(b.dataset.index))}});
 
 $("#createChannelBtn").onclick=createChannel;
+$("#createSectionBtn").onclick=createSection;
+async function createSection(){if(!serverId||!canManageServer)return;const name=prompt("New section name");if(!name)return;try{await api("/servers/"+serverId+"/sections",{method:"POST",body:JSON.stringify({name})});toast("Section created. Open a channel’s settings to move it into this section.");await loadChannels()}catch(e){toast(e.message)}}
 async function createChannel(){if(!serverId)return;const name=prompt("Channel name (for example: announcements)");if(!name)return;const kind=confirm("Create a voice room? Choose Cancel for a text channel.")?"voice":"text";try{const d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name,kind})});toast((kind==="voice"?"Voice room":"Text channel")+" created.");await loadChannels();const found=(await api("/servers/"+serverId+"/channels")).channels.find(c=>c.id===d.channel.id);if(found)selectChannel(found);if(kind==="voice")toast("Voice room created. Live voice calling is not connected yet.")}catch(e){toast(e.message)}}
 async function createServer(){const name=prompt("New server name");if(!name)return;try{const d=await api("/servers",{method:"POST",body:JSON.stringify({name})});toast("Server created.");await loadServers();const all=await api("/servers");const s=all.servers.find(x=>x.id===d.server.id);if(s)await selectServer(s)}catch(e){toast(e.message)}}
 $("#addServer").onclick=createServer;
