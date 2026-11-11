@@ -104,6 +104,7 @@ function renderMarkdown(raw){
   if(part.startsWith(tick.repeat(3))&&part.endsWith(tick.repeat(3))){const body=part.slice(3,-3).replace(/^[a-zA-Z0-9_-]+\n/,"");return "<pre><code>"+esc(body)+"</code></pre>"}
   let safe=esc(part),markdownImages=[];
   safe=safe.replace(/!\[([^\]]*)\]\((https:\/\/[^)\s]+)\)/gi,(all,alt,url)=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<a class="message-embed-link" href="'+url+'" target="_blank" rel="noopener noreferrer"><img class="message-embed image-embed" src="'+url+'" alt="'+esc(alt)+'" loading="lazy"></a>');return key;});
+  safe=safe.replace(/&lt;(a?):([a-zA-Z0-9_]{2,32}):(\d+)&gt;/g,(all,animated,name,id)=>{const em=serverEmojis.find(x=>String(x.id)===id&&x.name===name);return em?'<img class="inline-custom-emoji '+(animated?'animated':'')+'" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
   safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>x.name===name);return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
   safe=safe.replace(/https:\/\/[^\s<>"']+/gi,url=>{
    const clean=url.replace(/[),.!?]+$/,""),tail=url.slice(clean.length),lower=clean.toLowerCase();
