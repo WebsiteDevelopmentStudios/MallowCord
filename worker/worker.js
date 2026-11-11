@@ -68,11 +68,12 @@ if(discordBridgePath){
   }
   const roleMap=[];
   for(const role of roles){
-   const rid=String(role.id||""),rname=String(role.name||"").trim().slice(0,32);if(!rid||!rname||rname==="@everyone")continue;
+   const rid=String(role.id||""),rname=String(role.name||"").trim().slice(0,32),rcolor=/^#[0-9a-fA-F]{6}$/.test(String(role.color||""))?String(role.color):"#99aab5";if(!rid||!rname||rname==="@everyone")continue;
    const linked=await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=?").bind(rid).first();
    let mrole=linked?.role_id;
    if(!mrole){const existing=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name=?").bind(system.id,rname).first();mrole=existing?.id;}
-   if(!mrole){mrole=uid();const safeName=rname.replace(/[<>]/g,"").trim()||("discord-role-"+rid.slice(-5));try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?,?,0,?)").bind(mrole,system.id,safeName,Number(role.position)||0).run();}catch{continue;}}
+   if(!mrole){mrole=uid();const safeName=rname.replace(/[<>]/g,"").trim()||("discord-role-"+rid.slice(-5));try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position,color) VALUES(?,?,?,0,?,?)").bind(mrole,system.id,safeName,Number(role.position)||0,rcolor).run();}catch{continue;}}
+   await env.DB.prepare("UPDATE roles SET color=?,position=? WHERE id=? AND server_id=?").bind(rcolor,Number(role.position)||0,mrole,system.id).run();
    await env.DB.prepare("INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?) ON CONFLICT(discord_role_id) DO UPDATE SET role_id=excluded.role_id").bind(rid,system.id,mrole).run();roleMap.push({discord_id:rid,mallow_id:mrole});
   }
   const roleLookup=new Map(roleMap.map(r=>[r.discord_id,r.mallow_id]));
@@ -322,7 +323,7 @@ if(serverAdminMatch){
  }
  if(section==="roles"&&m==="GET"){
   await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
-  const a=await env.DB.prepare("SELECT id,name,is_system,position,pingable FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
+  const a=await env.DB.prepare("SELECT id,name,is_system,position,pingable,color FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
   return json({roles:a.results,can_manage:manager});
  }
  if(section==="roles"&&m==="POST"){
