@@ -707,3 +707,19 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 .image-attachment img{display:block;max-width:min(360px,70vw);max-height:280px;object-fit:contain;border-radius:6px}
 .image-attachment span{font-size:11px;color:var(--muted,#9aa0aa);padding:0 3px 2px;max-width:100%;overflow-wrap:anywhere}
 .message-compose-row #attachFilesBtn{font-size:22px}
+
+
+/* Role-grouped member directory and channel administration */
+.member-role-heading{display:flex;align-items:center;gap:7px;margin:13px 9px 4px;padding:0 4px;color:var(--text-muted);font-size:10px;font-weight:850;letter-spacing:.075em;text-transform:uppercase}
+.member-role-heading span{margin-left:auto;color:var(--text-faint);font-size:10px;font-weight:650}
+.discord-members-heading{margin-top:19px;padding-top:11px;border-top:1px solid var(--line);color:var(--text)}
+.member-presence-heading{margin:8px 12px 3px;color:var(--text-faint);font-size:9px;font-weight:800;letter-spacing:.09em}
+.channel-setting-mark{flex:0 0 auto;padding:2px 4px;border-radius:4px;background:rgba(225,170,55,.13);color:#d5a84c;font-size:8px;font-weight:900;letter-spacing:.04em}
+.channel-setting-mark.staff{background:rgba(111,130,220,.14);color:#9caaf5}
+.channel-heading .section-label{flex:1}
+.channel-heading .icon-button{flex:0 0 25px}
+.channel-settings-card{width:min(620px,calc(100vw - 32px));max-height:min(88vh,900px);overflow-y:auto}
+.channel-settings-card .settings-form textarea{width:100%;min-height:150px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;line-height:1.5}
+.channel-settings-card .settings-form select,.channel-settings-card .settings-form input:not([type=checkbox]){width:100%}
+.channel-settings-card .toggle-line{display:flex;align-items:center;gap:9px}
+.channel-settings-card .toggle-line input{width:auto}
