@@ -29,7 +29,7 @@ function convertPlaceholders(sql) {
 }
 
 function translateSql(input) {
-  let sql = String(input).trim().replace(/;\\s*$/, "");
+  let sql = String(input).trim().replace(/;\s*$/, "");
   const ignore = /^INSERT\s+OR\s+IGNORE\s+INTO\s+/i.test(sql);
   const replace = /^INSERT\s+OR\s+REPLACE\s+INTO\s+/i.test(sql);
   sql = sql.replace(/^INSERT\s+OR\s+(?:IGNORE|REPLACE)\s+INTO\s+/i, "INSERT INTO ");
