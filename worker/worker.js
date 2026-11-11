@@ -42,14 +42,18 @@ async function ensureDiscordImportSchema(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
 }
-async function channelPermissionAllowed(env,serverId,userId,settings,permission){
- const overwrites=Array.isArray(settings?.permission_overwrites)?settings.permission_overwrites:[];
- if(!overwrites.length)return true;
+async function channelPermissionContext(env,serverId,userId){
  const roleIds=(await env.DB.prepare("SELECT role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(serverId,userId).all()).results.map(r=>r.role_id);
  const discordRoles=roleIds.length?(await env.DB.prepare("SELECT discord_role_id FROM discord_role_links WHERE server_id=? AND role_id IN ("+roleIds.map(()=>"?").join(",")+")").bind(serverId,...roleIds).all()).results.map(r=>String(r.discord_role_id)):[];
  const discordUser=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE server_id=? AND user_id=?").bind(serverId,userId).first();
- const roles=overwrites.filter(o=>o.target_type==="role"&&(String(o.target_name)==="@everyone"||roleIds.includes(o.target_id)||discordRoles.includes(String(o.target_discord_id))));
- const user=overwrites.filter(o=>o.target_type==="user"&&discordUser&&String(o.target_discord_id)===String(discordUser.discord_user_id));
+ return {roleIds,discordRoles,discordUser};
+}
+async function channelPermissionAllowed(env,serverId,userId,settings,permission,context=null){
+ const overwrites=Array.isArray(settings?.permission_overwrites)?settings.permission_overwrites:[];
+ if(!overwrites.length)return true;
+ const access=context||await channelPermissionContext(env,serverId,userId);
+ const roles=overwrites.filter(o=>o.target_type==="role"&&(String(o.target_name)==="@everyone"||access.roleIds.includes(o.target_id)||access.discordRoles.includes(String(o.target_discord_id))));
+ const user=overwrites.filter(o=>o.target_type==="user"&&access.discordUser&&String(o.target_discord_id)===String(access.discordUser.discord_user_id));
  if(user.some(o=>Array.isArray(o.deny)&&o.deny.includes(permission)))return false;
  if(user.some(o=>Array.isArray(o.allow)&&o.allow.includes(permission)))return true;
  if(roles.some(o=>Array.isArray(o.allow)&&o.allow.includes(permission)))return true;
@@ -549,7 +553,7 @@ if(channelSettingsRoute&&(m==="GET"||m==="POST")){
  await env.DB.prepare("UPDATE channels SET settings_json=? WHERE id=? AND server_id=?").bind(JSON.stringify(settings),cid,sid).run();
  return json({ok:true,settings});
 }
-x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await ensureDiscordImportSchema(env);const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,s.name AS section_name,c.topic,c.nsfw,c.slowmode,c.discord_type,c.settings_json,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections s ON s.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(s.position,9999),COALESCE(d.category_name,''),c.position").bind(x[1]).all();const visible=[];for(const ch of a.results){let settings={};try{settings=JSON.parse(ch.settings_json||"{}")}catch{}if(await channelPermissionAllowed(env,x[1],u.id,settings,"view_channel"))visible.push(ch);}return json({channels:visible});}
+x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await ensureDiscordImportSchema(env);const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,s.name AS section_name,c.topic,c.nsfw,c.slowmode,c.discord_type,c.settings_json,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections s ON s.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(s.position,9999),COALESCE(d.category_name,''),c.position").bind(x[1]).all();const visible=[],permissionContext=await channelPermissionContext(env,x[1],u.id);for(const ch of a.results){let settings={};try{settings=JSON.parse(ch.settings_json||"{}")}catch{}if(await channelPermissionAllowed(env,x[1],u.id,settings,"view_channel",permissionContext))visible.push(ch);}return json({channels:visible});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
