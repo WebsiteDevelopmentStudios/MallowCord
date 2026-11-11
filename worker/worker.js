@@ -633,7 +633,7 @@ if(p==="/api/discord/link/start"&&m==="POST"){
  const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",bytes=crypto.getRandomValues(new Uint8Array(8));let code="";for(const n of bytes)code+=alphabet[n%alphabet.length];
  await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
  await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(code),u.id,now()+600,now()).run();
- return json({code,expires_in:600,instructions:"In the official Mallow Swamp Discord server, send -mb link "+code});
+ return json({code,expires_in:600,instructions:"Send a private DM to Mallow Bot with -mb link "+code});
 }
 
 if(p==="/api/bot/command"&&m==="POST"){
