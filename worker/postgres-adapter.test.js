@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { convertPlaceholders, translateSql } from "./postgres-adapter.js";
+import { convertPlaceholders, translateSql, shouldUseNeon } from "./postgres-adapter.js";
 
 test("converts D1 positional placeholders without changing quoted question marks", () => {
   assert.equal(convertPlaceholders("SELECT '?' AS literal, value FROM sample WHERE id=? AND note=\"?\" AND owner_id=?"),
@@ -22,4 +22,13 @@ test("translates SQLite JSON and aggregation helpers", () => {
 test("translates the one SQLite INSERT OR REPLACE statement", () => {
   assert.equal(translateSql("INSERT OR REPLACE INTO onboarding_completions(server_id,user_id,completed_at) VALUES(?,?,?)"),
     "INSERT INTO onboarding_completions(server_id,user_id,completed_at) VALUES($1,$2,$3) ON CONFLICT (server_id,user_id) DO UPDATE SET user_id=EXCLUDED.user_id,completed_at=EXCLUDED.completed_at");
+});
+
+test("keeps all features on D1 unless individually enabled", () => {
+  assert.equal(shouldUseNeon({}, "oauth_diagnostics"), false);
+  assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "" }, "oauth_diagnostics"), false);
+  assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "user_preferences, oauth_diagnostics" }, "oauth_diagnostics"), true);
+  assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "user_preferences" }, "oauth_diagnostics"), false);
+  assert.equal(shouldUseNeon({ MALLOWCORD_DB_BACKEND: "neon" }, "oauth_diagnostics"), true);
+  assert.equal(shouldUseNeon({ MALLOWCORD_DB_BACKEND: "neon" }, undefined), true);
 });
