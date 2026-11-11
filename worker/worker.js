@@ -483,7 +483,7 @@ if(x&&m==="GET"){
  if(serverId){
   const inServer=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(serverId,targetId).first();
   const viewerInServer=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(serverId,u.id).first();
-  if(inServer&&viewerInServer)roles=(await env.DB.prepare("SELECT r.id,r.name,r.color,r.position FROM member_roles mr JOIN roles r ON r.role_id=mr.role_id WHERE mr.server_id=? AND mr.user_id=? ORDER BY r.position DESC").bind(serverId,targetId).all()).results;
+  if(inServer&&viewerInServer)roles=(await env.DB.prepare("SELECT r.id,r.name,r.color,r.position FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=? AND mr.user_id=? ORDER BY r.position DESC").bind(serverId,targetId).all()).results;
  }
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS friendships(user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,PRIMARY KEY(user_low_id,user_high_id))").run();
  const [low,high]=u.id<targetId?[u.id,targetId]:[targetId,u.id];
