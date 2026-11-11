@@ -434,16 +434,16 @@ if(sectionPath[0]==="api"&&sectionPath[1]==="servers"&&sectionPath[3]==="section
  }
 }
 
-x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
+x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();await env.DB.prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,ss.name AS section_name,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections ss ON ss.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(ss.position,999),COALESCE(d.category_name,ss.name),c.position").bind(x[1]).all();return json({channels:a.results});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
  if(!sv)return fail("Server not found.",404);
  if(!isOwner(u)&&sv.owner_id!==u.id)return fail("Server owner access required.",403);
- const b=await body(req),name=String(b.name||"").trim().toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50),kind=b.kind==="voice"?"voice":"text";
+ await env.DB.prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});const b=await body(req),name=String(b.name||"").trim().toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50),kind=b.kind==="voice"?"voice":"text",sectionId=String(b.section_id||"")||null;
  if(name.length<2)return fail("Channel name must be at least 2 characters.");
  const position=Number((await env.DB.prepare("SELECT COALESCE(MAX(position),-1)+1 AS n FROM channels WHERE server_id=?").bind(sid).first()).n),id=uid();
- try{await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,?,?)").bind(id,sid,name,kind,position).run();}catch{return fail("A channel with that name could not be created.",409);}
+ if(sectionId&&!await env.DB.prepare("SELECT id FROM server_sections WHERE id=? AND server_id=?").bind(sectionId,sid).first())return fail("Section not found.",404);try{await env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position,section_id) VALUES(?,?,?,?,?,?)").bind(id,sid,name,kind,position,sectionId).run();}catch{return fail("A channel with that name could not be created.",409);}
  return json({channel:{id,name,kind,position}},201);
 }
 
