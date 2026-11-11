@@ -239,9 +239,11 @@ const accountPageMeta={
  activity:["Activity Privacy","Control whether your activity is visible to others."],
  clips:["Clips","Manage game clip preferences."],
  overlay:["Game Overlay","Configure the in-game overlay when supported."],
- apps:["Connected Apps","Review third-party connections to your account."]
+ apps:["Connected Apps","Review third-party connections to your account."],
+ "error-logs":["Error Logs","Review server-side errors captured by the MallowCord API."]
 };
 async function openAccountSettings(){
+ const owner=me?.account_type==="owner";$("#ownerToolsTitle").hidden=!owner;$("#ownerErrorLogs").hidden=!owner;
  $("#modal").classList.remove("hidden");
  $("#accountSettingsContent").innerHTML='<div class="settings-loading">Loading account settings…</div>';
  try{
@@ -258,6 +260,16 @@ function settingField(label,key,type="checkbox",options=[]){
 }
 function prefPage(key,fields,note="Changes are saved to your MallowCord account."){
  return '<div class="account-panel"><p class="account-note">'+esc(note)+'</p><div class="account-fields">'+fields.join("")+'</div><button class="primary account-save" id="savePreferences">Save changes</button></div>';
+}
+async function loadErrorLogs(){
+ const root=$("#accountSettingsContent");root.innerHTML='<div class="settings-loading">Loading error logs…</div>';
+ try{
+  const d=await api("/admin/errors"),rows=d.errors||[];
+  root.innerHTML='<div class="account-panel error-log-toolbar"><div><h3>API error logs</h3><p class="account-note">Runtime exceptions captured by the MallowCord Worker. Request bodies, cookies and passwords are not recorded.</p></div><div class="error-log-actions"><button type="button" class="secondary" id="refreshErrorLogs">Refresh</button><button type="button" class="danger" id="clearErrorLogs" '+(rows.length?'':'disabled')+'>Clear logs</button></div></div>'+
+   (rows.length?'<div class="error-log-list">'+rows.map(row=>'<article class="error-log-entry"><div class="error-log-top"><span class="error-log-method">'+esc(row.method||'UNKNOWN')+'</span><code>'+esc(row.path||'')+'</code><time>'+esc(new Date(Number(row.created_at)||0).toLocaleString())+'</time></div><p class="error-log-message">'+esc(row.message||'Unknown error')+'</p>'+(row.origin?'<p class="account-note">Origin: '+esc(row.origin)+'</p>':'')+(row.stack?'<details><summary>Stack trace</summary><pre>'+esc(row.stack)+'</pre></details>':'')+'</article>').join('')+'</div>':'<div class="account-panel"><h3>No captured errors</h3><p class="account-note">The Worker has not recorded any runtime exceptions yet. Platform-level failures that happen before the Worker runs may not appear here.</p></div>');
+  $("#refreshErrorLogs").onclick=loadErrorLogs;
+  $("#clearErrorLogs").onclick=async()=>{if(!confirm("Permanently clear all recorded error logs?"))return;try{await api("/admin/errors",{method:"DELETE"});toast("Error logs cleared");await loadErrorLogs()}catch(e){toast(e.message)}};
+ }catch(e){root.innerHTML='<div class="account-panel"><h3>Could not load error logs</h3><p class="settings-error">'+esc(e.message)+'</p><button type="button" class="secondary" id="retryErrorLogs">Retry</button></div>';$("#retryErrorLogs").onclick=loadErrorLogs}
 }
 async function showAccountPage(page){
  activeAccountPage=page;document.querySelectorAll(".account-nav").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
@@ -284,6 +296,9 @@ async function showAccountPage(page){
   root.innerHTML='<div class="account-panel"><h3>Family Center</h3><span class="coming-soon">COMING SOON</span><p class="account-note">Family supervision, guardian links and teen safety controls are not available in MallowCord yet.</p></div>';
  }else if(page==="apps"){
   root.innerHTML='<div class="account-panel"><h3>Connected Apps</h3><p class="account-note">No third-party apps are currently connected to your MallowCord account.</p></div>';
+ }else if(page==="error-logs"){
+  if(me?.account_type!=="owner"){root.innerHTML='<div class="account-panel"><h3>Access denied</h3><p class="account-note">Owner access is required.</p></div>';return}
+  await loadErrorLogs();
  }else if(page==="games"){
   root.innerHTML='<div class="account-panel"><h3>Registered Games</h3><p class="account-note">Game registration is not connected yet. Game integrations will appear here when supported.</p></div>';
  }else{
