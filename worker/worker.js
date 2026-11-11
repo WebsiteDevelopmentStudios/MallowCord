@@ -115,7 +115,7 @@ if(discordBridgePath){
    const existing=await env.DB.prepare("SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=?").bind(dcid).first();
    let cid=existing?.mallow_channel_id;
    if(!cid){const same=await env.DB.prepare("SELECT id FROM channels WHERE server_id=? AND name=? AND kind=?").bind(system.id,raw,kind).first();cid=same?.id;}
-   const sectionId=sectionMap.get(String(ch.category_id||""))||null;
+   let sectionId=sectionMap.get(String(ch.category_id||""))||null;if(!sectionId&&ch.category_id){const linkedSection=await env.DB.prepare("SELECT section_id FROM discord_section_links WHERE discord_section_id=? AND server_id=?").bind(String(ch.category_id),system.id).first();sectionId=linkedSection?.section_id||null;}
    const settings={discord_type:Number(ch.discord_type)||0,topic:String(ch.topic||"").slice(0,1024),nsfw:!!ch.nsfw,slowmode:Number(ch.slowmode)||0,discord_settings:ch.extra_settings&&typeof ch.extra_settings==="object"?ch.extra_settings:{},permission_overwrites:Array.isArray(ch.permission_overwrites)?ch.permission_overwrites.slice(0,100):[]};
    if(/(^|-)rules($|-)/.test(raw)){settings.locked=true;settings.lock_reason="Rules channel is read-only in MallowCord.";settings.permission_overwrites.push({target_type:"role",target_discord_id:String(b.guild_id),target_name:"@everyone",allow:[],deny:["send_messages"]});}
    if(cid)await env.DB.prepare("UPDATE channels SET name=?,kind=?,position=?,section_id=?,topic=?,nsfw=?,slowmode=?,discord_type=?,settings_json=? WHERE id=? AND server_id=?").bind(raw,kind,Number(ch.position)||0,sectionId,settings.topic,settings.nsfw?1:0,settings.slowmode,settings.discord_type,JSON.stringify(settings),cid,system.id).run();
