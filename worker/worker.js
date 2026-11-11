@@ -141,6 +141,36 @@ if(discordBridgePath){
   }
   return json({ok:true,server_id:system.id,channels:channelMap.length,roles:roleMap.length,members:synced,emojis:emojiCount,categories:sectionLookup.size,channel_map:channelMap});
  }
+ if(p==="/api/integrations/mallowbot/discord/commands"&&m==="GET"){
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS mallowcord_command_queue(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,discord_user_id TEXT NOT NULL,discord_channel_id TEXT NOT NULL,command_style TEXT NOT NULL,command_text TEXT NOT NULL,created_at INTEGER NOT NULL,claimed_at INTEGER,processed_at INTEGER,result TEXT,private INTEGER NOT NULL DEFAULT 0)").run();
+  const rows=await env.DB.prepare("SELECT id,discord_user_id,discord_channel_id,command_style,command_text FROM mallowcord_command_queue WHERE server_id=? AND processed_at IS NULL AND (claimed_at IS NULL OR claimed_at<?) ORDER BY created_at LIMIT 15").bind(system.id,now()-90).all();
+  for(const row of rows.results)await env.DB.prepare("UPDATE mallowcord_command_queue SET claimed_at=? WHERE id=? AND processed_at IS NULL").bind(now(),row.id).run();
+  return json({commands:rows.results});
+ }
+ const commandComplete=p.match(/^\/api\/integrations\/mallowbot\/discord\/commands\/([\w-]+)\/complete$/);
+ if(commandComplete&&m==="POST"){
+  const b=await body(req),row=await env.DB.prepare("SELECT id,channel_id,source_user_id FROM mallowcord_command_queue WHERE id=? AND processed_at IS NULL").bind(commandComplete[1]).first();
+  if(!row)return fail("Command request not found or already completed.",404);
+  const result=String(b.result||"Command completed.").slice(0,4000),privateResult=b.private?1:0;
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,recipient_user_id TEXT)").run();
+  await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
+  await env.DB.prepare("UPDATE mallowcord_command_queue SET processed_at=?,result=?,private=? WHERE id=?").bind(now(),result,privateResult,row.id).run();
+  await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at,recipient_user_id) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),row.channel_id,row.source_user_id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",result,now(),privateResult?row.source_user_id:null).run();
+  return json({ok:true});
+ }
+ if(p==="/api/integrations/mallowbot/discord/link/consume"&&m==="POST"){
+  const b=await body(req),code=String(b.code||"").replace(/[^A-Z0-9]/gi,"").toUpperCase(),discordId=String(b.discord_user_id||"");
+  if(code.length!==12||!/^\\d{15,22}$/.test(discordId))return fail("Invalid Discord link code or user ID.");
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+  const codeHash=await sha(code),pending=await env.DB.prepare("SELECT user_id,server_id FROM discord_link_codes WHERE code_hash=? AND expires_at>?").bind(codeHash,now()).first();
+  if(!pending)return fail("That link code is invalid or expired.",404);
+  const previous=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,pending.server_id).first();
+  if(previous&&previous.user_id!==pending.user_id)await env.DB.prepare("DELETE FROM memberships WHERE server_id=? AND user_id=?").bind(pending.server_id,previous.user_id).run();
+  await env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?) ON CONFLICT(server_id,user_id) DO NOTHING").bind(pending.server_id,pending.user_id,now()).run();
+  await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at").bind(discordId,pending.server_id,pending.user_id,now()).run();
+  await env.DB.prepare("DELETE FROM discord_link_codes WHERE code_hash=?").bind(codeHash).run();
+  return json({ok:true,linked:true});
+ }
  if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
   const presence=["online","idle","dnd","offline"].includes(b.status)?b.status:"offline";
@@ -544,19 +574,34 @@ if(messageAction){
 if(p==="/api/bot/command"&&m==="POST"){
  const b=await body(req),channelId=String(b.channel_id||""),content=String(b.content||"").trim();
  if(!channelId||!content||content.length>4000)return fail("A channel and command are required.");
- const member=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
+ const member=await env.DB.prepare("SELECT c.server_id,s.is_system FROM memberships m JOIN channels c ON c.server_id=m.server_id JOIN servers s ON s.id=c.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(channelId,u.id).first();
  if(!member)return fail("You cannot run bot commands in this channel.",403);
- const match=content.match(/^(?:-mb|\/mb)\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
- if(!match)return fail("Use -mb help to see the Mallow-Bot command list.");
- const command=match[1].toLowerCase(),t=now();
- const catalog="Mallow-Bot commands\n\nXP & levels\n- -mb xp\n- -mb level\n- -mb leaderboard\n\nMallow Coins\n- -mb balance\n- -mb daily\n- -mb gamble\n- -mb coinflip\n- -mb slots\n- -mb roulette\n- -mb dice\n- -mb blackjack\n- -mb work\n- -mb pay\n- -mb rob\n\nFun & social\n- -mb vibecheck\n- -mb ship\n- -mb fortune\n- -mb wyr\n- -mb youtube\n\nModeration & tickets\n- -mb purge\n- -mb dm\n- -mb ticket\n- -mb ticket-panel\n- -mb ticket-close\n- -mb timeout-minutes\n\nUtilities & media\n- -mb uptime\n- -mb update\n- -mb countdown\n- -mb movie\n- -mb channel\n- -mb set-log\n- -mb sync\n\nPremium\n- -mb embed\n- -mb snipe\n- -mb sticky\n- -mb backup\n- -mb custom-command\n- -mb vanity\n- -mb premium-status\n\nThe full command set currently runs inside Discord. This MallowCord server is not connected to a Discord guild and member identity yet, so commands that read server data or perform moderation cannot execute here.";
- let reply;
- if(command==="help"||command==="commands")reply=catalog;
- else reply="I received "+content+", but this command needs a linked Discord server and member identity. Run -mb commands to see the available commands. MallowCord does not yet have that Discord link configured.";
- await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(uid(),channelId,u.id,content,t).run();
- await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
- await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(uid(),channelId,u.id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",reply,t+1).run();
- return json({ok:true,accepted:true});
+ const prefix=content.match(/^-mb\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+ const slash=content.match(/^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+ const legacy=content.match(/^\/mb\s+([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+ if(!prefix&&!slash&&!legacy)return fail("Use -mb command or /command to run a Mallow-Bot command.");
+ const style=prefix||legacy?"prefix":"slash",command=(prefix||slash||legacy)[1].toLowerCase(),t=now(),messageId=uid();
+ await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(messageId,channelId,u.id,content,t).run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,recipient_user_id TEXT)").run();
+ await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
+ if(command==="link"){
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+  const code=token().slice(0,12).toUpperCase();
+  await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
+  await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,server_id,expires_at,created_at) VALUES(?,?,?,?,?)").bind(await sha(code),u.id,member.server_id,t+600,t).run();
+  const reply="Your one-time Discord link code is: "+code+"\nIn the Mallow Swamp Discord server, run -mb link "+code+". This code expires in 10 minutes.";
+  await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at,recipient_user_id) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),channelId,u.id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",reply,t+1,u.id).run();
+  return json({ok:true,accepted:true,link_required:true});
+ }
+ if(!member.is_system)return fail("Mallow-Bot commands are currently linked only to Mallow Swamp.",403);
+ const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE server_id=? AND user_id=?").bind(member.server_id,u.id).first();
+ if(!linked)return fail("Link your Discord account first: run -mb link here, then use the one-time code with -mb link CODE in Mallow Swamp Discord.",403);
+ const discordChannel=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE server_id=? AND mallow_channel_id=?").bind(member.server_id,channelId).first();
+ if(!discordChannel)return fail("This channel is not linked to a Discord text channel.",403);
+ const id=uid();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS mallowcord_command_queue(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,discord_user_id TEXT NOT NULL,discord_channel_id TEXT NOT NULL,command_style TEXT NOT NULL,command_text TEXT NOT NULL,created_at INTEGER NOT NULL,claimed_at INTEGER,processed_at INTEGER,result TEXT,private INTEGER NOT NULL DEFAULT 0)").run();
+ await env.DB.prepare("INSERT INTO mallowcord_command_queue(id,server_id,channel_id,source_user_id,discord_user_id,discord_channel_id,command_style,command_text,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,member.server_id,channelId,u.id,linked.discord_user_id,discordChannel.discord_channel_id,style,content,t).run();
+ return json({ok:true,accepted:true,command_id:id});
 }
 
 async function ensureAttachmentTable(env){
@@ -609,7 +654,8 @@ x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  const base=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.edited_at,COALESCE(up.display_name,u.username) AS username,up.avatar_url,up.bio,up.status,up.pronouns,u.id AS author_id,pr.reply_to_id,ru.username AS reply_username,rm.content AS reply_content,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='mention' AND mn.seen_at IS NULL) AS is_mentioned,EXISTS(SELECT 1 FROM message_notifications mn WHERE mn.message_id=m.id AND mn.user_id=? AND mn.kind='reply' AND mn.seen_at IS NULL) AS is_reply_to_you,(SELECT mf.source_username FROM message_forwards mf WHERE mf.message_id=m.id) AS forwarded_from FROM messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN message_replies pr ON pr.message_id=m.id LEFT JOIN messages rm ON rm.id=pr.reply_to_id LEFT JOIN users ru ON ru.id=rm.author_id WHERE m.channel_id=? ORDER BY m.created_at DESC LIMIT 75").bind(u.id,u.id,channelId).all();
  const regular=base.results.reverse();
- const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? ORDER BY created_at DESC LIMIT 75").bind(channelId).all();
+ await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
+ const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? AND (recipient_user_id IS NULL OR recipient_user_id=?) ORDER BY created_at DESC LIMIT 75").bind(channelId,u.id).all();
  const messages=[...regular.map(msg=>({...msg,is_bot:false,reply_to:msg.reply_to_id?{username:msg.reply_username,content:msg.reply_content}:null,reactions:[]})),...bots.results.map(msg=>({id:msg.id,content:msg.content,created_at:msg.created_at,edited_at:null,username:msg.username,avatar_url:msg.avatar_url,author_id:"mallowcord-bot",is_bot:true,forwarded_from:null,reply_to:null,reactions:[]}))].sort((a,b)=>a.created_at-b.created_at).slice(-75);
  const ids=regular.map(msg=>msg.id),byMessage=new Map(),attachmentsByMessage=new Map();
  await ensureAttachmentTable(env);
