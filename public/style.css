@@ -674,3 +674,19 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 
 /* Channel and server notification context menu */
 #itemContextMenu{min-width:205px;z-index:1200}#itemContextMenu .context-label{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Owner error log viewer */
+.owner-tools-title[hidden],#ownerErrorLogs[hidden]{display:none!important}
+.error-log-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}
+.error-log-actions{display:flex;gap:8px;flex-wrap:wrap}
+.error-log-list{display:grid;gap:10px}
+.error-log-entry{background:var(--panel,#171b24);border:1px solid var(--border,#303744);border-radius:12px;padding:14px 16px;min-width:0}
+.error-log-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.error-log-method{font-size:11px;font-weight:800;letter-spacing:.06em;color:#ff8a8a;background:rgba(239,68,68,.12);padding:4px 7px;border-radius:5px}
+.error-log-top code{overflow-wrap:anywhere;color:var(--text,#e8eaf0)}
+.error-log-top time{margin-left:auto;color:var(--muted,#9299a6);font-size:12px}
+.error-log-message{color:#ffb4b4;font-weight:600;overflow-wrap:anywhere;margin:12px 0 6px}
+.error-log-entry details{margin-top:10px;color:var(--muted,#a5adba)}
+.error-log-entry summary{cursor:pointer;font-size:13px}
+.error-log-entry pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;background:rgba(0,0,0,.22);padding:12px;border-radius:8px;font-size:12px}
+@media(max-width:650px){.error-log-top time{width:100%;margin-left:0}.error-log-toolbar{display:block}.error-log-actions{margin-top:12px}}
