@@ -33,7 +33,7 @@ async function canChannelPermission(env,channelId,userId,permission){
  const roleRows=await env.DB.prepare("SELECT dr.discord_role_id,r.name,r.permissions FROM member_roles mr JOIN discord_role_links dr ON dr.role_id=mr.role_id JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=(SELECT server_id FROM channels WHERE id=?) AND mr.user_id=?").bind(channelId,userId).all();
  const isAdministrator=roleRows.results.some(r=>{try{return (BigInt(r.permissions||"0")&8n)!==0n}catch{return false}});
  if(isAdministrator)return true;
- const isStaffMember=roleRows.results.some(r=>/(staff|moderator|moderation|(^|\\W)mod($|\\W)|admin|helper)/i.test(String(r.name||"")));
+ const isStaffMember=roleRows.results.some(r=>/(staff|moderator|moderation|admin|helper|(^|[^a-z])mod([^a-z]|$))/i.test(String(r.name||"")));
  if(settings.is_staff&&!isStaffMember)return false;
  const roleIds=new Set(roleRows.results.map(r=>String(r.discord_role_id)));
  let everyoneDeny=false,roleDeny=false,roleAllow=false,userDeny=false,userAllow=false;
