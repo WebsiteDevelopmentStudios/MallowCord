@@ -283,7 +283,7 @@ if(discordBridgePath){
   const memberRole=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name='@Member'").bind(system.id).first();
   const channelMap=[];
   for(const ch of channels){
-   const dcid=String(ch.id||"");const raw=String(ch.name||"").toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50);
+   const dcid=String(ch.id||"");const raw=String(ch.name||"").trim().slice(0,80);
    if(!dcid||raw.length<2)continue;
    const existing=await env.DB.prepare("SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=?").bind(dcid).first();
    let cid=existing?.mallow_channel_id;
@@ -466,7 +466,123 @@ async function ensureAccountTables(env){
  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN discord_username TEXT").run().catch(()=>{});
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
 }
-x=p.match(/^\/api\/users\/([\w-]+)\/profile$/);if(x&&m==="GET"){await ensureAccountTables(env);const member=await env.DB.prepare("SELECT 1 FROM memberships mine JOIN memberships target ON target.server_id=mine.server_id WHERE mine.user_id=? AND target.user_id=? LIMIT 1").bind(u.id,x[1]).first();if(!member)return fail("You cannot view this profile.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();const profile=await env.DB.prepare("SELECT COALESCE(up.display_name,u.username) AS display_name,COALESCE(up.discord_username,u.username) AS username,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE u.id=? AND u.status='active'").bind(now()-45,x[1]).first();if(!profile)return fail("User not found.",404);return json({profile})}if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
+x=p.match(/^\/api\/users\/([\w-]+)\/profile$/);
+if(x&&m==="GET"){
+ await ensureAccountTables(env);
+ const targetId=x[1];
+ const shared=await env.DB.prepare("SELECT 1 FROM memberships mine JOIN memberships target ON target.server_id=mine.server_id WHERE mine.user_id=? AND target.user_id=? LIMIT 1").bind(u.id,targetId).first();
+ if(!shared)return fail("You cannot view this profile.",403);
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
+ const profile=await env.DB.prepare("SELECT COALESCE(up.display_name,u.username) AS display_name,COALESCE(up.discord_username,u.username) AS username,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE u.id=? AND u.status='active'").bind(now()-45,targetId).first();
+ if(!profile)return fail("User not found.",404);
+ const serverId=new URL(req.url).searchParams.get("server_id");
+ let roles=[];
+ if(serverId){
+  const inServer=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(serverId,targetId).first();
+  const viewerInServer=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(serverId,u.id).first();
+  if(!inServer||!viewerInServer)return fail("You cannot view this server's roles.",403);
+  roles=(await env.DB.prepare("SELECT r.id,r.name,r.color,r.position FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=? AND mr.user_id=? ORDER BY r.position DESC").bind(serverId,targetId).all()).results;
+ }
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS friendships(user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,PRIMARY KEY(user_low_id,user_high_id))").run();
+ const [low,high]=u.id<targetId?[u.id,targetId]:[targetId,u.id];
+ const friendship=await env.DB.prepare("SELECT 1 FROM friendships WHERE user_low_id=? AND user_high_id=?").bind(low,high).first();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS friend_requests(id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(sender_id,recipient_id))").run();
+ const incoming=await env.DB.prepare("SELECT 1 FROM friend_requests WHERE sender_id=? AND recipient_id=? AND status='pending'").bind(targetId,u.id).first();
+ const outgoing=await env.DB.prepare("SELECT 1 FROM friend_requests WHERE sender_id=? AND recipient_id=? AND status='pending'").bind(u.id,targetId).first();
+ return json({profile,roles,friend_status:friendship?"friends":incoming?"incoming":outgoing?"outgoing":"none"});
+}
+async function ensureSocialTables(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS friend_requests(id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(sender_id,recipient_id))").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS friendships(user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,PRIMARY KEY(user_low_id,user_high_id))").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS dm_conversations(id TEXT PRIMARY KEY,user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(user_low_id,user_high_id))").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS dm_messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+}
+if(p==="/api/friends"&&m==="GET"){
+ await ensureSocialTables(env);
+ const friends=await env.DB.prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.status FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_low_id=? THEN f.user_high_id ELSE f.user_low_id END LEFT JOIN user_profiles up ON up.user_id=u.id WHERE f.user_low_id=? OR f.user_high_id=? ORDER BY COALESCE(up.display_name,u.username)").bind(u.id,u.id,u.id).all();
+ const incoming=await env.DB.prepare("SELECT fr.id,fr.sender_id AS user_id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,fr.created_at FROM friend_requests fr JOIN users u ON u.id=fr.sender_id LEFT JOIN user_profiles up ON up.user_id=u.id WHERE fr.recipient_id=? AND fr.status='pending' ORDER BY fr.created_at DESC").bind(u.id).all();
+ const outgoing=await env.DB.prepare("SELECT fr.id,fr.recipient_id AS user_id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,fr.created_at FROM friend_requests fr JOIN users u ON u.id=fr.recipient_id LEFT JOIN user_profiles up ON up.user_id=u.id WHERE fr.sender_id=? AND fr.status='pending' ORDER BY fr.created_at DESC").bind(u.id).all();
+ return json({friends:friends.results,incoming:incoming.results,outgoing:outgoing.results});
+}
+if(p==="/api/friends/request"&&m==="POST"){
+ await ensureSocialTables(env);
+ const b=await body(req),name=String(b.username||"").trim();
+ if(!name)return fail("Enter the exact username of the person you want to add.");
+ const target=await env.DB.prepare("SELECT id,username FROM users WHERE username_key=? AND status='active'").bind(name.toLowerCase()).first();
+ if(!target)return fail("No active user has that username.",404);
+ if(target.id===u.id)return fail("You cannot add yourself.");
+ const [low,high]=u.id<target.id?[u.id,target.id]:[target.id,u.id];
+ if(await env.DB.prepare("SELECT 1 FROM friendships WHERE user_low_id=? AND user_high_id=?").bind(low,high).first())return fail("You are already friends.");
+ const reverse=await env.DB.prepare("SELECT id FROM friend_requests WHERE sender_id=? AND recipient_id=? AND status='pending'").bind(target.id,u.id).first();
+ if(reverse){
+  await env.DB.batch([
+   env.DB.prepare("INSERT OR IGNORE INTO friendships(user_low_id,user_high_id,created_at) VALUES(?,?,?)").bind(low,high,now()),
+   env.DB.prepare("UPDATE friend_requests SET status='accepted',updated_at=? WHERE id=?").bind(now(),reverse.id)
+  ]);
+  return json({ok:true,accepted:true,message:"Friend request accepted. You are now friends."});
+ }
+ try{await env.DB.prepare("INSERT INTO friend_requests(id,sender_id,recipient_id,status,created_at,updated_at) VALUES(?,?,?,'pending',?,?)").bind(uid(),u.id,target.id,now(),now()).run();}
+ catch{return fail("A friend request is already pending.",409);}
+ return json({ok:true,message:"Friend request sent."},201);
+}
+const friendAction=p.match(/^\/api\/friends\/([\w-]+)\/(accept|decline|remove)$/);
+if(friendAction&&m==="POST"){
+ await ensureSocialTables(env);
+ const target=friendAction[1],action=friendAction[2],[low,high]=u.id<target?[u.id,target]:[target,u.id];
+ if(action==="accept"){
+  const request=await env.DB.prepare("SELECT id FROM friend_requests WHERE sender_id=? AND recipient_id=? AND status='pending'").bind(target,u.id).first();
+  if(!request)return fail("That friend request is no longer pending.",404);
+  await env.DB.batch([
+   env.DB.prepare("INSERT OR IGNORE INTO friendships(user_low_id,user_high_id,created_at) VALUES(?,?,?)").bind(low,high,now()),
+   env.DB.prepare("UPDATE friend_requests SET status='accepted',updated_at=? WHERE id=?").bind(now(),request.id)
+  ]);
+  return json({ok:true});
+ }
+ if(action==="decline"){
+  const result=await env.DB.prepare("UPDATE friend_requests SET status='declined',updated_at=? WHERE sender_id=? AND recipient_id=? AND status='pending'").bind(now(),target,u.id).run();
+  if(!result.meta?.changes)return fail("Friend request not found.",404);
+  return json({ok:true});
+ }
+ const result=await env.DB.prepare("DELETE FROM friendships WHERE user_low_id=? AND user_high_id=?").bind(low,high).run();
+ await env.DB.prepare("DELETE FROM friend_requests WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)").bind(u.id,target,target,u.id).run();
+ await env.DB.prepare("DELETE FROM dm_conversations WHERE user_low_id=? AND user_high_id=?").bind(low,high).run();
+ if(!result.meta?.changes)return fail("Friendship not found.",404);
+ return json({ok:true});
+}
+if(p==="/api/dms"&&m==="GET"){
+ await ensureSocialTables(env);
+ const rows=await env.DB.prepare("SELECT c.id,c.updated_at,CASE WHEN c.user_low_id=? THEN c.user_high_id ELSE c.user_low_id END AS user_id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,(SELECT content FROM dm_messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) AS last_message,(SELECT created_at FROM dm_messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at FROM dm_conversations c JOIN users u ON u.id=CASE WHEN c.user_low_id=? THEN c.user_high_id ELSE c.user_low_id END LEFT JOIN user_profiles up ON up.user_id=u.id WHERE c.user_low_id=? OR c.user_high_id=? ORDER BY c.updated_at DESC").bind(u.id,u.id,u.id,u.id).all();
+ return json({conversations:rows.results});
+}
+if(p==="/api/dms/open"&&m==="POST"){
+ await ensureSocialTables(env);
+ const target=String((await body(req)).user_id||"");
+ if(!target||target===u.id)return fail("Choose another user.");
+ const [low,high]=u.id<target?[u.id,target]:[target,u.id];
+ if(!await env.DB.prepare("SELECT 1 FROM friendships WHERE user_low_id=? AND user_high_id=?").bind(low,high).first())return fail("You can only message friends.",403);
+ await env.DB.prepare("INSERT OR IGNORE INTO dm_conversations(id,user_low_id,user_high_id,created_at,updated_at) VALUES(?,?,?,?,?)").bind(uid(),low,high,now(),now()).run();
+ const conversation=await env.DB.prepare("SELECT id FROM dm_conversations WHERE user_low_id=? AND user_high_id=?").bind(low,high).first();
+ return json({conversation:{id:conversation.id,user_id:target}},201);
+}
+const dmRoute=p.match(/^\/api\/dms\/([\w-]+)\/messages$/);
+if(dmRoute&&(m==="GET"||m==="POST")){
+ await ensureSocialTables(env);
+ const cid=dmRoute[1],conversation=await env.DB.prepare("SELECT id FROM dm_conversations WHERE id=? AND (user_low_id=? OR user_high_id=?)").bind(cid,u.id,u.id).first();
+ if(!conversation)return fail("Direct message conversation not found.",404);
+ if(m==="GET"){
+  const rows=await env.DB.prepare("SELECT m.id,m.content,m.created_at,m.author_id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url FROM dm_messages m JOIN users u ON u.id=m.author_id LEFT JOIN user_profiles up ON up.user_id=u.id WHERE m.conversation_id=? ORDER BY m.created_at DESC LIMIT 75").bind(cid).all();
+  return json({messages:rows.results.reverse()});
+ }
+ const content=String((await body(req)).content||"").trim();
+ if(!content||content.length>4000)return fail("Messages must contain 1–4000 characters.");
+ const id=uid(),created=now();
+ await env.DB.batch([
+  env.DB.prepare("INSERT INTO dm_messages(id,conversation_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(id,cid,u.id,content,created),
+  env.DB.prepare("UPDATE dm_conversations SET updated_at=? WHERE id=?").bind(created,cid)
+ ]);
+ return json({message:{id,content,created_at:created,author_id:u.id,username:u.username,display_name:u.username}},201);
+}
+if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
  await ensureAccountTables(env);
  if(m==="GET"){
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
@@ -544,7 +660,7 @@ if(p==="/api/account/contact/confirm"&&m==="POST"){
 if(p==="/api/auth/username"&&m==="POST"){const name=String((await body(req)).username||"").trim();if(!/^[A-Za-z0-9_]{3,24}$/.test(name))return fail("Username must be 3–24 characters.");try{await env.DB.prepare("UPDATE users SET username=?,username_key=?,updated_at=? WHERE id=?").bind(name,name.toLowerCase(),now(),u.id).run();}catch{return fail("That username is already taken.",409);}return json({username:name});}
 if(p==="/api/auth/recovery/rotate"&&m==="POST")return fail("Recovery-code authentication has been removed. Sign in with Google or Discord.",410);
 if(p==="/api/servers"&&m==="GET"){const a=await env.DB.prepare("SELECT s.id,s.name,COALESCE(s.icon_url,CASE WHEN s.is_system=1 THEN ? END) AS icon_url,s.is_system,m.joined_at FROM memberships m JOIN servers s ON s.id=m.server_id WHERE m.user_id=? ORDER BY s.is_system DESC,s.name").bind(env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",u.id).all();return json({servers:a.results});}
-if(p==="/api/servers"&&m==="POST"){if(u.account_type==="basic")return fail("Full-access accounts are required to create servers.",403);const name=String((await body(req)).name||"").trim().slice(0,50);if(name.length<2)return fail("Server name must be at least 2 characters.");const s=uid(),r=uid(),rm=uid(),c=uid(),t=now();await env.DB.batch([env.DB.prepare("INSERT INTO servers(id,name,owner_id,created_at) VALUES(?,?,?,?)").bind(s,name,u.id,t),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@everyone',1,0)").bind(r,s),env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position) VALUES(?,?, '@Member',1,1)").bind(rm,s),env.DB.prepare("INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?, 'general','text',0)").bind(c,s),env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s,u.id,t),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u.id,r),env.DB.prepare("INSERT INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s,u.id,rm)]);return json({server:{id:s,name}},201);}
+if(p==="/api/servers"&&m==="POST")return fail("Server creation is temporarily disabled. Server invitations are coming soon.",403);
 
 /* Server administration: channels, roles, members, stats and onboarding */
 /* Server custom emoji management */
@@ -625,17 +741,26 @@ if(roleRoute&&(m==="POST"||m==="DELETE")){
  if(!isOwner(u)&&sv.owner_id!==u.id)return fail("Server owner access required.",403);
  const role=await env.DB.prepare("SELECT id,is_system FROM roles WHERE id=? AND server_id=?").bind(rid,sid).first();
  if(!role)return fail("Role not found.",404);
- if(m==="POST"){
-  const b=await body(req);
-  if(typeof b.pingable==="boolean"){
-   await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
-   await env.DB.prepare("UPDATE roles SET pingable=? WHERE id=? AND server_id=?").bind(b.pingable?1:0,rid,sid).run();
-   return json({ok:true,pingable:b.pingable});
-  }
+ if(m==="DELETE"){
+  if(role.is_system)return fail("System roles cannot be deleted.",403);
+  await env.DB.prepare("DELETE FROM roles WHERE id=? AND server_id=?").bind(rid,sid).run();
+  return json({ok:true});
  }
- if(role.is_system)return fail("System roles cannot be changed or deleted.",403);
- if(m==="DELETE"){await env.DB.prepare("DELETE FROM roles WHERE id=? AND server_id=?").bind(rid,sid).run();return json({ok:true});}
- const name=String((await body(req)).name||"").trim().slice(0,32);
+ const b=await body(req);
+ if(typeof b.pingable==="boolean"){
+  await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
+  await env.DB.prepare("UPDATE roles SET pingable=? WHERE id=? AND server_id=?").bind(b.pingable?1:0,rid,sid).run();
+  return json({ok:true,pingable:b.pingable});
+ }
+ if(typeof b.color==="string"){
+  const color=b.color.trim();
+  if(!/^#[0-9a-fA-F]{6}$/.test(color))return fail("Role color must be a six-digit hex color.");
+  await env.DB.prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
+  await env.DB.prepare("UPDATE roles SET color=? WHERE id=? AND server_id=?").bind(color.toLowerCase(),rid,sid).run();
+  return json({ok:true,color:color.toLowerCase()});
+ }
+ if(role.is_system)return fail("System role names cannot be changed.",403);
+ const name=String(b.name||"").trim().slice(0,32);
  if(!/^[A-Za-z0-9 _-]{2,32}$/.test(name))return fail("Role names must be 2–32 letters, numbers, spaces, _ or -.");
  try{await env.DB.prepare("UPDATE roles SET name=? WHERE id=? AND server_id=?").bind(name,rid,sid).run();}catch{return fail("A role with that name already exists.",409);}
  return json({ok:true,name});
@@ -727,7 +852,7 @@ if(channelRouteParts[0]==="api"&&channelRouteParts[1]==="channels"&&channelRoute
   return json({ok:true});
  }
 }
-x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();await env.DB.prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,ss.name AS section_name,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections ss ON ss.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(ss.position,999),COALESCE(d.category_name,ss.name),c.position").bind(x[1]).all();const visible=[];for(const ch of a.results)if(await channelPermissionAllowed(env,ch.id,u.id,"view_channel"))visible.push(ch);return json({channels:visible});}
+x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();await env.DB.prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,ss.name AS section_name,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections ss ON ss.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(ss.position,999),COALESCE(d.category_name,ss.name),c.position").bind(x[1]).all();const checks=await Promise.all(a.results.map(ch=>channelPermissionAllowed(env,ch.id,u.id,"view_channel")));const visible=a.results.filter((ch,i)=>checks[i]);return json({channels:visible});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
