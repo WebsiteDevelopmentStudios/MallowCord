@@ -24,14 +24,17 @@ async function canChannelPermission(env,channelId,userId,permission){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
  const owner=await env.DB.prepare("SELECT s.owner_id FROM channels c JOIN servers s ON s.id=c.server_id WHERE c.id=?").bind(channelId).first();
  if(owner?.owner_id===userId)return true;
- const settings=await env.DB.prepare("SELECT locked,permission_overwrites_json FROM discord_channel_settings WHERE channel_id=?").bind(channelId).first();
+ const settings=await env.DB.prepare("SELECT locked,is_staff,permission_overwrites_json FROM discord_channel_settings WHERE channel_id=?").bind(channelId).first();
  if(!settings)return true;
  let overwrites=[];try{overwrites=JSON.parse(settings.permission_overwrites_json||"[]")}catch{}
  if(!Array.isArray(overwrites))overwrites=[];
  const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=?").bind(userId).first();
  const discordUserId=String(linked?.discord_user_id||"");
- const roleRows=await env.DB.prepare("SELECT dr.discord_role_id,r.permissions FROM member_roles mr JOIN discord_role_links dr ON dr.role_id=mr.role_id JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=(SELECT server_id FROM channels WHERE id=?) AND mr.user_id=?").bind(channelId,userId).all();
- if(roleRows.results.some(r=>{try{return (BigInt(r.permissions||"0")&8n)!==0n}catch{return false}}))return true;
+ const roleRows=await env.DB.prepare("SELECT dr.discord_role_id,r.name,r.permissions FROM member_roles mr JOIN discord_role_links dr ON dr.role_id=mr.role_id JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=(SELECT server_id FROM channels WHERE id=?) AND mr.user_id=?").bind(channelId,userId).all();
+ const isAdministrator=roleRows.results.some(r=>{try{return (BigInt(r.permissions||"0")&8n)!==0n}catch{return false}});
+ if(isAdministrator)return true;
+ const isStaffMember=roleRows.results.some(r=>/(staff|moderator|moderation|(^|\\W)mod($|\\W)|admin|helper)/i.test(String(r.name||"")));
+ if(settings.is_staff&&!isStaffMember)return false;
  const roleIds=new Set(roleRows.results.map(r=>String(r.discord_role_id)));
  let everyoneDeny=false,roleDeny=false,roleAllow=false,userDeny=false,userAllow=false;
  for(const overwrite of overwrites){
