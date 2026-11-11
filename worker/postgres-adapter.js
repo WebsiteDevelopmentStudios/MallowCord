@@ -2,7 +2,7 @@ import postgres from "postgres";
 
 const clients = new WeakMap();
 
-function convertPlaceholders(sql) {
+export function convertPlaceholders(sql) {
   let out = "", quote = null, index = 0;
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i], next = sql[i + 1];
@@ -28,7 +28,7 @@ function convertPlaceholders(sql) {
   return out;
 }
 
-function translateSql(input) {
+export function translateSql(input) {
   let sql = String(input).trim().replace(/;\s*$/, "");
   const ignore = /^INSERT\s+OR\s+IGNORE\s+INTO\s+/i.test(sql);
   const replace = /^INSERT\s+OR\s+REPLACE\s+INTO\s+/i.test(sql);
