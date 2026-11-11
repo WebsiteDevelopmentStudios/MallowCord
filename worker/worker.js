@@ -46,6 +46,16 @@ const OAUTH_REDIRECTS={
  google:"https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/google/callback",
  discord:"https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/discord/callback"
 };
+async function ensureAccountTables(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,display_name TEXT,avatar_url TEXT,email TEXT,email_verified_at INTEGER,phone TEXT,phone_verified_at INTEGER,updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,settings_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS contact_verifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,channel TEXT NOT NULL,target TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN bio TEXT").run().catch(()=>{});
+ await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN status TEXT NOT NULL DEFAULT 'online'").run().catch(()=>{});
+ await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN pronouns TEXT").run().catch(()=>{});
+ await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN discord_username TEXT").run().catch(()=>{});
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
+}
 async function ensureOAuthTables(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_states(state_hash TEXT PRIMARY KEY,provider TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS oauth_accounts(provider TEXT NOT NULL,provider_user_id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,email TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(provider,provider_user_id),UNIQUE(provider,user_id))").run();
