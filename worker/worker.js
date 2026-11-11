@@ -35,6 +35,7 @@ async function ensureDiscordImportSchema(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_emojis(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
 }
 async function channelPermissionAllowed(env,serverId,userId,settings,permission){
  const overwrites=Array.isArray(settings?.permission_overwrites)?settings.permission_overwrites:[];
@@ -132,9 +133,14 @@ if(discordBridgePath){
   let synced=0;
   for(const mem of members){
    const did=String(mem.id||"");if(!did||mem.bot)continue;
-   const username="discord_"+did;let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();let userId=user?.id||("discord:"+did);
-   if(!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
-   await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",now()).run();
+   const username="discord_"+did;
+   const accountLink=await env.DB.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(did,system.id).first();
+   let user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();
+   let userId=accountLink?.user_id||user?.id||("discord:"+did);
+   if(!accountLink&&!user){await env.DB.prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await env.DB.prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
+   const memberStatus=["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline";
+   if(accountLink)await env.DB.prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at").bind(userId,memberStatus,now()).run();
+   else await env.DB.prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,memberStatus,now()).run();
    await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(did,system.id,userId,now()).run();
    await env.DB.prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,userId,now()).run();
    if(everyone)await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,userId,everyone.id).run();
@@ -153,11 +159,18 @@ if(discordBridgePath){
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
   const pending=await env.DB.prepare("SELECT user_id FROM discord_link_codes WHERE code_hash=? AND expires_at>?").bind(await sha(code),now()).first();
   if(!pending)return fail("That link code is invalid or expired.",403);
-  await env.DB.batch([
+  const shadow=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordUserId,system.id).first();
+  const statements=[
    env.DB.prepare("DELETE FROM discord_account_links WHERE user_id=? OR discord_user_id=?").bind(pending.user_id,discordUserId),
    env.DB.prepare("INSERT INTO discord_account_links(discord_user_id,user_id,server_id,linked_at) VALUES(?,?,?,?)").bind(discordUserId,pending.user_id,system.id,now()),
    env.DB.prepare("DELETE FROM discord_link_codes WHERE code_hash=?").bind(await sha(code))
-  ]);
+  ];
+  if(shadow&&shadow.user_id!==pending.user_id){
+   statements.push(env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) SELECT server_id,?,role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(pending.user_id,system.id,shadow.user_id));
+   statements.push(env.DB.prepare("DELETE FROM memberships WHERE server_id=? AND user_id=?").bind(system.id,shadow.user_id));
+   statements.push(env.DB.prepare("UPDATE discord_user_links SET user_id=?,updated_at=? WHERE discord_user_id=? AND server_id=?").bind(pending.user_id,now(),discordUserId,system.id));
+  }
+  await env.DB.batch(statements);
   return json({ok:true,linked:true});
  }
  if(p==="/api/integrations/mallowbot/discord/commands"&&m==="GET"){
