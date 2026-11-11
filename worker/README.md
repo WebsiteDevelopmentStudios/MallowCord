@@ -15,3 +15,19 @@ Basic users have no password. Registration creates a random session token in an 
 Server-to-server endpoints under /api/integrations/mallowbot/ require X-MallowBot-Key. Keep this key only in Render environment variables and Worker secrets. Supported actions: list users, create full-access users, timeout, ban, unban and delete.
 
 This is an initial foundation. Configure Cloudflare rate limiting and test all authorization paths before public release. The chat client currently polls every five seconds; use Durable Objects/WebSockets for production realtime delivery.
+
+## PostgreSQL / Neon migration (prepared, not activated)
+
+The Worker now includes a D1-compatible query adapter backed by the Cloudflare Hyperdrive binding `NEON`.
+Install dependencies with `npm install` before using Wrangler so the `postgres` package is bundled.
+
+To test against Neon without changing production traffic, set the Worker variable
+`MALLOWCORD_DB_BACKEND=neon` in a non-production environment first. The production
+Worker intentionally remains on D1 until the owner explicitly approves the switch.
+
+Keep the existing D1 binding during the migration as a rollback path. The Hyperdrive
+binding is configured separately as `NEON`. The adapter preserves the existing
+`.prepare().bind().first()/all()/run()` call pattern and `.batch()` interface,
+converts positional placeholders, and translates the SQLite constructs currently used
+by the application. Review/test every endpoint on a staging Worker before enabling Neon
+in production.
