@@ -469,9 +469,12 @@ async function ensureAccountTables(env){
 x=p.match(/^\/api\/users\/([\w:%-]+)\/profile$/);
 if(x&&m==="GET"){
  await ensureAccountTables(env);
+ await ensureSocialTables(env);
  const targetId=decodeURIComponent(x[1]);
  const shared=await env.DB.prepare("SELECT 1 FROM memberships mine JOIN memberships target ON target.server_id=mine.server_id WHERE mine.user_id=? AND target.user_id=? LIMIT 1").bind(u.id,targetId).first();
- if(!shared)return fail("You cannot view this profile.",403);
+ const [lowProfile,highProfile]=u.id<targetId?[u.id,targetId]:[targetId,u.id];
+ const related=await env.DB.prepare("SELECT 1 FROM friendships WHERE user_low_id=? AND user_high_id=? UNION ALL SELECT 1 FROM friend_requests WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?) LIMIT 1").bind(lowProfile,highProfile,u.id,targetId,targetId,u.id).first();
+ if(!shared&&!related)return fail("You cannot view this profile.",403);
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
  const profile=await env.DB.prepare("SELECT COALESCE(up.display_name,u.username) AS display_name,COALESCE(up.discord_username,u.username) AS username,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE u.id=? AND u.status='active'").bind(now()-45,targetId).first();
  if(!profile)return fail("User not found.",404);
@@ -508,7 +511,7 @@ if(p==="/api/friends/request"&&m==="POST"){
  await ensureSocialTables(env);
  const b=await body(req),name=String(b.username||"").trim();
  if(!name)return fail("Enter the exact username of the person you want to add.");
- const target=await env.DB.prepare("SELECT id,username FROM users WHERE username_key=? AND status='active'").bind(name.toLowerCase()).first();
+ const target=await env.DB.prepare("SELECT u.id,u.username FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id WHERE (u.username_key=? OR lower(up.discord_username)=?) AND u.status='active' LIMIT 1").bind(name.toLowerCase(),name.toLowerCase()).first();
  if(!target)return fail("No active user has that username.",404);
  if(target.id===u.id)return fail("You cannot add yourself.");
  const [low,high]=u.id<target.id?[u.id,target.id]:[target.id,u.id];
