@@ -117,7 +117,7 @@ if(discordBridgePath){
    const did=String(category.id||""),name=String(category.name||"").trim().slice(0,80);
    if(!did||!name)continue;
    let row=await env.DB.prepare("SELECT id FROM server_sections WHERE server_id=? AND discord_category_id=?").bind(system.id,did).first();
-   if(row){await env.DB.prepare("UPDATE server_sections SET name=?,position=? WHERE id=?").bind(name,Number(category.position)||0,row.id).run();sectionLookup.set(did,row.id);}
+   if(row){try{await env.DB.prepare("UPDATE server_sections SET name=?,position=? WHERE id=?").bind(name,Number(category.position)||0,row.id).run();}catch{await env.DB.prepare("UPDATE server_sections SET position=? WHERE id=?").bind(Number(category.position)||0,row.id).run();}sectionLookup.set(did,row.id);}
    else{
     const id=uid();let safeName=name;
     const conflict=await env.DB.prepare("SELECT id FROM server_sections WHERE server_id=? AND name=?").bind(system.id,safeName).first();
@@ -153,7 +153,7 @@ if(discordBridgePath){
    let mrole=linked?.role_id;
    if(!mrole){const existing=await env.DB.prepare("SELECT id FROM roles WHERE server_id=? AND name=?").bind(system.id,rname).first();mrole=existing?.id;}
    if(!mrole){mrole=uid();const safeName=rname.replace(/[<>]/g,"").trim()||("discord-role-"+rid.slice(-5));try{await env.DB.prepare("INSERT INTO roles(id,server_id,name,is_system,position,color,permissions,hoist,mentionable) VALUES(?,?,?,0,?,?,?,?,?)").bind(mrole,system.id,safeName,Number(role.position)||0,String(role.color||"").slice(0,7)||null,String(role.permissions||"").slice(0,32)||null,role.hoist?1:0,role.mentionable?1:0).run();}catch{continue;}}
-   await env.DB.prepare("UPDATE roles SET name=?,position=?,color=?,permissions=?,hoist=?,mentionable=? WHERE id=? AND server_id=?").bind(rname,Number(role.position)||0,String(role.color||"").slice(0,7)||null,String(role.permissions||"").slice(0,32)||null,role.hoist?1:0,role.mentionable?1:0,mrole,system.id).run();
+   try{await env.DB.prepare("UPDATE roles SET name=?,position=?,color=?,permissions=?,hoist=?,mentionable=? WHERE id=? AND server_id=?").bind(rname,Number(role.position)||0,String(role.color||"").slice(0,7)||null,String(role.permissions||"").slice(0,32)||null,role.hoist?1:0,role.mentionable?1:0,mrole,system.id).run();}catch{await env.DB.prepare("UPDATE roles SET position=?,color=?,permissions=?,hoist=?,mentionable=? WHERE id=? AND server_id=?").bind(Number(role.position)||0,String(role.color||"").slice(0,7)||null,String(role.permissions||"").slice(0,32)||null,role.hoist?1:0,role.mentionable?1:0,mrole,system.id).run();}
    await env.DB.prepare("INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?) ON CONFLICT(discord_role_id) DO UPDATE SET role_id=excluded.role_id").bind(rid,system.id,mrole).run();
    roleMap.push({discord_id:rid,mallow_id:mrole});
   }
