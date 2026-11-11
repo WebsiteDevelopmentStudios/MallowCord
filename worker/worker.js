@@ -630,11 +630,11 @@ if(p==="/api/bot/command"&&m==="POST"){
  const slash=content.match(/^\/(?!mb\b)([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
  if(!prefix&&!slash&&!legacy)return fail("Use -mb command or /command to run a Mallow-Bot command.");
  const style=prefix||legacy?"prefix":"slash",command=(prefix||slash||legacy)[1].toLowerCase(),t=now(),messageId=uid();
- await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(messageId,channelId,u.id,content,t).run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,recipient_user_id TEXT)").run();
  await env.DB.prepare("ALTER TABLE bot_messages ADD COLUMN recipient_user_id TEXT").run().catch(()=>{});
  if(command==="link"){
   if(!member.is_system)return fail("Discord account linking is only available in Mallow Swamp.",403);
+  await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(messageId,channelId,u.id,content,t).run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
   const code=token().slice(0,12).toUpperCase();
   await env.DB.prepare("DELETE FROM discord_link_codes WHERE user_id=?").bind(u.id).run();
@@ -648,6 +648,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  if(!linked)return fail("Link your Discord account first: run -mb link here, then use the one-time code with -mb link CODE in Mallow Swamp Discord.",403);
  const discordChannel=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE server_id=? AND mallow_channel_id=?").bind(member.server_id,channelId).first();
  if(!discordChannel)return fail("This channel is not linked to a Discord text channel.",403);
+ await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(messageId,channelId,u.id,content,t).run();
  const id=uid();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS mallowcord_command_queue(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,discord_user_id TEXT NOT NULL,discord_channel_id TEXT NOT NULL,command_style TEXT NOT NULL,command_text TEXT NOT NULL,created_at INTEGER NOT NULL,claimed_at INTEGER,processed_at INTEGER,result TEXT,private INTEGER NOT NULL DEFAULT 0)").run();
  await env.DB.prepare("INSERT INTO mallowcord_command_queue(id,server_id,channel_id,source_user_id,discord_user_id,discord_channel_id,command_style,command_text,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(id,member.server_id,channelId,u.id,linked.discord_user_id,discordChannel.discord_channel_id,style,content,t).run();
