@@ -148,25 +148,25 @@ async function oauthUser(env,provider,profile){
 async function oauthCallback(req,env,provider){
  await ensureOAuthTables(env);
  const url=new URL(req.url),state=String(url.searchParams.get("state")||""),code=String(url.searchParams.get("code")||"");
- if(url.searchParams.has("error")||!state||!code)return oauthFailure(env,provider);
+ if(url.searchParams.has("error")||!state||!code){console.error("OAuth provider returned an error or callback parameters were missing",provider,url.searchParams.get("error")||"missing_code_or_state");return oauthFailure(env,provider);}
  const stateHash=await sha(state);
  const saved=await env.DB.prepare("SELECT provider,expires_at FROM oauth_states WHERE state_hash=?").bind(stateHash).first();
  await env.DB.prepare("DELETE FROM oauth_states WHERE state_hash=?").bind(stateHash).run();
- if(!saved||saved.provider!==provider||saved.expires_at<now())return oauthFailure(env,provider);
+ if(!saved||saved.provider!==provider||saved.expires_at<now()){console.error("OAuth state validation failed",provider,{found:!!saved,providerMatches:saved?.provider===provider,expired:saved?.expires_at<now()});return oauthFailure(env,provider);}
  try{
   const clientId=provider==="google"?env.GOOGLE_CLIENT_ID:env.DISCORD_CLIENT_ID;
   const clientSecret=provider==="google"?env.GOOGLE_CLIENT_SECRET:env.DISCORD_CLIENT_SECRET;
-  if(!clientId||!clientSecret)return oauthFailure(env,provider);
+  if(!clientId||!clientSecret){console.error("OAuth credentials are missing",provider,{clientIdPresent:!!clientId,clientSecretPresent:!!clientSecret});return oauthFailure(env,provider);}
   const form=new URLSearchParams({client_id:clientId,client_secret:clientSecret,grant_type:"authorization_code",code,redirect_uri:OAUTH_REDIRECTS[provider]});
   const tokenResponse=await fetch(provider==="google"?"https://oauth2.googleapis.com/token":"https://discord.com/api/oauth2/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:form});
   const tokenData=await tokenResponse.json();
-  if(!tokenResponse.ok||!tokenData.access_token)return oauthFailure(env,provider);
+  if(!tokenResponse.ok||!tokenData.access_token){console.error("OAuth token exchange rejected",provider,{status:tokenResponse.status,error:tokenData.error,errorDescription:tokenData.error_description});return oauthFailure(env,provider);}
   const profileResponse=await fetch(provider==="google"?"https://openidconnect.googleapis.com/v1/userinfo":"https://discord.com/api/users/@me",{headers:{Authorization:"Bearer "+tokenData.access_token}});
   const profile=await profileResponse.json();
-  if(!profileResponse.ok)return oauthFailure(env,provider);
-  if(provider==="google"&&profile.email_verified!==true)return oauthFailure(env,provider);
+  if(!profileResponse.ok){console.error("OAuth profile request failed",provider,{status:profileResponse.status});return oauthFailure(env,provider);}
+  if(provider==="google"&&profile.email_verified!==true){console.error("Google account email is not verified");return oauthFailure(env,provider);}
   const result=await oauthUser(env,provider,profile);
-  if(result.error)return oauthFailure(env,provider);
+  if(result.error){console.error("OAuth account provisioning failed",provider,result.error);return oauthFailure(env,provider);}
   const loginCode=token(),t=now();
   await env.DB.prepare("INSERT INTO oauth_login_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(loginCode),result.user.id,t+90,t).run();
   const target=new URL("/",env.FRONTEND_ORIGIN);target.searchParams.set("oauth_code",loginCode);
