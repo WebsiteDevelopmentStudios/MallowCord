@@ -447,6 +447,40 @@ if(p==="/api/bot/command"&&m==="POST"){
  return json({ok:true,accepted:true});
 }
 
+async function ensureAttachmentTable(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_attachments(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,uploader_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,filename TEXT NOT NULL,content_type TEXT NOT NULL,size INTEGER NOT NULL,object_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)").run();
+}
+const attachmentUploadRoute=p.match(/^\/api\/channels\/([\w-]+)\/attachments$/);
+if(attachmentUploadRoute&&m==="POST"){
+ const channelId=attachmentUploadRoute[1],member=await env.DB.prepare("SELECT c.server_id FROM channels c JOIN memberships mm ON mm.server_id=c.server_id WHERE c.id=? AND mm.user_id=?").bind(channelId,u.id).first();
+ if(!member)return fail("You cannot upload files to this channel.",403);
+ if(!env.UPLOADS)return fail("File uploads are not configured yet. Please try again later.",503);
+ const form=await req.formData(),file=form.get("file");
+ if(!file||typeof file.arrayBuffer!=="function")return fail("Choose a file to upload.");
+ if(file.size<1||file.size>10*1024*1024)return fail("Files must be between 1 byte and 10 MB.");
+ const filename=String(file.name||"attachment").replace(/[\\/\\0-\\x1f\\x7f]/g,"_").trim().slice(0,180)||"attachment";
+ const type=String(file.type||"application/octet-stream").toLowerCase().slice(0,120);
+ if(/^(text\/html|application\/xhtml\+xml|image\/svg\+xml|application\/javascript|text\/javascript)/i.test(type))return fail("This file type cannot be uploaded.",415);
+ await ensureAttachmentTable(env);
+ const id=uid(),key="channels/"+channelId+"/"+id;
+ await env.UPLOADS.put(key,file.stream(),{httpMetadata:{contentType:type}});
+ try{await env.DB.prepare("INSERT INTO message_attachments(id,channel_id,uploader_id,message_id,filename,content_type,size,object_key,created_at) VALUES(?,?,?,NULL,?,?,?,?,?)").bind(id,channelId,u.id,filename,type,file.size,key,now()).run();}
+ catch(e){await env.UPLOADS.delete(key);throw e;}
+ return json({attachment:{id,filename,content_type:type,size:file.size}},201);
+}
+const attachmentDownloadRoute=p.match(/^\/api\/attachments\/([\w-]+)$/);
+if(attachmentDownloadRoute&&m==="GET"){
+ await ensureAttachmentTable(env);
+ const file=await env.DB.prepare("SELECT a.*,c.server_id FROM message_attachments a JOIN channels c ON c.id=a.channel_id JOIN memberships mm ON mm.server_id=c.server_id WHERE a.id=? AND mm.user_id=?").bind(attachmentDownloadRoute[1],u.id).first();
+ if(!file)return fail("Attachment not found.",404);
+ if(!env.UPLOADS)return fail("File storage is unavailable.",503);
+ const object=await env.UPLOADS.get(file.object_key);if(!object)return fail("File not found.",404);
+ const inline=/^image\/(png|jpeg|gif|webp)$/.test(file.content_type);
+ const encoded=encodeURIComponent(file.filename).replace(/['()*]/g,c=>"%"+c.charCodeAt(0).toString(16).toUpperCase());
+ const headers=new Headers({"Content-Type":inline?file.content_type:"application/octet-stream","Content-Disposition":(inline?"inline":"attachment")+"; filename*=UTF-8''"+encoded,"X-Content-Type-Options":"nosniff","Cache-Control":"private, no-store"});
+ headers.set("Content-Length",String(file.size));
+ return new Response(object.body,{headers});
+}
 x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  const channelId=x[1],mem=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(channelId,u.id).first();
  if(!mem)return fail("You cannot view this channel.",403);
@@ -457,13 +491,19 @@ x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  const regular=base.results.reverse();
  const bots=await env.DB.prepare("SELECT id,content,created_at,username,avatar_url,source_user_id FROM bot_messages WHERE channel_id=? ORDER BY created_at DESC LIMIT 75").bind(channelId).all();
  const messages=[...regular.map(msg=>({...msg,is_bot:false,reply_to:msg.reply_to_id?{username:msg.reply_username,content:msg.reply_content}:null,reactions:[]})),...bots.results.map(msg=>({id:msg.id,content:msg.content,created_at:msg.created_at,edited_at:null,username:msg.username,avatar_url:msg.avatar_url,author_id:"mallowcord-bot",is_bot:true,forwarded_from:null,reply_to:null,reactions:[]}))].sort((a,b)=>a.created_at-b.created_at).slice(-75);
- const ids=regular.map(msg=>msg.id),byMessage=new Map();
+ const ids=regular.map(msg=>msg.id),byMessage=new Map(),attachmentsByMessage=new Map();
+ await ensureAttachmentTable(env);
+ if(ids.length){
+  const marks=ids.map(()=>"?").join(",");
+  const files=await env.DB.prepare("SELECT id,message_id,filename,content_type,size FROM message_attachments WHERE message_id IN ("+marks+") ORDER BY created_at").bind(...ids).all();
+  for(const f of files.results){if(!attachmentsByMessage.has(f.message_id))attachmentsByMessage.set(f.message_id,[]);attachmentsByMessage.get(f.message_id).push({id:f.id,filename:f.filename,content_type:f.content_type,size:f.size});}
+ }
  if(ids.length){
   const placeholders=ids.map(()=>"?").join(",");
   const reactions=await env.DB.prepare("SELECT r.message_id,r.emoji,COUNT(*) AS count,MAX(CASE WHEN r.user_id=? THEN 1 ELSE 0 END) AS mine,se.name AS custom_name,se.image_url AS custom_url FROM message_reactions r LEFT JOIN server_emojis se ON r.emoji='custom:'||se.id WHERE r.message_id IN ("+placeholders+") GROUP BY r.message_id,r.emoji,se.name,se.image_url").bind(u.id,...ids).all();
   for(const reaction of reactions.results){if(!byMessage.has(reaction.message_id))byMessage.set(reaction.message_id,[]);byMessage.get(reaction.message_id).push({emoji:reaction.emoji,count:reaction.count,mine:!!reaction.mine,custom_name:reaction.custom_name,custom_url:reaction.custom_url});}
  }
- for(const msg of messages){if(!msg.is_bot)msg.reactions=byMessage.get(msg.id)||[];}
+ for(const msg of messages){if(!msg.is_bot){msg.reactions=byMessage.get(msg.id)||[];msg.attachments=attachmentsByMessage.get(msg.id)||[];}else msg.attachments=[];}
  const result={messages};
  if(new URL(req.url).searchParams.get("include_directory")==="1"){
   await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
@@ -475,8 +515,11 @@ x=p.match(/^\/api\/channels\/([\w-]+)\/messages$/);if(x&&m==="GET"){
  return json(result);
 }
 if(x&&m==="POST"){
- const b=await body(req),content=String(b.content||"").trim();if(!content||content.length>4000)return fail("Message must be 1–4000 characters.");
+ const b=await body(req),content=String(b.content||"").trim(),attachmentIds=Array.isArray(b.attachment_ids)?[...new Set(b.attachment_ids.map(v=>String(v)).filter(v=>/^[\w-]{1,80}$/.test(v)))]:[];
+ if((!content&&!attachmentIds.length)||content.length>4000||attachmentIds.length>10)return fail("Add a message or up to 10 attachments.");
+ await ensureAttachmentTable(env);
  const mem=await env.DB.prepare("SELECT c.server_id FROM memberships m JOIN channels c ON c.server_id=m.server_id WHERE c.id=? AND m.user_id=?").bind(x[1],u.id).first();if(!mem)return fail("You cannot send messages here.",403);
+ for(const attachmentId of attachmentIds){const pending=await env.DB.prepare("SELECT id FROM message_attachments WHERE id=? AND channel_id=? AND uploader_id=? AND message_id IS NULL").bind(attachmentId,x[1],u.id).first();if(!pending)return fail("One of the uploaded files is unavailable. Please attach it again.",400);}
  await env.DB.prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});await env.DB.prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
  const roles=(await env.DB.prepare("SELECT id,name,pingable FROM roles WHERE server_id=?").bind(mem.server_id).all()).results;
  const contains=token=>content.toLowerCase().includes(String(token).toLowerCase());
@@ -484,6 +527,7 @@ if(x&&m==="POST"){
  for(const target of users)if(target.id!==u.id&&contains("@"+target.username))notify.add(target.id);
  for(const role of roles){const token=role.name.startsWith("@")?role.name:"@"+role.name;if(!contains(token))continue;if(!role.pingable)return fail("The "+role.name+" role does not allow mentions.",403);const recipients=role.name.toLowerCase()==="@everyone"?users:(await env.DB.prepare("SELECT user_id AS id FROM member_roles WHERE server_id=? AND role_id=?").bind(mem.server_id,role.id).all()).results;for(const target of recipients)if(target.id!==u.id)notify.add(target.id);}
  const mid=uid(),t=now();await env.DB.prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(mid,x[1],u.id,content,t).run();
+ for(const attachmentId of attachmentIds)await env.DB.prepare("UPDATE message_attachments SET message_id=? WHERE id=? AND channel_id=? AND uploader_id=? AND message_id IS NULL").bind(mid,attachmentId,x[1],u.id).run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
  const dl=await env.DB.prepare("SELECT discord_channel_id FROM discord_channel_links WHERE mallow_channel_id=?").bind(x[1]).first();if(dl){const author=await env.DB.prepare("SELECT COALESCE(up.display_name,u.username) AS username,up.avatar_url FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id WHERE u.id=?").bind(u.id).first();await env.DB.prepare("INSERT OR IGNORE INTO discord_outbox(id,discord_channel_id,message_id,username,avatar_url,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(uid(),dl.discord_channel_id,mid,author?.username||u.username,author?.avatar_url||null,content,t).run();}
  let replyRecipient=null;if(b.reply_to_id){const parent=await env.DB.prepare("SELECT id,author_id FROM messages WHERE id=? AND channel_id=?").bind(String(b.reply_to_id),x[1]).first();if(parent){await ensureMessageExtras(env);await env.DB.prepare("INSERT INTO message_replies(message_id,reply_to_id) VALUES(?,?)").bind(mid,parent.id).run();if(parent.author_id!==u.id){notify.add(parent.author_id);replyRecipient=parent.author_id;}}}
