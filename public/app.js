@@ -50,6 +50,9 @@ async function loadMemberList(){
    const color=/^#[0-9a-f]{6}$/i.test(role.color||"")?role.color:"";
    html+='<div class="member-role-heading" '+(color?'style="color:'+esc(color)+'"':"")+'>'+esc(role.name)+' <span>'+ids.length+'</span></div>'+ids.map(renderMember).join("");
   }
+  const groupedIds=new Set(roleGroups.flatMap(role=>members.filter(mem=>String(mem.role_ids||"").split(",").includes(String(role.id))).map(mem=>mem.id)));
+  const otherMembers=members.filter(mem=>!mem.discord_linked&&!groupedIds.has(mem.id));
+  if(otherMembers.length)html+='<div class="member-role-heading">MEMBERS <span>'+otherMembers.length+'</span></div>'+otherMembers.map(renderMember).join("");
   const discordMembers=members.filter(mem=>!!mem.discord_linked);
   if(discordMembers.length){
    html+='<div class="member-role-heading discord-members-heading">DISCORD MEMBERS <span>'+discordMembers.length+'</span></div>';
