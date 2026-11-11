@@ -711,7 +711,7 @@ body .account-settings-main,body .account-settings-nav{background-color:rgba(12,
 
 /* Discord-style role sections, linked-member directory and channel controls */
 .member-section-label,.member-role-title,.member-subheading{padding:16px 12px 7px;font-size:10px;letter-spacing:.8px;font-weight:850;color:var(--text-muted);text-transform:uppercase}
-.member-role-title{color:var(--role-color,var(--member-listing-role-color));padding-top:18px}
+.member-role-title{color:var(--role-color,var(--text-muted));padding-top:18px}
 .member-subheading{padding-top:9px;color:var(--text-faint);font-size:9px}
 .discord-member-section{border-top:1px solid var(--line);margin-top:10px;padding-top:18px}
 .channel-lock-mark{margin-left:auto;color:#e5b85c;font-size:12px}
