@@ -212,7 +212,11 @@ if(discordBridgePath){
   const codeHash=await sha(code),pending=await env.DB.prepare("SELECT user_id,server_id FROM discord_link_codes WHERE code_hash=? AND expires_at>?").bind(codeHash,now()).first();
   if(!pending)return fail("That link code is invalid or expired.",404);
   const previous=await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,pending.server_id).first();
-  if(previous&&previous.user_id!==pending.user_id)await env.DB.prepare("DELETE FROM memberships WHERE server_id=? AND user_id=?").bind(pending.server_id,previous.user_id).run();
+  if(previous&&previous.user_id!==pending.user_id){
+   await env.DB.prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) SELECT server_id,?,role_id FROM member_roles WHERE server_id=? AND user_id=?").bind(pending.user_id,pending.server_id,previous.user_id).run();
+   await env.DB.prepare("DELETE FROM memberships WHERE server_id=? AND user_id=?").bind(pending.server_id,previous.user_id).run();
+  }
+  await env.DB.prepare("DELETE FROM discord_user_links WHERE server_id=? AND user_id=? AND discord_user_id<>?").bind(pending.server_id,pending.user_id,discordId).run();
   await env.DB.prepare("INSERT INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?) ON CONFLICT(server_id,user_id) DO NOTHING").bind(pending.server_id,pending.user_id,now()).run();
   await env.DB.prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at").bind(discordId,pending.server_id,pending.user_id,now()).run();
   await env.DB.prepare("DELETE FROM discord_link_codes WHERE code_hash=?").bind(codeHash).run();
