@@ -144,6 +144,14 @@ if(p==="/api/auth/logout"&&m==="POST"){const u=await userFor(req,env);if(u)await
 const u=await userFor(req,env);
 if(p==="/api/auth/me"&&m==="GET")return u?json({user:{id:u.id,username:u.username,account_type:u.account_type}}):fail("Not signed in.",401);
 if(!u)return fail("Sign in required.",401);
+if(p==="/api/presence/heartbeat"&&m==="POST"){
+ await ensureAccountTables(env);
+ const preferences=await env.DB.prepare("SELECT settings_json FROM user_preferences WHERE user_id=?").bind(u.id).first();
+ let settings={};try{settings=JSON.parse(preferences?.settings_json||"{}")}catch{}
+ const showOnline=settings?.privacy?.showOnlineStatus!==false;
+ await env.DB.prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(u.id,showOnline?now():0).run();
+ return json({ok:true,presence:showOnline?"online":"offline"});
+}
 const banned=await env.DB.prepare("SELECT id FROM bans WHERE ip_hash=? AND server_id IS NULL AND (expires_at IS NULL OR expires_at>?) LIMIT 1").bind(await ipDigest(req,env),now()).first();if(banned)return fail("Access to MallowCord is blocked.",403);
 if(u.timed_out&&p.startsWith("/api/")&&!["/api/auth/me","/api/auth/logout"].includes(p))return fail("Your account is timed out.",403);
 if(p==="/api/notifications"&&m==="GET"){
@@ -183,11 +191,13 @@ async function ensureAccountTables(env){
  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN bio TEXT").run().catch(()=>{});
  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN status TEXT NOT NULL DEFAULT 'online'").run().catch(()=>{});
  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN pronouns TEXT").run().catch(()=>{});
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
 }
-x=p.match(/^\/api\/users\/([\w-]+)\/profile$/);if(x&&m==="GET"){await ensureAccountTables(env);const member=await env.DB.prepare("SELECT 1 FROM memberships mine JOIN memberships target ON target.server_id=mine.server_id WHERE mine.user_id=? AND target.user_id=? LIMIT 1").bind(u.id,x[1]).first();if(!member)return fail("You cannot view this profile.",403);const profile=await env.DB.prepare("SELECT COALESCE(up.display_name,u.username) AS display_name,u.username,up.avatar_url,up.bio,up.status,up.pronouns FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id WHERE u.id=? AND u.status='active'").bind(x[1]).first();if(!profile)return fail("User not found.",404);return json({profile})}if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
+x=p.match(/^\/api\/users\/([\w-]+)\/profile$/);if(x&&m==="GET"){await ensureAccountTables(env);const member=await env.DB.prepare("SELECT 1 FROM memberships mine JOIN memberships target ON target.server_id=mine.server_id WHERE mine.user_id=? AND target.user_id=? LIMIT 1").bind(u.id,x[1]).first();if(!member)return fail("You cannot view this profile.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();const profile=await env.DB.prepare("SELECT COALESCE(up.display_name,u.username) AS display_name,u.username,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE u.id=? AND u.status='active'").bind(now()-45,x[1]).first();if(!profile)return fail("User not found.",404);return json({profile})}if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
  await ensureAccountTables(env);
  if(m==="GET"){
-  const profile=await env.DB.prepare("SELECT display_name,avatar_url,bio,status,pronouns,email,email_verified_at,phone,phone_verified_at FROM user_profiles WHERE user_id=?").bind(u.id).first();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
+  const profile=await env.DB.prepare("SELECT up.display_name,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns,up.email,up.email_verified_at,up.phone,up.phone_verified_at FROM user_profiles up LEFT JOIN user_presence pr ON pr.user_id=up.user_id LEFT JOIN user_preferences pref ON pref.user_id=up.user_id WHERE up.user_id=?").bind(now()-45,u.id).first();
   return json({profile:profile||{display_name:null,avatar_url:null,bio:null,status:'online',pronouns:null,email:null,email_verified_at:null,phone:null,phone_verified_at:null},username:u.username,account_type:u.account_type});
  }
  const b=await body(req),display=String(b.display_name||"").trim().slice(0,32),avatar=String(b.avatar_url||"").trim();
@@ -305,7 +315,8 @@ if(serverAdminMatch){
  }
  if(section==="members"&&m==="GET"){
   await ensureAccountTables(env);
-  const a=await env.DB.prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,COALESCE(up.status,'online') AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(sid).all();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
+  const a=await env.DB.prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-45,sid).all();
   return json({members:a.results,can_manage:manager});
  }
  if(section==="roles"&&m==="GET"){
