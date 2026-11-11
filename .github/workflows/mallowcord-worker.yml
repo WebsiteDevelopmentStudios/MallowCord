@@ -1,6 +1,13 @@
 name: MallowCord Worker
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - "wrangler.jsonc"
+      - "package.json"
+      - ".github/workflows/mallowcord-worker.yml"
   pull_request:
     branches: [main]
     paths:
