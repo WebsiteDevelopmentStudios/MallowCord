@@ -393,6 +393,47 @@ if(memberRoleRoute&&m==="POST"){
  return json({ok:true});
 }
 
+
+/* User-managed server sections. */
+const sectionPath=p.split("/").filter(Boolean);
+if(sectionPath[0]==="api"&&sectionPath[1]==="servers"&&sectionPath[3]==="sections"){
+ const sid=sectionPath[2];
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+ await env.DB.prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});
+ const server=await env.DB.prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
+ const member=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(sid,u.id).first();
+ if(!server||!member)return fail("Server not found or access denied.",403);
+ const manager=isOwner(u)||server.owner_id===u.id;
+ if(sectionPath.length===4&&m==="GET"){
+  const rows=await env.DB.prepare("SELECT id,name,position FROM server_sections WHERE server_id=? ORDER BY position,name").bind(sid).all();
+  return json({sections:rows.results,can_manage:manager});
+ }
+ if(sectionPath.length===4&&m==="POST"){
+  if(!manager)return fail("Server owner access required.",403);
+  const b=await body(req),name=String(b.name||"").trim().slice(0,40);
+  if(!/^[A-Za-z0-9 _-]{2,40}$/.test(name))return fail("Section names must be 2–40 letters, numbers, spaces, _ or -.");
+  const id=uid(),position=Number((await env.DB.prepare("SELECT COALESCE(MAX(position),-1)+1 AS n FROM server_sections WHERE server_id=?").bind(sid).first()).n);
+  try{await env.DB.prepare("INSERT INTO server_sections(id,server_id,name,position,created_at) VALUES(?,?,?,?,?)").bind(id,sid,name,position,now()).run();}
+  catch{return fail("A section with that name already exists.",409);}
+  return json({section:{id,name,position}},201);
+ }
+ if(sectionPath.length===5&&(m==="PATCH"||m==="DELETE")){
+  if(!manager)return fail("Server owner access required.",403);
+  const id=sectionPath[4],exists=await env.DB.prepare("SELECT id FROM server_sections WHERE id=? AND server_id=?").bind(id,sid).first();
+  if(!exists)return fail("Section not found.",404);
+  if(m==="DELETE"){
+   await env.DB.prepare("UPDATE channels SET section_id=NULL WHERE section_id=?").bind(id).run();
+   await env.DB.prepare("DELETE FROM server_sections WHERE id=?").bind(id).run();
+   return json({ok:true});
+  }
+  const b=await body(req),name=String(b.name||"").trim().slice(0,40);
+  if(!/^[A-Za-z0-9 _-]{2,40}$/.test(name))return fail("Invalid section name.");
+  const position=Number.isFinite(Number(b.position))?Math.max(0,Math.min(500,Number(b.position))):0;
+  await env.DB.prepare("UPDATE server_sections SET name=?,position=? WHERE id=? AND server_id=?").bind(name,position,id,sid).run();
+  return json({ok:true});
+ }
+}
+
 x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await env.DB.prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();const a=await env.DB.prepare("SELECT c.id,c.name,c.kind,c.position,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? ORDER BY COALESCE(d.category_name,''),c.position").bind(x[1]).all();return json({channels:a.results});}
 
 if(x&&m==="POST"){
