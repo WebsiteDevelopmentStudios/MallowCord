@@ -1,11 +1,11 @@
 use axum::{routing::get, Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{env, net::SocketAddr};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct HealthResponse {
     status: &'static str,
     service: &'static str,
