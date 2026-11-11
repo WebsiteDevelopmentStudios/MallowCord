@@ -145,6 +145,37 @@ if(discordBridgePath){
   }
   return json({ok:true,server_id:system.id,channels:channelMap.length,sections:sectionMap.size,roles:roleMap.length,members:synced,emojis:emojis.length,channel_map:channelMap});
  }
+ if(p==="/api/integrations/mallowbot/discord/link/complete"&&m==="POST"){
+  const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
+  const discordUserId=String(b.discord_user_id||""),code=String(b.code||"").replace(/-/g,"").toUpperCase();
+  if(!/^\d{17,20}$/.test(discordUserId)||!/[A-F0-9]{12}/.test(code))return fail("Invalid Discord account link details.");
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+  const pending=await env.DB.prepare("SELECT user_id FROM discord_link_codes WHERE code_hash=? AND expires_at>?").bind(await sha(code),now()).first();
+  if(!pending)return fail("That link code is invalid or expired.",403);
+  await env.DB.batch([
+   env.DB.prepare("DELETE FROM discord_account_links WHERE user_id=? OR discord_user_id=?").bind(pending.user_id,discordUserId),
+   env.DB.prepare("INSERT INTO discord_account_links(discord_user_id,user_id,server_id,linked_at) VALUES(?,?,?,?)").bind(discordUserId,pending.user_id,system.id,now()),
+   env.DB.prepare("DELETE FROM discord_link_codes WHERE code_hash=?").bind(await sha(code))
+  ]);
+  return json({ok:true,linked:true});
+ }
+ if(p==="/api/integrations/mallowbot/discord/commands"&&m==="GET"){
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_command_queue(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,command_text TEXT NOT NULL,command_style TEXT NOT NULL CHECK(command_style IN ('prefix','slash')),status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,completed_at INTEGER,result TEXT)").run();
+  const rows=await env.DB.prepare("SELECT q.id,q.command_text,q.command_style,q.created_at,l.discord_user_id,d.discord_channel_id,u.username FROM discord_command_queue q JOIN discord_account_links l ON l.user_id=q.user_id AND l.server_id=? JOIN discord_channel_links d ON d.mallow_channel_id=q.channel_id AND d.server_id=? JOIN users u ON u.id=q.user_id WHERE q.status='queued' AND q.created_at>? ORDER BY q.created_at LIMIT 10").bind(system.id,system.id,now()-600).all();
+  return json({commands:rows.results});
+ }
+ const commandComplete=p.match(/^\/api\/integrations\/mallowbot\/discord\/commands\/([\w-]+)\/complete$/);
+ if(commandComplete&&m==="POST"){
+  const row=await env.DB.prepare("SELECT q.id,q.channel_id,c.server_id FROM discord_command_queue q JOIN channels c ON c.id=q.channel_id WHERE q.id=?").bind(commandComplete[1]).first();
+  if(!row||row.server_id!==system.id)return fail("Command request not found.",404);
+  const b=await body(req),result=String(b.result||"The command finished without a text response.").slice(0,4000);
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+  await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at) VALUES(?,?,NULL,?,?,?,?)").bind(uid(),row.channel_id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",result,now()+1).run();
+  await env.DB.prepare("UPDATE discord_command_queue SET status='complete',completed_at=?,result=? WHERE id=?").bind(now(),result,commandComplete[1]).run();
+  return json({ok:true});
+ }
  if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
   const presence=["online","idle","dnd","offline"].includes(b.status)?b.status:"offline";
