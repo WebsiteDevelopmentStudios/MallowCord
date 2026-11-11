@@ -46,7 +46,8 @@ function translateSql(input) {
     if (m) {
       const cols = m[2].split(",").map(x => x.trim());
       const updates = cols.slice(1).map(col => `${col}=EXCLUDED.${col}`).join(",");
-      sql += ` ON CONFLICT DO UPDATE SET ${updates || `${cols[0]}=EXCLUDED.${cols[0]}`}`;
+      const target = m[1].toLowerCase() === "onboarding_completions" ? "(server_id,user_id)" : `(${cols[0]})`;
+      sql += ` ON CONFLICT ${target} DO UPDATE SET ${updates || `${cols[0]}=EXCLUDED.${cols[0]}`}`;
     }
   }
   return convertPlaceholders(sql);
@@ -67,6 +68,7 @@ export function getDatabase(env) {
       idle_timeout: 20,
       connect_timeout: 10,
       fetch_types: false,
+      types: { bigint: { to: 20, from: [20], serialize: value => String(value), parse: value => Number(value) } },
       onnotice: () => {}
     });
     client = {
@@ -84,6 +86,11 @@ export function getDatabase(env) {
           },
           async all() {
             const rows = await sql.unsafe(translateSql(query), values);
+            for (const row of rows) {
+              if (Object.prototype.hasOwnProperty.call(row, "roles_json")) {
+                row.roles_json = row.roles_json == null ? "[]" : (typeof row.roles_json === "string" ? row.roles_json : JSON.stringify(row.roles_json));
+              }
+            }
             return { results: rows, success: true, meta: { changes: Number(rows.count || 0), duration: 0 } };
           },
           async run() {
