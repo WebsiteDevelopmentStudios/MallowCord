@@ -154,7 +154,7 @@ if(discordBridgePath){
  if(p==="/api/integrations/mallowbot/discord/link/complete"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
   const discordUserId=String(b.discord_user_id||""),code=String(b.code||"").replace(/-/g,"").toUpperCase();
-  if(!/^\d{17,20}$/.test(discordUserId)||!/[A-F0-9]{12}/.test(code))return fail("Invalid Discord account link details.");
+  if(!/^\d{17,20}$/.test(discordUserId)||!/^[A-F0-9]{12}$/.test(code))return fail("Invalid Discord account link details.");
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
   const pending=await env.DB.prepare("SELECT user_id FROM discord_link_codes WHERE code_hash=? AND expires_at>?").bind(await sha(code),now()).first();
