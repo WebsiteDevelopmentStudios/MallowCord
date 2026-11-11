@@ -201,9 +201,25 @@ $("#messageForm [name=content]").addEventListener("input",updateComposerSuggesti
 $("#messageForm [name=content]").addEventListener("keydown",e=>{if(!composerMatches.length)return;if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();composerMatchIndex=(composerMatchIndex+(e.key==="ArrowDown"?1:-1)+composerMatches.length)%composerMatches.length;$("#composerSuggestions").querySelectorAll(".composer-suggestion").forEach((b,i)=>b.classList.toggle("active",i===composerMatchIndex))}else if(e.key==="Enter"||e.key==="Tab"){e.preventDefault();chooseComposerSuggestion(composerMatchIndex)}else if(e.key==="Escape")hideComposerSuggestions()});
 $("#composerSuggestions").addEventListener("mousedown",e=>{const b=e.target.closest("[data-index]");if(b){e.preventDefault();chooseComposerSuggestion(Number(b.dataset.index))}});
 
+function showCreatePanel(title,fields,submitWork){
+ let panel=$("#createPanel");
+ if(!panel){panel=document.createElement("div");panel.id="createPanel";panel.className="create-panel hidden";panel.innerHTML='<section class="create-panel-card"><button type="button" class="close" id="closeCreatePanel">×</button><h2 id="createPanelTitle"></h2><form id="createPanelForm"><div id="createPanelFields"></div><div class="create-panel-actions"><button type="button" class="secondary" id="cancelCreatePanel">Cancel</button><button type="submit" class="primary">Create</button></div></form></section>';document.body.append(panel);$("#closeCreatePanel").onclick=()=>panel.classList.add("hidden");$("#cancelCreatePanel").onclick=()=>panel.classList.add("hidden");}
+ $("#createPanelTitle").textContent=title;$("#createPanelFields").innerHTML=fields;panel.classList.remove("hidden");
+ $("#createPanelForm").onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.currentTarget).entries()),button=e.currentTarget.querySelector('[type="submit"]');button.disabled=true;try{await submitWork(data);panel.classList.add("hidden")}catch(err){toast(err.message)}finally{button.disabled=false}};
+}
 $("#createChannelBtn").onclick=createChannel;
-async function createChannel(){if(!serverId)return;const name=prompt("Channel name (for example: announcements)");if(!name)return;const kind=confirm("Create a voice room? Choose Cancel for a text channel.")?"voice":"text";try{const d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name,kind})});toast((kind==="voice"?"Voice room":"Text channel")+" created.");await loadChannels();const found=(await api("/servers/"+serverId+"/channels")).channels.find(c=>c.id===d.channel.id);if(found)selectChannel(found);if(kind==="voice")toast("Voice room created. Live voice calling is not connected yet.")}catch(e){toast(e.message)}}
-async function createServer(){const name=prompt("New server name");if(!name)return;try{const d=await api("/servers",{method:"POST",body:JSON.stringify({name})});toast("Server created.");await loadServers();const all=await api("/servers");const s=all.servers.find(x=>x.id===d.server.id);if(s)await selectServer(s)}catch(e){toast(e.message)}}
+async function createChannel(){
+ if(!serverId)return;
+ showCreatePanel("Create channel",'<label>Channel name<input name="name" placeholder="announcements" minlength="2" maxlength="50" required></label><label>Channel type<select name="kind"><option value="text">Text channel</option><option value="voice">Voice channel</option></select></label>',async data=>{
+  const kind=data.kind==="voice"?"voice":"text",d=await api("/servers/"+serverId+"/channels",{method:"POST",body:JSON.stringify({name:data.name,kind})});
+  await loadChannels();const found=(await api("/servers/"+serverId+"/channels")).channels.find(ch=>ch.id===d.channel.id);if(found)selectChannel(found);toast((kind==="voice"?"Voice room":"Text channel")+" created.");
+ });
+}
+async function createServer(){
+ showCreatePanel("Create server",'<label>Server name<input name="name" placeholder="My server" minlength="2" maxlength="50" required></label>',async data=>{
+  const d=await api("/servers",{method:"POST",body:JSON.stringify({name:data.name})});await loadServers();const all=await api("/servers"),server=all.servers.find(s=>s.id===d.server.id);if(server)await selectServer(server);toast("Server created.");
+ });
+}
 $("#addServer").onclick=createServer;
 $("#serverMenuBtn").onclick=()=>openServerSettings("overview");
 $("#closeServerModal").onclick=()=>$("#serverModal").classList.add("hidden");
