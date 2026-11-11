@@ -30,12 +30,12 @@ async function canChannelPermission(env,channelId,userId,permission){
  if(!Array.isArray(overwrites))overwrites=[];
  const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_user_links WHERE user_id=?").bind(userId).first();
  const discordUserId=String(linked?.discord_user_id||"");
- const roleRows=await env.DB.prepare("SELECT dr.discord_role_id,r.name,r.permissions FROM member_roles mr JOIN discord_role_links dr ON dr.role_id=mr.role_id JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=(SELECT server_id FROM channels WHERE id=?) AND mr.user_id=?").bind(channelId,userId).all();
+ const roleRows=await env.DB.prepare("SELECT r.id,r.name,r.permissions,COALESCE(dr.discord_role_id,'') AS discord_role_id FROM member_roles mr JOIN roles r ON r.id=mr.role_id LEFT JOIN discord_role_links dr ON dr.role_id=mr.role_id AND dr.server_id=mr.server_id WHERE mr.server_id=(SELECT server_id FROM channels WHERE id=?) AND mr.user_id=?").bind(channelId,userId).all();
  const isAdministrator=roleRows.results.some(r=>{try{return (BigInt(r.permissions||"0")&8n)!==0n}catch{return false}});
  if(isAdministrator)return true;
  const isStaffMember=roleRows.results.some(r=>{if(/staff|moderator|moderation|admin|helper|(^|[^a-z])mod([^a-z]|$)/i.test(String(r.name||"")))return true;try{return (BigInt(r.permissions||"0")&(16n|32n|8192n))!==0n}catch{return false}});
  if(settings.is_staff&&!isStaffMember)return false;
- const roleIds=new Set(roleRows.results.map(r=>String(r.discord_role_id)));
+ const roleIds=new Set(roleRows.results.flatMap(r=>[String(r.discord_role_id||""),String(r.id)]));
  let everyoneDeny=false,roleDeny=false,roleAllow=false,userDeny=false,userAllow=false;
  for(const overwrite of overwrites){
   const allow=Array.isArray(overwrite.allow)?overwrite.allow:[],deny=Array.isArray(overwrite.deny)?overwrite.deny:[];
@@ -46,7 +46,7 @@ async function canChannelPermission(env,channelId,userId,permission){
   }else if(overwrite.target_type==="role"&&roleIds.has(targetId)){
    if(deny.includes(permission))roleDeny=true;
    if(allow.includes(permission))roleAllow=true;
-  }else if(overwrite.target_type==="user"&&discordUserId&&targetId===discordUserId){
+  }else if(overwrite.target_type==="user"&&((discordUserId&&targetId===discordUserId)||targetId===String(userId)){
    if(deny.includes(permission))userDeny=true;
    if(allow.includes(permission))userAllow=true;
   }
