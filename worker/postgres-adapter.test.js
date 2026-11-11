@@ -29,6 +29,8 @@ test("keeps all features on D1 unless individually enabled", () => {
   assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "" }, "oauth_diagnostics"), false);
   assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "user_preferences, oauth_diagnostics" }, "oauth_diagnostics"), true);
   assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "user_preferences" }, "oauth_diagnostics"), false);
+  assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "oauth_diagnostics,worker_error_logs,audit_logs" }, "audit_logs"), true);
+  assert.equal(shouldUseNeon({ MALLOWCORD_NEON_FEATURES: "oauth_diagnostics,worker_error_logs" }, "audit_logs"), false);
   assert.equal(shouldUseNeon({ MALLOWCORD_DB_BACKEND: "neon" }, "oauth_diagnostics"), true);
   assert.equal(shouldUseNeon({ MALLOWCORD_DB_BACKEND: "neon" }, undefined), true);
 });
