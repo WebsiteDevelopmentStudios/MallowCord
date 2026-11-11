@@ -36,14 +36,14 @@ async function loadMemberList(){
    roleData=m=>{try{return JSON.parse(m.roles_json||"[]")}catch{return []}},
    button=m=>{const label=m.display_name||m.username||"User",avatar=m.avatar_url?'<img src="'+esc(m.avatar_url)+'" alt="">':esc(label[0].toUpperCase()),state=m.presence||"offline",highest=roleData(m).sort((x,y)=>(y.position||0)-(x.position||0))[0],nameColor=highest?.color&&/^#[0-9a-f]{6}$/i.test(highest.color)?highest.color:"";return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(m.id)+'"><span class="avatar status-avatar" data-status="'+esc(state)+'">'+avatar+'</span><span class="member-copy"><b'+(nameColor?' style="color:'+esc(nameColor)+'"':"")+'>'+esc(label)+'</b><small class="member-username">'+esc(m.username||"")+'</small></span></button>'},
    group=(name,rows)=>rows.length?'<div class="member-group-title">'+esc(name)+' <span>'+rows.length+'</span></div>'+rows.map(button).join(""):"",
-   roleGroups=()=>{const map=new Map();for(const member of native){const rs=roleData(member);if(!rs.length){if(!map.has("@everyone"))map.set("@everyone",[]);map.get("@everyone").push(member)}for(const role of rs){if(!map.has(role.id))map.set(role.id,{role,members:[]});map.get(role.id).members.push(member)}}return [...map.values()].sort((x,y)=>{const aa=x.role?.position??-1,bb=y.role?.position??-1;return bb-aa})},
+   roleGroups=()=>{const map=new Map();for(const member of native){const rs=roleData(member).slice().sort((x,y)=>(Number(y.position)||0)-(Number(x.position)||0));const highest=rs[0];if(!highest){if(!map.has("@everyone"))map.set("@everyone",[]);map.get("@everyone").push(member);continue}if(!map.has(highest.id))map.set(highest.id,{role:highest,members:[]});map.get(highest.id).members.push(member)}return [...map.values()].sort((x,y)=>{const aa=x.role?.position??-1,bb=y.role?.position??-1;return bb-aa})},
    roleMarkup=roleGroups().map(item=>{if(Array.isArray(item))return group("@everyone",item);return '<div class="member-group-title" style="color:'+esc(item.role.color||"#99aab5")+'">'+esc(item.role.name)+' <span>'+item.members.length+'</span></div>'+item.members.map(button).join("")}).join("");
   const bot='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>';
   box.innerHTML=bot+roleMarkup+group("Discord Members — online",discord.filter(online))+group("Discord Members — offline",discord.filter(m=>!online(m)));
  }catch(e){console.warn("Member list:",e.message)}
 }
 function renderChannelLabel(name){
- const source=String(name??"");
+ const source=String(name??"").replace(/\s+alt=":[A-Za-z0-9_]{2,32}:"\s*>?/gi,"");
  return esc(source).replace(/&lt;a?:([A-Za-z0-9_]{2,32}):(\d{5,25})&gt;|:([A-Za-z0-9_]{2,32}):/g,(token,discordName,discordId,shortName)=>{
   const emojiName=discordName||shortName;
   const emoji=serverEmojis.find(item=>String(item.name||"").toLowerCase()===emojiName.toLowerCase());
@@ -74,13 +74,13 @@ function renderMarkdown(raw){
  return parts.map(part=>{
   if(part.startsWith(tick.repeat(3))&&part.endsWith(tick.repeat(3))){const body=part.slice(3,-3).replace(/^[a-zA-Z0-9_-]+\n/,"");return "<pre><code>"+esc(body)+"</code></pre>"}
   let safe=esc(part),markdownImages=[];
-  safe=safe.replace(/!\[([^\]]*)\]\((https:\/\/[^)\s]+)\)/gi,(all,alt,url)=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<a class="message-embed-link" href="'+url+'" target="_blank" rel="noopener noreferrer"><img class="message-embed image-embed" src="'+url+'" alt="'+esc(alt)+'" loading="lazy"></a>');return key;});
+  safe=safe.replace(/!\[([^\]]*)\]\((https:\/\/[^)\s]+)\)/gi,(all,alt,url)=>{const key="MALLOWIMAGEPLACEHOLDER"+markdownImages.length+"END";markdownImages.push('<a class="message-link" href="'+url+'" target="_blank" rel="noopener noreferrer">'+url+'</a><a class="message-embed-link" href="'+url+'" target="_blank" rel="noopener noreferrer"><img class="message-embed image-embed" src="'+url+'" alt="'+esc(alt)+'" loading="lazy"></a>');return key;});
   safe=safe.replace(/:([a-zA-Z0-9_]{2,32}):/g,(all,name)=>{const em=serverEmojis.find(x=>x.name===name);return em?'<img class="inline-custom-emoji" src="'+esc(em.image_url)+'" alt=":'+esc(name)+':">':all});
   safe=safe.replace(/https:\/\/[^\s<>"']+/gi,url=>{
    const clean=url.replace(/[),.!?]+$/,""),tail=url.slice(clean.length),lower=clean.toLowerCase();
    if(/\.(gif|png|jpe?g|webp)(\?.*)?$/i.test(lower)){
     const type=/\.gif(\?.*)?$/i.test(lower)?"gif":"image";
-    return '<a class="message-embed-link" href="'+clean+'" target="_blank" rel="noopener noreferrer"><img class="message-embed '+type+'-embed" src="'+clean+'" alt="'+(type==="gif"?"GIF":"Image")+'" loading="lazy"></a>'+tail;
+    return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a><a class="message-embed-link" href="'+clean+'" target="_blank" rel="noopener noreferrer"><img class="message-embed '+type+'-embed" src="'+clean+'" alt="'+(type==="gif"?"GIF":"Image")+'" loading="lazy"></a>'+tail;
    }
    return '<a class="message-link" href="'+clean+'" target="_blank" rel="noopener noreferrer">'+clean+'</a>'+tail;
   });
