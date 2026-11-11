@@ -629,6 +629,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_command_queue(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,command_text TEXT NOT NULL,command_style TEXT NOT NULL CHECK(command_style IN ('prefix','slash')),status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,completed_at INTEGER,result TEXT)").run();
  const say=async message=>{await env.DB.prepare("INSERT INTO bot_messages(id,channel_id,source_user_id,username,avatar_url,content,created_at) VALUES(?,?,?,?,?,?,?)").bind(uid(),channelId,u.id,"Mallow Bot",env.MALLOWBOT_ICON_URL||"https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png",message,now()+1).run();return json({ok:true,accepted:true,linked:false});};
+ if(!linkedDiscordChannel)return say("This channel is not linked to a Discord text channel, so Mallow-Bot commands cannot run here. Try a channel imported from Mallow Swamp Discord.");
  const linked=await env.DB.prepare("SELECT discord_user_id FROM discord_account_links WHERE user_id=? AND server_id=?").bind(u.id,member.server_id).first();
  if(command==="link"||command==="connect"||!linked){
   if(linked)return say("Your MallowCord account is already linked to Discord. You can now run Mallow-Bot commands here.");
@@ -637,7 +638,6 @@ if(p==="/api/bot/command"&&m==="POST"){
   await env.DB.prepare("INSERT INTO discord_link_codes(code_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(await sha(code),u.id,t+600,t).run();
   return json({ok:true,accepted:true,link_code:code,link_instructions:"Copy this private one-time code and send -mb link CODE in the official Mallow Swamp Discord server. It expires in 10 minutes."});
  }
- if(!linkedDiscordChannel)return say("This channel is not linked to a Discord text channel, so Mallow-Bot commands cannot run here. Try a channel imported from Mallow Swamp Discord.");
  const userMentions=[...args.matchAll(/(^|\s)@([A-Za-z0-9_]{3,24})\b/g)];
  for(const match of userMentions){const target=await env.DB.prepare("SELECT dul.discord_user_id FROM users u JOIN discord_user_links dul ON dul.user_id=u.id WHERE u.username_key=? AND dul.server_id=?").bind(match[2].toLowerCase(),systemServer.id).first();if(target)args=args.replace(match[0],match[1]+"<@"+target.discord_user_id+">");else{const role=await env.DB.prepare("SELECT l.discord_role_id FROM roles r JOIN discord_role_links l ON l.role_id=r.id WHERE r.server_id=? AND lower(r.name)=lower(?)").bind(systemServer.id,match[2]).first();if(role)args=args.replace(match[0],match[1]+"<@&"+role.discord_role_id+">");}}
  const channelMentions=[...args.matchAll(/(^|\s)#([A-Za-z0-9_-]{2,50})\b/g)];
