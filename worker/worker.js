@@ -466,10 +466,10 @@ async function ensureAccountTables(env){
  await env.DB.prepare("ALTER TABLE user_profiles ADD COLUMN discord_username TEXT").run().catch(()=>{});
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
 }
-x=p.match(/^\/api\/users\/([\w-]+)\/profile$/);
+x=p.match(/^\/api\/users\/([\w:%-]+)\/profile$/);
 if(x&&m==="GET"){
  await ensureAccountTables(env);
- const targetId=x[1];
+ const targetId=decodeURIComponent(x[1]);
  const shared=await env.DB.prepare("SELECT 1 FROM memberships mine JOIN memberships target ON target.server_id=mine.server_id WHERE mine.user_id=? AND target.user_id=? LIMIT 1").bind(u.id,targetId).first();
  if(!shared)return fail("You cannot view this profile.",403);
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
@@ -521,14 +521,14 @@ if(p==="/api/friends/request"&&m==="POST"){
   ]);
   return json({ok:true,accepted:true,message:"Friend request accepted. You are now friends."});
  }
- try{await env.DB.prepare("INSERT INTO friend_requests(id,sender_id,recipient_id,status,created_at,updated_at) VALUES(?,?,?,'pending',?,?)").bind(uid(),u.id,target.id,now(),now()).run();}
+ try{await env.DB.prepare("INSERT INTO friend_requests(id,sender_id,recipient_id,status,created_at,updated_at) VALUES(?,?,?,'pending',?,?) ON CONFLICT(sender_id,recipient_id) DO UPDATE SET status='pending',updated_at=excluded.updated_at").bind(uid(),u.id,target.id,now(),now()).run();}
  catch{return fail("A friend request is already pending.",409);}
  return json({ok:true,message:"Friend request sent."},201);
 }
-const friendAction=p.match(/^\/api\/friends\/([\w-]+)\/(accept|decline|remove)$/);
+const friendAction=p.match(/^\/api\/friends\/([\w:%-]+)\/(accept|decline|remove)$/);
 if(friendAction&&m==="POST"){
  await ensureSocialTables(env);
- const target=friendAction[1],action=friendAction[2],[low,high]=u.id<target?[u.id,target]:[target,u.id];
+ const target=decodeURIComponent(friendAction[1]),action=friendAction[2],[low,high]=u.id<target?[u.id,target]:[target,u.id];
  if(action==="accept"){
   const request=await env.DB.prepare("SELECT id FROM friend_requests WHERE sender_id=? AND recipient_id=? AND status='pending'").bind(target,u.id).first();
   if(!request)return fail("That friend request is no longer pending.",404);
