@@ -572,3 +572,22 @@ $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});locatio
  if(loginError){history.replaceState(null,"",location.pathname+location.hash);status("Sign-in with "+(loginError==="google"?"Google":"Discord")+" failed. Please try again.");}
  try{me=(await api("/auth/me")).user;await enterApp()}catch{}
 })();
+
+// Mobile channel/member drawers and touch navigation
+(()=>{
+ const app=document.querySelector("#app"),toggle=document.querySelector("#mobileChannelsToggle");
+ if(!app||!toggle)return;
+ let touchStart=null;
+ const mobile=()=>window.matchMedia("(max-width:650px)").matches;
+ function closeDrawers(){app.classList.remove("mobile-channels-open","mobile-members-open");toggle.setAttribute("aria-expanded","false");toggle.setAttribute("aria-label","Open channels")}
+ function openChannels(){app.classList.remove("mobile-members-open");app.classList.add("mobile-channels-open");toggle.setAttribute("aria-expanded","true");toggle.setAttribute("aria-label","Close channels")}
+ function openMembers(){app.classList.remove("mobile-channels-open");app.classList.add("mobile-members-open");toggle.setAttribute("aria-expanded","false")}
+ toggle.addEventListener("click",()=>{if(!mobile())return;if(app.classList.contains("mobile-channels-open"))closeDrawers();else openChannels()});
+ const backdrop=document.createElement("button");backdrop.type="button";backdrop.className="mobile-drawer-backdrop";backdrop.setAttribute("aria-label","Close navigation");backdrop.addEventListener("click",closeDrawers);app.append(backdrop);
+ document.querySelector("#channelList")?.addEventListener("click",e=>{if(mobile()&&e.target.closest(".channel"))closeDrawers()});
+ document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawers()});
+ const chat=document.querySelector(".chat");
+ chat?.addEventListener("touchstart",e=>{if(!mobile()||e.touches.length!==1)return;const t=e.touches[0];touchStart={x:t.clientX,y:t.clientY};},{passive:true});
+ chat?.addEventListener("touchend",e=>{if(!mobile()||!touchStart||!e.changedTouches.length)return;const t=e.changedTouches[0],dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y;touchStart=null;if(Math.abs(dx)<65||Math.abs(dx)<Math.abs(dy)*1.25)return;if(dx<0)openMembers();else if(app.classList.contains("mobile-members-open"))closeDrawers();},{passive:true});
+ window.addEventListener("resize",()=>{if(!mobile())closeDrawers()});
+})();
