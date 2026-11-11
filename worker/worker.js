@@ -100,6 +100,43 @@ if(discordBridgePath){
    await env.DB.prepare("INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?) ON CONFLICT(discord_role_id) DO UPDATE SET role_id=excluded.role_id").bind(rid,system.id,mrole).run();roleMap.push({discord_id:rid,mallow_id:mrole});
   }
   const roleLookup=new Map(roleMap.map(r=>[r.discord_id,r.mallow_id]));
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS channel_permissions(channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,target_type TEXT NOT NULL CHECK(target_type IN ('role','user')),target_id TEXT NOT NULL,allow_json TEXT NOT NULL DEFAULT '[]',deny_json TEXT NOT NULL DEFAULT '[]',updated_at INTEGER NOT NULL,PRIMARY KEY(channel_id,target_type,target_id))").run();
+  for(const ch of channels){
+   const linkedChannel=await env.DB.prepare("SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=? AND server_id=?").bind(String(ch.id||""),system.id).first();
+   if(!linkedChannel)continue;
+   const cid=linkedChannel.mallow_channel_id;
+   for(const overwrite of (Array.isArray(ch.overwrites)?ch.overwrites:[])){
+    const targetType=overwrite.target_type==="user"?"user":"role",discordTarget=String(overwrite.id||"");
+    let targetId=null;
+    if(targetType==="role"){
+     if(discordTarget===String(b.everyone_role_id||b.guild_id))targetId=everyone?.id||null;
+     else targetId=(await env.DB.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?").bind(discordTarget,system.id).first())?.role_id||null;
+    }else targetId=(await env.DB.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordTarget,system.id).first())?.user_id||null;
+    if(!targetId)continue;
+    const allowed=["view_channel","send_messages","read_message_history","attach_files","embed_links","manage_messages"];
+    const allow=(Array.isArray(overwrite.allow)?overwrite.allow:[]).filter(v=>allowed.includes(v));
+    const deny=(Array.isArray(overwrite.deny)?overwrite.deny:[]).filter(v=>allowed.includes(v));
+    await env.DB.prepare("INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at").bind(cid,targetType,targetId,JSON.stringify(allow),JSON.stringify(deny),now()).run();
+   }
+   if(ch.locked||["rules","server-rules"].includes(String(ch.name||"").toLowerCase())){
+    if(everyone)await env.DB.prepare("INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,'role',?,'[]','[\\"send_messages\\"]',?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET deny_json='[\\"send_messages\\"]',updated_at=excluded.updated_at").bind(cid,everyone.id,now()).run();
+   }
+  }
+  const emojis=Array.isArray(b.emojis)?b.emojis.slice(0,250):[];
+  if(emojis.length){
+   await env.DB.prepare("CREATE TABLE IF NOT EXISTS server_emojis(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,image_url TEXT NOT NULL,created_by TEXT NOT NULL REFERENCES users(id),created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+   await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_emoji_links(discord_emoji_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,emoji_id TEXT NOT NULL REFERENCES server_emojis(id) ON DELETE CASCADE)").run();
+   for(const emoji of emojis){
+    const eid=String(emoji.id||""),name=String(emoji.name||"").replace(/[^A-Za-z0-9_]/g,"").slice(0,32),url=String(emoji.image_url||"");
+    if(!eid||name.length<2||!url.startsWith("https://"))continue;
+    let linked=await env.DB.prepare("SELECT emoji_id FROM discord_emoji_links WHERE discord_emoji_id=? AND server_id=?").bind(eid,system.id).first();
+    let mid=linked?.emoji_id;
+    if(!mid){const existing=await env.DB.prepare("SELECT id FROM server_emojis WHERE server_id=? AND name=?").bind(system.id,name).first();mid=existing?.id||uid();}
+    await env.DB.prepare("INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,image_url=excluded.image_url").bind(mid,system.id,name,url,system.owner_id,now()).run();
+    await env.DB.prepare("INSERT INTO discord_emoji_links(discord_emoji_id,server_id,emoji_id) VALUES(?,?,?) ON CONFLICT(discord_emoji_id) DO UPDATE SET emoji_id=excluded.emoji_id").bind(eid,system.id,mid).run();
+   }
+  }
+
   let synced=0;
   for(const mem of members){
    const did=String(mem.id||"");if(!did||mem.bot)continue;
