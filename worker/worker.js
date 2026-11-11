@@ -623,7 +623,7 @@ if(p==="/api/bot/command"&&m==="POST"){
  if(!prefix&&!slash)return fail("Use -mb help, /mb help, or a slash command such as /balance.");
  const style=prefix?(content.toLowerCase().startsWith("-mb")?"prefix":"slash"):"slash";
  const command=(prefix?(prefix[1]||prefix[2]):slash[1]).toLowerCase();
- const args=prefix?(prefix[3]||"").trim():(slash[2]||"").trim();
+ let args=prefix?(prefix[3]||"").trim():(slash[2]||"").trim();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,linked_at INTEGER NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS discord_link_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
@@ -638,6 +638,10 @@ if(p==="/api/bot/command"&&m==="POST"){
   return json({ok:true,accepted:true,link_code:code,link_instructions:"Copy this private one-time code and send -mb link CODE in the official Mallow Swamp Discord server. It expires in 10 minutes."});
  }
  if(!linkedDiscordChannel)return say("This channel is not linked to a Discord text channel, so Mallow-Bot commands cannot run here. Try a channel imported from Mallow Swamp Discord.");
+ const userMentions=[...args.matchAll(/(^|\s)@([A-Za-z0-9_]{3,24})\b/g)];
+ for(const match of userMentions){const target=await env.DB.prepare("SELECT dul.discord_user_id FROM users u JOIN discord_user_links dul ON dul.user_id=u.id WHERE u.username_key=? AND dul.server_id=?").bind(match[2].toLowerCase(),systemServer.id).first();if(target)args=args.replace(match[0],match[1]+"<@"+target.discord_user_id+">");else{const role=await env.DB.prepare("SELECT l.discord_role_id FROM roles r JOIN discord_role_links l ON l.role_id=r.id WHERE r.server_id=? AND lower(r.name)=lower(?)").bind(systemServer.id,match[2]).first();if(role)args=args.replace(match[0],match[1]+"<@&"+role.discord_role_id+">");}}
+ const channelMentions=[...args.matchAll(/(^|\s)#([A-Za-z0-9_-]{2,50})\b/g)];
+ for(const match of channelMentions){const target=await env.DB.prepare("SELECT d.discord_channel_id FROM channels c JOIN discord_channel_links d ON d.mallow_channel_id=c.id WHERE c.server_id=? AND lower(c.name)=lower(?)").bind(systemServer.id,match[2]).first();if(target)args=args.replace(match[0],match[1]+"<#"+target.discord_channel_id+">");}
  const commandText=style==="prefix"?"-mb "+command+(args?" "+args:""):"/"+command+(args?" "+args:"");
  const id=uid();
  await env.DB.prepare("INSERT INTO discord_command_queue(id,user_id,channel_id,command_text,command_style,status,created_at) VALUES(?,?,?,?,?,'queued',?)").bind(id,u.id,channelId,commandText,style,now()).run();
