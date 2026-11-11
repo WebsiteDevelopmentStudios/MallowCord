@@ -1,34 +1,34 @@
-# Incremental Neon migration
+# Neon database migration
 
-Production remains on Cloudflare D1 by default. Neon is enabled only for features explicitly listed in `MALLOWCORD_NEON_FEATURES`.
+MallowCord now uses Neon PostgreSQL as its primary and only application database. Cloudflare D1 remains bound temporarily as an emergency rollback resource, but application queries are routed to Neon by `MALLOWCORD_DB_BACKEND=neon`.
 
-## Current first slice
+## Data reset
 
-- `oauth_diagnostics` is the first Neon-routed feature.
-- This table is operational diagnostics only; OAuth login and account/session data remain on D1.
-- Its writer catches database errors, so a Neon diagnostics failure does not fail login.
-- The Neon schema already includes `oauth_diagnostics`.
-- Every other query continues using D1. Do not set `MALLOWCORD_DB_BACKEND=neon`; that global switch is reserved for the eventual final migration.
+The D1 data is intentionally not copied. The owner approved starting fresh because no important data was stored there. Existing D1 users, sessions, servers, messages, and settings will not appear in Neon.
 
-## Feature routing
+The first owner account is created through the configured owner Google or Discord OAuth identity (or the existing bootstrap flow). The Worker then creates the initial Mallow Swamp system server, default roles, and general channel as needed.
 
-Set `MALLOWCORD_NEON_FEATURES` to a comma-separated list of feature names. Each selected call uses the Neon Hyperdrive binding. Unlisted calls continue using D1.
+## Database coverage
 
-Before moving a feature:
-1. Confirm its tables and constraints exist in Neon.
-2. Confirm it has no joins or transactions that cross database boundaries.
-3. Route only its own reads/writes.
-4. Verify the feature against live traffic and Neon records.
-5. Keep the previous D1 implementation available until verification is complete.
+The Neon database contains the application tables used by the Worker, including:
 
-Do not move account preferences, profiles, presence, sessions, messages, or memberships independently until their cross-table dependencies are redesigned. They currently share joins and foreign keys with core D1 tables.
+- Accounts, OAuth identities, sessions, profiles, preferences, recovery codes, presence, and bans
+- Servers, channels, sections, roles, memberships, member roles, permissions, onboarding, and emojis
+- Server messages, attachments, replies, reactions, forwards, notifications, and bot messages
+- Friend requests, friendships, DM conversations, and DM messages
+- Discord bridge links, command jobs, and outbox
+- Audit logs, OAuth diagnostics, and Worker error logs
+
+## Runtime compatibility
+
+The Worker uses `worker/postgres-adapter.js` to preserve the D1-style `prepare().bind().first/all/run()` interface while translating positional placeholders and supported SQLite insert/JSON/aggregation syntax to PostgreSQL.
+
+The D1 binding is intentionally retained during the first live verification window. Do not remove it until OAuth login, owner bootstrap, server creation, messaging, DMs, and Discord bridge operations have been tested against Neon.
+
+## Rollback
+
+To route application queries back to D1, set `MALLOWCORD_DB_BACKEND=d1` and `MALLOWCORD_NEON_FEATURES=` (empty), then deploy. This does not restore old D1 data; it only routes requests to the still-bound D1 database.
 
 ## Deployment
 
-The GitHub Actions workflow runs adapter tests on pull requests. Manual production deployment is available only from the `main` branch and uses Wrangler `--keep-vars` so existing dashboard secrets and variables are retained.
-
-Repository Actions secrets required:
-- `CLOUDFLARE_API_TOKEN`: token with Workers Scripts Edit and Hyperdrive Read permissions.
-- `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account ID.
-
-Run the workflow manually from GitHub Actions after the migration PR is reviewed and merged. The initial deployment keeps D1 bound and routes only OAuth diagnostics to Neon.
+The GitHub Actions workflow runs adapter tests on pull requests. After this PR is merged, manually run the Worker deployment workflow from `main`. It uses Wrangler `--keep-vars` to preserve dashboard secrets. Verify the live Worker has its Neon Hyperdrive binding and `MALLOWCORD_DB_BACKEND=neon`.
