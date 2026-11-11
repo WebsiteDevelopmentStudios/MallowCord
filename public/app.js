@@ -42,6 +42,15 @@ async function loadMemberList(){
   box.innerHTML=bot+group("MallowCord members",[])+roleMarkup+group("Discord Members — online",discord.filter(online))+group("Discord Members — offline",discord.filter(m=>!online(m)));
  }catch(e){console.warn("Member list:",e.message)}
 }
+function renderChannelLabel(name){
+ const source=String(name??"");
+ return esc(source).replace(/&lt;a?:([A-Za-z0-9_]{2,32}):(\d{5,25})&gt;|:([A-Za-z0-9_]{2,32}):/g,(token,discordName,discordId,shortName)=>{
+  const emojiName=discordName||shortName;
+  const emoji=serverEmojis.find(item=>String(item.name||"").toLowerCase()===emojiName.toLowerCase());
+  if(!emoji||!emoji.image_url)return token;
+  return '<img class="inline-custom-emoji channel-custom-emoji" src="'+esc(emoji.image_url)+'" alt=":'+esc(emoji.name)+':" title=":'+esc(emoji.name)+':" loading="lazy">';
+ });
+}
 async function loadChannels(){
  try{const ed=await api("/servers/"+serverId+"/emojis");serverEmojis=ed.emojis||[]}catch{serverEmojis=[]}
  const d=await api("/servers/"+serverId+"/channels"),box=$("#channelList");box.innerHTML="";
@@ -53,7 +62,7 @@ async function loadChannels(){
   lastCategory=category;
   const el=document.createElement("button");el.type="button";el.className="channel"+(ch.discord_channel_id?" discord-linked-channel":"");el.dataset.id=ch.id;
   if(ch.discord_channel_id){el.dataset.discordChannelId=ch.discord_channel_id;el.title="Synced with Discord #"+ch.name;}
-  el.innerHTML='<span class="channel-kind">'+(ch.kind==="voice"?'<svg class="channel-voice-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"></path></svg>':"#")+'</span><span class="channel-name">'+esc(ch.name)+'</span>'+(ch.discord_channel_id?'<span class="discord-channel-mark" title="Linked to Discord" aria-label="Linked to Discord">D</span>':"");
+  el.innerHTML='<span class="channel-kind">'+(ch.kind==="voice"?'<svg class="channel-voice-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"></path><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"></path></svg>':"#")+'</span><span class="channel-name">'+renderChannelLabel(ch.name)+'</span>'+(ch.discord_channel_id?'<span class="discord-channel-mark" title="Linked to Discord" aria-label="Linked to Discord">D</span>':"");
   el.onclick=()=>selectChannel(ch);el.addEventListener("contextmenu",e=>{e.preventDefault();openItemMenu("channel",ch.id,"#"+ch.name,e.clientX,e.clientY)});box.append(el);
  });
  mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0]);
