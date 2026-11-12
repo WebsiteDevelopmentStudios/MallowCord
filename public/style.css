@@ -929,3 +929,20 @@ body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-fil
   opacity:0!important;
   pointer-events:none!important;
 }
+
+
+/* Owner-only Cloudflare D1 usage meters. */
+.d1-usage-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.d1-usage-toolbar h3{margin:0 0 6px}
+.d1-usage-grid{display:grid;grid-template-columns:1fr;gap:12px;margin:0 0 16px}
+.d1-usage-card{padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.025)}
+.d1-usage-heading,.d1-usage-foot{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.d1-usage-heading{font-size:13px;margin-bottom:13px}
+.d1-usage-heading strong{font-size:14px;font-variant-numeric:tabular-nums}
+.d1-usage-heading strong small{font-size:11px;color:var(--text-muted);font-weight:500}
+.d1-usage-track{height:10px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.09)}
+.d1-usage-track span{display:block;height:100%;border-radius:inherit;background:var(--main-theme-color);transition:width .25s ease}
+.d1-usage-foot{margin-top:9px;color:var(--text-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.d1-usage-source{margin-top:12px}
+@media(min-width:850px){.d1-usage-grid{grid-template-columns:1fr 1fr}.d1-usage-card:last-child{grid-column:1/-1}}
+@media(max-width:560px){.d1-usage-card{padding:14px}.d1-usage-heading{align-items:flex-start;flex-direction:column;gap:5px}}
