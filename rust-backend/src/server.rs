@@ -1529,3 +1529,24 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/servers/{server_id}/sections/{section_id}", patch(update_section).delete(delete_section))
         .route("/api/channels/{channel_id}/permissions", get(get_channel_permissions).post(save_channel_permissions).delete(delete_channel_permissions))
 }
+
+
+#[cfg(test)]
+mod emoji_validation_tests {
+    use super::valid_emoji_image_url;
+
+    #[test]
+    fn accepts_https_and_supported_image_data_urls() {
+        assert!(valid_emoji_image_url("https://cdn.example.com/emoji.gif"));
+        assert!(valid_emoji_image_url("data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="));
+        assert!(valid_emoji_image_url("data:image/png;base64,iVBORw0KGgo="));
+    }
+
+    #[test]
+    fn rejects_unsafe_or_invalid_emoji_images() {
+        assert!(!valid_emoji_image_url("http://cdn.example.com/emoji.gif"));
+        assert!(!valid_emoji_image_url("data:image/gif;base64,not-base64"));
+        assert!(!valid_emoji_image_url("data:text/html;base64,PGgxPk5vPC9oMT4="));
+        assert!(!valid_emoji_image_url("https://cdn.example.com/emoji with spaces.gif"));
+    }
+}
