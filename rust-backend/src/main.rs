@@ -17,6 +17,7 @@ use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 mod account;
+mod admin;
 mod messages;
 mod notifications;
 mod realtime;
@@ -224,6 +225,7 @@ async fn main() {
         .route("/internal/v1/events", post(ingest_event).layer(DefaultBodyLimit::max(256 * 1024)))
         .merge(auth::router())
         .merge(account::router())
+        .merge(admin::router())
         .merge(messages::router())
         .merge(notifications::router())
         .merge(realtime::router())
