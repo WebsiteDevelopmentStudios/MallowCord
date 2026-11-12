@@ -301,7 +301,7 @@ if(p!=="/api/bootstrap"&&env.DB){const blocked=await getDatabase(env).prepare("S
 if(p==="/api/bootstrap"&&m==="POST")return fail("Password-based bootstrap has been removed. Sign in with the configured owner Google or Discord account.",410);
 
 /* Two-way Discord bridge for the official Mallow Swamp server. */
-async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-bridge-tables",async()=>{ await ensureDiscordBridgeTables(env);
+async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-bridge-tables",async()=>{ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
