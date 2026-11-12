@@ -6,6 +6,10 @@ import { proxyToRust, shouldProxyRustApi } from "./rust-proxy.js";
 test("proxies API domains already implemented in Rust", () => {
   const cases = [
     ["GET", "/api/auth/me"],
+    ["GET", "/api/auth/google"],
+    ["GET", "/api/auth/google/callback"],
+    ["GET", "/api/auth/discord"],
+    ["GET", "/api/auth/discord/callback"],
     ["POST", "/api/auth/logout"],
     ["POST", "/api/auth/exchange"],
     ["POST", "/api/auth/username"],
@@ -54,8 +58,8 @@ test("proxies API domains already implemented in Rust", () => {
 
 test("keeps unported and unsupported routes on the Worker", () => {
   const cases = [
-    ["GET", "/api/auth/google"],
-    ["GET", "/api/auth/discord/callback"],
+    ["GET", "/api/auth/google/token"],
+    ["POST", "/api/auth/discord/callback"],
     ["POST", "/api/servers"],
     ["GET", "/api/servers/server-1/invites"],
     ["GET", "/api/messages/message-1/reactions"],
