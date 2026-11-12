@@ -128,8 +128,9 @@ async fn create_ip_ban(
     let reason: String = input
         .reason
         .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .unwrap_or("Global IP ban")
-        .trim()
         .chars()
         .take(300)
         .collect();
@@ -164,14 +165,12 @@ async fn create_ip_ban(
         )
             .into_response();
     }
-    let details = json!({"reason": reason}).to_string();
     if let Err(error) = sqlx::query(
         "INSERT INTO audit_logs(id, actor_id, target_user_id, action, details, created_at)
-         VALUES($1, $2, NULL, 'global_ip_ban', $3, $4)",
+         VALUES($1, $2, NULL, 'global_ip_ban', NULL, $3)",
     )
     .bind(Uuid::new_v4().to_string())
     .bind(&user.id)
-    .bind(details)
     .bind(timestamp)
     .execute(&mut *tx)
     .await
