@@ -93,17 +93,41 @@ async function loadMemberList(){
  if(!serverId)return;
  try{
   const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[];
-  const discord=members.filter(m=>String(m.id).startsWith("discord:")),discordBots=discord.filter(m=>m.is_bot),discordHumans=discord.filter(m=>!m.is_bot),native=members.filter(m=>!String(m.id).startsWith("discord:"));
-  $("#memberCountLabel").textContent="MEMBERS — "+(members.length+(discordBots.some(m=>/mallow.?bot/i.test((m.username||"")+" "+(m.display_name||"")))?0:1));
-  const online=m=>["online","idle","dnd"].includes(m.presence),
-   roleData=m=>{try{return JSON.parse(m.roles_json||"[]")}catch{return []}},
-   button=m=>{const label=m.display_name||m.username||"User",avatar=m.avatar_url?'<img src="'+esc(m.avatar_url)+'" alt="">':esc(label[0].toUpperCase()),state=m.presence||"offline",highest=roleData(m).sort((x,y)=>(y.position||0)-(x.position||0))[0],nameColor=highest?.color&&/^#[0-9a-f]{6}$/i.test(highest.color)?highest.color:"";return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(m.id)+'"><span class="avatar status-avatar" data-status="'+esc(state)+'">'+avatar+'</span><span class="member-copy"><b'+(nameColor?' style="color:'+esc(nameColor)+'"':"")+'>'+esc(label)+'</b><small class="member-username">'+esc(m.username||"")+'</small></span></button>'},
+  const isBot=m=>Boolean(Number(m.is_bot));
+  const discord=members.filter(m=>String(m.id).startsWith("discord:"));
+  const discordBots=members.filter(isBot);
+  const discordHumans=discord.filter(m=>!isBot(m));
+  const native=members.filter(m=>!String(m.id).startsWith("discord:")&&!isBot(m));
+  const hasOfficialBot=discordBots.some(m=>/mallow.?bot/i.test((m.username||"")+" "+(m.display_name||"")));
+  $("#memberCountLabel").textContent="MEMBERS — "+(members.length+(hasOfficialBot?0:1));
+  const roleData=m=>{try{return JSON.parse(m.roles_json||"[]")}catch{return []}},
+   button=m=>{
+    const label=m.display_name||m.username||"User";
+    const avatar=m.avatar_url?'<img src="'+esc(m.avatar_url)+'" alt="">':esc(label[0].toUpperCase());
+    const state=m.presence||"offline";
+    const highest=roleData(m).sort((x,y)=>(y.position||0)-(x.position||0))[0];
+    const nameColor=highest?.color&&/^#[0-9a-f]{6}$/i.test(highest.color)?highest.color:"";
+    const botTag=isBot(m)?' <span class="bot-tag">BOT</span>':"";
+    return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(m.id)+'"><span class="avatar status-avatar" data-status="'+esc(state)+'">'+avatar+'</span><span class="member-copy"><b'+(nameColor?' style="color:'+esc(nameColor)+'"':"")+'>'+esc(label)+botTag+'</b><small class="member-username">'+esc(m.username||"")+'</small></span></button>';
+   },
    group=(name,rows)=>rows.length?'<div class="member-group-title">'+esc(name)+' <span>'+rows.length+'</span></div>'+rows.map(button).join(""):"",
-   roleGroups=()=>{const map=new Map();for(const member of native){const rs=roleData(member).slice().sort((x,y)=>(Number(y.position)||0)-(Number(x.position)||0));const highest=rs[0];if(!highest){if(!map.has("@everyone"))map.set("@everyone",[]);map.get("@everyone").push(member);continue}if(!map.has(highest.id))map.set(highest.id,{role:highest,members:[]});map.get(highest.id).members.push(member)}return [...map.values()].sort((x,y)=>{const aa=x.role?.position??-1,bb=y.role?.position??-1;return bb-aa})},
-   roleMarkup=roleGroups().map(item=>{if(Array.isArray(item))return group("@everyone",item);return '<div class="member-group-title" style="color:'+esc(item.role.color||"#99aab5")+'">'+esc(item.role.name)+' <span>'+item.members.length+'</span></div>'+item.members.map(button).join("")}).join("");
-  const officialBot='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>';
-  const mallowBotRecord=discordBots.find(m=>/mallow.?bot/i.test((m.username||"")+" "+(m.display_name||"")));const otherBots=discordBots.filter(m=>m!==mallowBotRecord);const botEntry=mallowBotRecord?button(mallowBotRecord):officialBot;const botGroup='<div class="member-group-title bot-group-title">Bots <span>'+(otherBots.length+1)+'</span></div>'+botEntry+otherBots.map(button).join("");
-  box.innerHTML=roleMarkup+botGroup+group("Discord Members — online",discordHumans.filter(online))+group("Discord Members — offline",discordHumans.filter(m=>!online(m)));
+   roleGroups=()=>{
+    const map=new Map();
+    for(const member of native){
+     const rs=roleData(member).slice().sort((x,y)=>(Number(y.position)||0)-(Number(x.position)||0)),highest=rs[0];
+     if(!highest){if(!map.has("@everyone"))map.set("@everyone",[]);map.get("@everyone").push(member);continue}
+     if(!map.has(highest.id))map.set(highest.id,{role:highest,members:[]});
+     map.get(highest.id).members.push(member);
+    }
+    return [...map.values()].sort((x,y)=>(y.role?.position??-1)-(x.role?.position??-1));
+   };
+  const roleMarkup=roleGroups().map(item=>Array.isArray(item)?group("@everyone",item):'<div class="member-group-title" style="color:'+esc(item.role.color||"#99aab5")+'">'+esc(item.role.name)+' <span>'+item.members.length+'</span></div>'+item.members.map(button).join("")).join("");
+  const officialBot='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span></button>';
+  const mallowBotRecord=discordBots.find(m=>/mallow.?bot/i.test((m.username||"")+" "+(m.display_name||"")));
+  const otherBots=discordBots.filter(m=>m!==mallowBotRecord);
+  const botEntry=mallowBotRecord?button(mallowBotRecord):officialBot;
+  const botGroup='<div class="member-group-title bot-group-title">Bots <span>'+(otherBots.length+1)+'</span></div>'+botEntry+otherBots.map(button).join("");
+  box.innerHTML=roleMarkup+botGroup+group("Discord Members — online",discordHumans.filter(m=>["online","idle","dnd"].includes(m.presence)))+group("Discord Members — offline",discordHumans.filter(m=>!["online","idle","dnd"].includes(m.presence)));
  }catch(e){console.warn("Member list:",e.message)}
 }
 function renderChannelLabel(name){
