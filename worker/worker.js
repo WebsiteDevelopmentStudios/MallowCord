@@ -411,6 +411,7 @@ if(discordBridgePath){
    await getDatabase(env).prepare("UPDATE user_profiles SET is_bot=? WHERE user_id=?").bind(mem.bot?1:0,userId).run();
    await getDatabase(env).prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(did,system.id,userId,now()).run();
    const accountLink=await getDatabase(env).prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(did,system.id).first();const memberUserId=accountLink?.user_id||userId;
+   if(memberUserId!==userId)await getDatabase(env).prepare("UPDATE user_profiles SET is_bot=?,status=?,avatar_url=COALESCE(?,avatar_url) WHERE user_id=?").bind(mem.bot?1:0,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",String(mem.avatar_url||"").slice(0,1000)||null,memberUserId).run();
    await getDatabase(env).prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,memberUserId,now()).run();
    if(everyone)await getDatabase(env).prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,memberUserId,everyone.id).run();
    if(memberRole)await getDatabase(env).prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(system.id,memberUserId,memberRole.id).run();
@@ -429,9 +430,11 @@ if(discordBridgePath){
    getDatabase(env).prepare("SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ("+marks+")").bind(system.id,...ids).all(),
    getDatabase(env).prepare("SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ("+marks+")").bind(system.id,...ids).all()
   ]);
-  const linked=new Map();for(const row of userLinks.results||[])linked.set(row.discord_user_id,row.user_id);for(const row of accountLinks.results||[])linked.set(row.discord_user_id,row.user_id);
+  const linked=new Map();
+  for(const row of userLinks.results||[]){if(!linked.has(row.discord_user_id))linked.set(row.discord_user_id,new Set());linked.get(row.discord_user_id).add(row.user_id);}
+  for(const row of accountLinks.results||[]){if(!linked.has(row.discord_user_id))linked.set(row.discord_user_id,new Set());linked.get(row.discord_user_id).add(row.user_id);}
   const statements=[];
-  for(const item of updates){const did=String(item.user_id||""),userId=linked.get(did),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline";if(userId)statements.push(getDatabase(env).prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND COALESCE(status,'offline')<>?").bind(status,now(),userId,status));}
+  for(const item of updates){const did=String(item.user_id||""),userIds=linked.get(did)||new Set(),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline";for(const userId of userIds)statements.push(getDatabase(env).prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND COALESCE(status,'offline')<>?").bind(status,now(),userId,status));}
   if(!statements.length)return json({ok:true,updated:0});
   const results=await getDatabase(env).batch(statements);return json({ok:true,updated:results.reduce((n,r)=>n+(r.meta?.changes||0),0)});
  }
