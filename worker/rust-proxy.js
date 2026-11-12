@@ -1,5 +1,7 @@
 const RUST_ROUTES = [
   ["GET", /^\/api\/auth\/me$/],
+  ["GET", /^\/api\/auth\/(?:google|discord)$/],
+  ["GET", /^\/api\/auth\/(?:google|discord)\/callback$/],
   ["POST", /^\/api\/auth\/logout$/],
   ["POST", /^\/api\/auth\/exchange$/],
   ["POST", /^\/api\/auth\/username$/],
