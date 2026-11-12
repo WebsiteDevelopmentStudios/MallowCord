@@ -1125,3 +1125,47 @@ body{
 #app .dm-sidebar-scroll,#app .dm-messages{
   overscroll-behavior:contain;
 }
+
+
+/* Final avatar geometry override: fixed square frames with circular image clipping. */
+#app .member-profile-trigger .avatar,
+#app .member .avatar,
+#app .message-group>.avatar,
+#app .message .avatar{
+  width:34px!important;height:34px!important;min-width:34px!important;min-height:34px!important;
+  max-width:34px!important;max-height:34px!important;flex:0 0 34px!important;
+  aspect-ratio:1/1!important;box-sizing:border-box!important;border-radius:50%!important;
+}
+#app .member-profile-trigger .avatar,
+#app .member .avatar,
+#app .message-group>.avatar,
+#app .message .avatar{position:relative!important;overflow:visible!important}
+#app .member-profile-trigger .avatar img,
+#app .member .avatar img,
+#app .message-group>.avatar img,
+#app .message .avatar img,
+#app .dm-sidebar .social-user-avatar{
+  display:block!important;position:absolute!important;inset:0!important;
+  width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;
+  max-width:none!important;max-height:none!important;object-fit:cover!important;
+  object-position:center!important;border-radius:50%!important;clip-path:circle(50%)!important;
+}
+#app .dm-sidebar .social-user-avatar{
+  width:34px!important;height:34px!important;min-width:34px!important;min-height:34px!important;
+  max-width:34px!important;max-height:34px!important;flex:0 0 34px!important;aspect-ratio:1/1!important;
+}
+#app .dm-profile-avatar{
+  position:relative!important;display:block!important;width:92px!important;height:92px!important;
+  min-width:92px!important;min-height:92px!important;max-width:92px!important;max-height:92px!important;
+  flex:0 0 92px!important;aspect-ratio:1/1!important;overflow:hidden!important;border-radius:50%!important;
+}
+#app .dm-profile-avatar img{
+  position:absolute!important;inset:0!important;width:100%!important;height:100%!important;
+  max-width:none!important;max-height:none!important;object-fit:cover!important;
+  border-radius:50%!important;clip-path:circle(50%)!important;
+}
+#profilePopover .profile-popover-avatar{
+  width:72px!important;height:72px!important;min-width:72px!important;min-height:72px!important;
+  max-width:72px!important;max-height:72px!important;flex:0 0 72px!important;
+  object-fit:cover!important;clip-path:circle(50%)!important;
+}
