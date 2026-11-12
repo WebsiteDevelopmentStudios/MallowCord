@@ -1,0 +1,47 @@
+name: Rust backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "rust-backend/**"
+      - ".github/workflows/rust-backend.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust-backend/**"
+      - ".github/workflows/rust-backend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mallowcord_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mallowcord_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/mallowcord_test
+    defaults:
+      run:
+        working-directory: rust-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all
+      - run: cargo test --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
