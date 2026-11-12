@@ -210,10 +210,10 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         let channel_id = linked.map(|r| r.mallow_channel_id)
             .or_else(|| existing.map(|r| r.id)).unwrap_or_else(new_id);
         channel_writes.push(db.prepare(
-            "INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position"
+            "INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position WHERE channels.name IS NOT excluded.name OR channels.position IS NOT excluded.position"
         ).bind(&[text(&channel_id), text(&server.id), text(name), number(channel.position as i64)])?);
         channel_writes.push(db.prepare(
-            "INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at)              VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET              server_id=excluded.server_id,mallow_channel_id=excluded.mallow_channel_id,             category_name=excluded.category_name,updated_at=excluded.updated_at"
+            "INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at)              VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET              server_id=excluded.server_id,mallow_channel_id=excluded.mallow_channel_id,             category_name=excluded.category_name,updated_at=excluded.updated_at WHERE discord_channel_links.server_id IS NOT excluded.server_id OR discord_channel_links.mallow_channel_id IS NOT excluded.mallow_channel_id OR discord_channel_links.category_name IS NOT excluded.category_name"
         ).bind(&[
             text(discord_id), text(&server.id), text(&channel_id),
             text(channel.category.as_deref().unwrap_or("")), number(timestamp)
@@ -242,10 +242,10 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         let color = role.color.as_deref().filter(|v| v.len()==7 && v.starts_with('#')
             && v[1..].bytes().all(|b| b.is_ascii_hexdigit())).unwrap_or("#99aab5");
         role_writes.push(db.prepare(
-            "INSERT INTO roles(id,server_id,name,is_system,position,color) VALUES(?,?,?,0,?,?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position,color=excluded.color"
+            "INSERT INTO roles(id,server_id,name,is_system,position,color) VALUES(?,?,?,0,?,?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position,color=excluded.color WHERE roles.name IS NOT excluded.name OR roles.position IS NOT excluded.position OR roles.color IS NOT excluded.color"
         ).bind(&[text(&role_id),text(&server.id),text(name),number(role.position as i64),text(color)])?);
         role_writes.push(db.prepare(
-            "INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?)              ON CONFLICT(discord_role_id) DO UPDATE SET server_id=excluded.server_id,role_id=excluded.role_id"
+            "INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?)              ON CONFLICT(discord_role_id) DO UPDATE SET server_id=excluded.server_id,role_id=excluded.role_id WHERE discord_role_links.server_id IS NOT excluded.server_id OR discord_role_links.role_id IS NOT excluded.role_id"
         ).bind(&[text(discord_id),text(&server.id),text(&role_id)])?);
         role_ids.insert(discord_id.to_owned(), role_id.clone());
         role_map.push(json!({"discord_id":discord_id,"mallow_id":role_id}));
@@ -281,7 +281,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             let allow: Vec<&str> = overwrite.allow.iter().map(String::as_str).filter(|p| allowed_permissions.contains(p)).collect();
             let deny: Vec<&str> = overwrite.deny.iter().map(String::as_str).filter(|p| allowed_permissions.contains(p)).collect();
             permission_writes.push(db.prepare(
-                "INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at"
+                "INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at WHERE channel_permissions.allow_json IS NOT excluded.allow_json OR channel_permissions.deny_json IS NOT excluded.deny_json"
             ).bind(&[text(channel_id),text(target_type),text(&target_id),text(&serde_json::to_string(&allow)?),text(&serde_json::to_string(&deny)?),number(timestamp)])?);
         }
         if channel.name.eq_ignore_ascii_case("rules") || channel.name.eq_ignore_ascii_case("server-rules") {
@@ -307,10 +307,10 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         } else { None };
         let emoji_id = linked.map(|r|r.id).or_else(||existing.map(|r|r.id)).unwrap_or_else(new_id);
         emoji_writes.push(db.prepare(
-            "INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,image_url=excluded.image_url"
+            "INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,image_url=excluded.image_url WHERE server_emojis.name IS NOT excluded.name OR server_emojis.image_url IS NOT excluded.image_url"
         ).bind(&[text(&emoji_id),text(&server.id),text(&name),text(&emoji.image_url),text(&server.owner_id),number(timestamp)])?);
         emoji_writes.push(db.prepare(
-            "INSERT INTO discord_emoji_links(discord_emoji_id,server_id,emoji_id) VALUES(?,?,?) ON CONFLICT(discord_emoji_id) DO UPDATE SET server_id=excluded.server_id,emoji_id=excluded.emoji_id"
+            "INSERT INTO discord_emoji_links(discord_emoji_id,server_id,emoji_id) VALUES(?,?,?) ON CONFLICT(discord_emoji_id) DO UPDATE SET server_id=excluded.server_id,emoji_id=excluded.emoji_id WHERE discord_emoji_links.server_id IS NOT excluded.server_id OR discord_emoji_links.emoji_id IS NOT excluded.emoji_id"
         ).bind(&[text(discord_id),text(&server.id),text(&emoji_id)])?);
     }
     for chunk in emoji_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
@@ -333,14 +333,14 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             "INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at)              VALUES(?,?,?,'basic','active',?,?)"
         ).bind(&[text(&user_id),text(&username),text(&username.to_lowercase()),number(timestamp),number(timestamp)])?);
         member_writes.push(db.prepare(
-            "INSERT INTO user_profiles(user_id,display_name,avatar_url,status,discord_username,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,discord_username=excluded.discord_username,updated_at=excluded.updated_at"
+            "INSERT INTO user_profiles(user_id,display_name,avatar_url,status,discord_username,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,discord_username=excluded.discord_username,updated_at=excluded.updated_at WHERE user_profiles.display_name IS NOT excluded.display_name OR user_profiles.avatar_url IS NOT excluded.avatar_url OR user_profiles.status IS NOT excluded.status OR user_profiles.discord_username IS NOT excluded.discord_username"
         ).bind(&[
             text(&user_id), text(display), text(avatar),
             text(match member.status.as_deref() { Some("online") => "online", Some("idle") => "idle", Some("dnd") => "dnd", _ => "offline" }),
             text(&member.username), number(timestamp)
         ])?);
         member_writes.push(db.prepare(
-            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?)              ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at"
+            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?)              ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at WHERE discord_user_links.server_id IS NOT excluded.server_id OR discord_user_links.user_id IS NOT excluded.user_id"
         ).bind(&[text(discord_id),text(&server.id),text(&user_id),number(timestamp)])?);
         member_writes.push(db.prepare(
             "INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)"
