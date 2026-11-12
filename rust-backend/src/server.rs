@@ -184,7 +184,7 @@ async fn list_servers(
         .unwrap_or_else(|_| "https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png".to_owned());
     let rows = sqlx::query_as::<_, ServerView>(
         "SELECT s.id, s.name, COALESCE(s.icon_url, $1) AS icon_url,
-                s.is_system, m.joined_at
+                s.is_system::BIGINT AS is_system, m.joined_at
          FROM memberships m
          JOIN servers s ON s.id = m.server_id
          WHERE m.user_id = $2
@@ -235,7 +235,7 @@ async fn list_channels(
              UNION
              SELECT id FROM roles WHERE server_id = $1 AND name = '@everyone'
          )
-         SELECT c.id, c.name, c.kind, c.position, c.section_id,
+         SELECT c.id, c.name, c.kind, c.position::BIGINT AS position, c.section_id,
                 ss.name AS section_name, d.category_name, d.discord_channel_id
          FROM channels c
          LEFT JOIN discord_channel_links d
@@ -314,7 +314,7 @@ async fn list_roles(
     };
     let _ = owner_id;
     let roles = sqlx::query_as::<_, RoleView>(
-        "SELECT id, name, is_system, position, pingable, COALESCE(color, '#99aab5') AS color
+        "SELECT id, name, is_system, position::BIGINT AS position, pingable::BIGINT AS pingable, COALESCE(color, '#99aab5') AS color
          FROM roles WHERE server_id = $1 ORDER BY position DESC, name",
     )
     .bind(&server_id)
@@ -916,7 +916,7 @@ async fn list_sections(
         Err(response) => return *response,
     };
     match sqlx::query_as::<_, SectionView>(
-        "SELECT id, name, position FROM server_sections WHERE server_id = $1 ORDER BY position, name",
+        "SELECT id, name, position::BIGINT AS position FROM server_sections WHERE server_id = $1 ORDER BY position, name",
     )
     .bind(&server_id)
     .fetch_all(&pool)
