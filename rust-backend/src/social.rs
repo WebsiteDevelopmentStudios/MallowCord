@@ -677,20 +677,29 @@ async fn send_dm(
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "dm_send_failed"}))).into_response();
     }
 
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "message": {
-                "id": id,
-                "content": content,
-                "created_at": created_at,
-                "author_id": user.id,
-                "username": user.username,
-                "display_name": user.username
-            }
-        })),
+    let message = json!({
+        "id": id,
+        "content": content,
+        "created_at": created_at,
+        "author_id": user.id,
+        "username": user.username,
+        "display_name": user.username
+    });
+    let recipients = sqlx::query_as::<_, (String, String)>(
+        "SELECT user_low_id, user_high_id FROM dm_conversations WHERE id = $1",
     )
-        .into_response()
+    .bind(&conversation_id)
+    .fetch_optional(&pool)
+    .await;
+    if let Ok(Some((low_id, high_id))) = recipients {
+        let _ = state.realtime.send(json!({
+            "type": "dm.message.created",
+            "conversation_id": conversation_id,
+            "recipient_ids": [low_id, high_id],
+            "message": message.clone()
+        }));
+    }
+    (StatusCode::CREATED, Json(json!({"message": message}))).into_response()
 }
 
 pub(crate) fn router() -> Router<AppState> {
