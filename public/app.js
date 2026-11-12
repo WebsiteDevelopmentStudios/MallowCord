@@ -454,7 +454,8 @@ function d1FormatBytes(value){
 }
 function d1UsageMeter(label,used,limit,unit){
  const pct=limit>0?Math.min(100,Math.max(0,used/limit*100)):0;
- return '<section class="d1-usage-card"><div class="d1-usage-heading"><b>'+esc(label)+'</b><strong>'+esc(d1FormatNumber(used))+' <small>/ '+esc(d1FormatNumber(limit))+'</small></strong></div><div class="d1-usage-track" role="progressbar" aria-label="'+esc(label)+'" aria-valuemin="0" aria-valuemax="'+limit+'" aria-valuenow="'+Math.min(limit,used)+'"><span style="width:'+pct.toFixed(2)+'%"></span></div><div class="d1-usage-foot"><span>'+pct.toFixed(2)+'% used</span><span>'+esc(d1FormatNumber(Math.max(0,limit-used)))+' '+esc(unit)+' left</span></div></section>';
+ const format=value=>unit==="bytes"?d1FormatBytes(value):d1FormatNumber(value);
+ return '<section class="d1-usage-card"><div class="d1-usage-heading"><b>'+esc(label)+'</b><strong>'+esc(format(used))+' <small>/ '+esc(format(limit))+'</small></strong></div><div class="d1-usage-track" role="progressbar" aria-label="'+esc(label)+'" aria-valuemin="0" aria-valuemax="'+limit+'" aria-valuenow="'+Math.min(limit,used)+'"><span style="width:'+pct.toFixed(2)+'%"></span></div><div class="d1-usage-foot"><span>'+pct.toFixed(2)+'% used</span><span>'+esc(format(Math.max(0,limit-used)))+' left</span></div></section>';
 }
 async function loadD1Usage(){
  const root=$("#accountSettingsContent");
