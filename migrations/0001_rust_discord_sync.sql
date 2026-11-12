@@ -59,3 +59,28 @@ CREATE TABLE IF NOT EXISTS discord_sync_cursors (
   cursor_value TEXT,
   updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS channel_permissions (
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK(target_type IN ('role','user')),
+  target_id TEXT NOT NULL,
+  allow_json TEXT NOT NULL DEFAULT '[]',
+  deny_json TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(channel_id,target_type,target_id)
+);
+
+CREATE TABLE IF NOT EXISTS server_emojis (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  image_url TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at INTEGER NOT NULL,
+  UNIQUE(server_id,name)
+);
+CREATE TABLE IF NOT EXISTS discord_emoji_links (
+  discord_emoji_id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  emoji_id TEXT NOT NULL REFERENCES server_emojis(id) ON DELETE CASCADE
+);
