@@ -189,12 +189,16 @@ async fn ingest_event(
 }
 
 
-fn bounded_env_u32(name: &str, default: u32, minimum: u32, maximum: u32) -> u32 {
-    env::var(name)
-        .ok()
+fn bounded_u32(value: Option<&str>, default: u32, minimum: u32, maximum: u32) -> u32 {
+    value
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(default)
         .clamp(minimum, maximum)
+}
+
+fn bounded_env_u32(name: &str, default: u32, minimum: u32, maximum: u32) -> u32 {
+    let value = env::var(name).ok();
+    bounded_u32(value.as_deref(), default, minimum, maximum)
 }
 
 #[tokio::main]
@@ -406,17 +410,18 @@ mod tests {
 
 #[cfg(test)]
 mod pool_config_tests {
-    use super::bounded_env_u32;
+    use super::bounded_u32;
 
     #[test]
     fn pool_settings_use_defaults_for_missing_or_invalid_values() {
-        assert_eq!(bounded_env_u32("UNUSED", 20, 1, 100), 20);
-        assert_eq!(bounded_env_u32("UNUSED", 20, 1, 100), 20);
+        assert_eq!(bounded_u32(None, 20, 1, 100), 20);
+        assert_eq!(bounded_u32(Some("invalid"), 20, 1, 100), 20);
     }
 
     #[test]
     fn pool_settings_are_clamped_to_safe_bounds() {
-        assert_eq!(bounded_env_u32("UNUSED", 20, 1, 10), 10);
-        assert_eq!(bounded_env_u32("UNUSED", 1, 0, 20), 1);
+        assert_eq!(bounded_u32(Some("200"), 20, 1, 100), 100);
+        assert_eq!(bounded_u32(Some("0"), 20, 1, 100), 1);
+        assert_eq!(bounded_u32(Some("5"), 20, 0, 3), 3);
     }
 }
