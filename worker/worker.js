@@ -61,7 +61,10 @@ async function ensureOAuthTables(env){return ensureSchemaOnce("oauth-tables",asy
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS oauth_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
 
 });}
-async function ensureNotificationTables(env){return ensureSchemaOnce("notification-tables",async()=>{await ensureNotificationTables(env);});}
+async function ensureNotificationTables(env){return ensureSchemaOnce("notification-tables",async()=>{
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),scope_id TEXT NOT NULL,muted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,scope_type,scope_id))").run();
+});}
 async function ensureMemberDirectoryTables(env){return ensureSchemaOnce("member-directory-tables",async()=>{
  await ensureAccountTables(env);
  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
@@ -72,8 +75,15 @@ async function ensureRoleColumns(env){return ensureSchemaOnce("role-columns",asy
  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
 });}
-async function ensureMessageHistoryTables(env){return ensureSchemaOnce("message-history-tables",async()=>{await ensureNotificationTables(env);await getDatabase(env).prepare("SELECT m.id,m.content,u.username,c.server_id FROM messages m JOIN users u ON u.id=m.author_id JOIN channels c ON c.id=m.channel_id WHERE m.id=?").run();await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();});}
-async function ensureChannelSections(env){return ensureSchemaOnce("channel-sections",async()=>{await ensureChannelSections(env);});}
+async function ensureMessageHistoryTables(env){return ensureSchemaOnce("message-history-tables",async()=>{
+ await ensureNotificationTables(env);
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS message_forwards(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,source_message_id TEXT,source_username TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+});}
+async function ensureChannelSections(env){return ensureSchemaOnce("channel-sections",async()=>{
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
+ await getDatabase(env).prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});
+});}
 async function ensureBridgeSystemServer(env){if(!bridgeSystemServerPromise){bridgeSystemServerPromise=(async()=>{
  let server=await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(server){await restoreLegacySystemServer(env,server.id);return server;}
