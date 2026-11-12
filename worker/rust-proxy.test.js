@@ -22,6 +22,8 @@ test("proxies API domains already implemented in Rust", () => {
     ["POST", "/api/account/profile"],
     ["GET", "/api/servers"],
     ["GET", "/api/servers/server-1/channels"],
+    ["GET", "/api/servers/server-1/onboarding"],
+    ["POST", "/api/servers/server-1/onboarding"],
     ["GET", "/api/servers/server-1/emojis"],
     ["POST", "/api/servers/server-1/emojis"],
     ["DELETE", "/api/servers/server-1/emojis/emoji-1"],
