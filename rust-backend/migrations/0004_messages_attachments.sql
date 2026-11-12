@@ -69,3 +69,22 @@ CREATE TABLE IF NOT EXISTS discord_outbox (
     processed_at BIGINT,
     discord_message_id TEXT
 );
+
+CREATE TABLE IF NOT EXISTS user_notification_settings (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope_type TEXT NOT NULL CHECK(scope_type IN ('server', 'channel')),
+    scope_id TEXT NOT NULL,
+    muted BIGINT NOT NULL DEFAULT 0,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY(user_id, scope_type, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS server_emojis (
+    id TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    image_url TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    created_at BIGINT NOT NULL,
+    UNIQUE(server_id, name)
+);
