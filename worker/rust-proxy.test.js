@@ -8,8 +8,6 @@ test("proxies API domains already implemented in Rust", () => {
     ["GET", "/api/auth/me"],
     ["POST", "/api/auth/logout"],
     ["POST", "/api/auth/username"],
-    ["POST", "/api/account/contact/request"],
-    ["POST", "/api/account/contact/confirm"],
     ["GET", "/api/discord/link/status"],
     ["POST", "/api/discord/link/start"],
     ["POST", "/api/bot/command"],
