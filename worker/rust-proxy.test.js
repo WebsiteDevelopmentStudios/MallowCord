@@ -31,6 +31,7 @@ test("proxies API domains already implemented in Rust", () => {
     ["POST", "/api/integrations/mallowbot/users/user-2/ban"],
     ["POST", "/api/integrations/mallowbot/users/user-3/unban"],
     ["POST", "/api/integrations/mallowbot/users/user-4/delete"],
+    ["POST", "/api/admin/ip-ban"],
     ["GET", "/api/admin/audit"],
   ];
 
@@ -45,7 +46,6 @@ test("keeps unported and unsupported routes on the Worker", () => {
     ["GET", "/api/auth/discord/callback"],
     ["POST", "/api/auth/exchange"],
     ["POST", "/api/account/contact/request"],
-    ["POST", "/api/admin/ip-ban"],
     ["POST", "/api/servers"],
     ["GET", "/api/servers/server-1/invites"],
     ["GET", "/api/messages/message-1/reactions"],
