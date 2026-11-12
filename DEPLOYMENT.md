@@ -57,6 +57,7 @@ Set these as server-side environment variables on the Rust host:
 - `MALLOWCORD_REQUIRE_DATABASE=true`.
 - `MALLOWCORD_BIND_ADDR=0.0.0.0:8081`.
 - `RUST_LOG=info`.
+- `MALLOWCORD_OBJECT_STORE_ENDPOINT`, `MALLOWCORD_OBJECT_STORE_REGION`, `MALLOWCORD_OBJECT_STORE_BUCKET`, `MALLOWCORD_OBJECT_STORE_ACCESS_KEY`, and `MALLOWCORD_OBJECT_STORE_SECRET_KEY` for S3-compatible attachment storage.
 
 Do not reuse the Cloudflare Worker service key as the HMAC secret. Do not put any of these values in GitHub, the browser, or the Render static site.
 
@@ -75,7 +76,7 @@ Run it with the environment variables above and expose port 8081 only behind a f
 - `POST /internal/v1/events` rejects missing, expired, or invalid signatures.
 - Repeated event IDs do not create duplicate inbox rows.
 
-The SQLx migration creates only the Rust service's event inbox table. It does not modify or reset existing MallowCord user, OAuth, server, message, friend, or DM data.
+The SQLx migrations add Rust runtime tables and indexes while retaining existing application identifiers. Review the migration files before production startup; they also relax the message content check to support attachment-only messages. They do not reset existing users, OAuth identities, servers, channels, messages, friends, or DMs.
 
 ### Mallow-Bot event sender
 
