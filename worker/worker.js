@@ -62,6 +62,16 @@ async function ensureOAuthTables(env){return ensureSchemaOnce("oauth-tables",asy
 
 });}
 async function ensureNotificationTables(env){return ensureSchemaOnce("notification-tables",async()=>{await ensureNotificationTables(env);});}
+async function ensureMemberDirectoryTables(env){return ensureSchemaOnce("member-directory-tables",async()=>{
+ await ensureAccountTables(env);
+ await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
+ await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
+});}
+async function ensureRoleColumns(env){return ensureSchemaOnce("role-columns",async()=>{
+ await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
+ await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
+});}
 async function ensureBridgeSystemServer(env){if(!bridgeSystemServerPromise){bridgeSystemServerPromise=(async()=>{
  let server=await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(server){await restoreLegacySystemServer(env,server.id);return server;}
@@ -838,17 +848,13 @@ if(serverAdminMatch){
   return json({stats:{members:members.count,channels:channels.count,messages:messages.count,roles:roles.count,created_at:server.created_at}});
  }
  if(section==="members"&&m==="GET"){
-  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
-  await ensureAccountTables(env);
-  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
-  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
-  const a=await getDatabase(env).prepare("SELECT u.id,COALESCE(up.discord_username,u.username) AS username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,COALESCE(up.is_bot,0) AS is_bot,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.user_id=u.id) OR EXISTS(SELECT 1 FROM discord_account_links dal WHERE dal.user_id=u.id) THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles,(SELECT json_group_array(json_object('id',r.id,'name',r.name,'color',COALESCE(r.color,'#99aab5'),'position',r.position)) FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id) AS roles_json FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-90,sid).all();
+   await ensureMemberDirectoryTables(env);
+   const a=await getDatabase(env).prepare("SELECT u.id,COALESCE(up.discord_username,u.username) AS username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,COALESCE(up.is_bot,0) AS is_bot,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.user_id=u.id) OR EXISTS(SELECT 1 FROM discord_account_links dal WHERE dal.user_id=u.id) THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles,(SELECT json_group_array(json_object('id',r.id,'name',r.name,'color',COALESCE(r.color,'#99aab5'),'position',r.position)) FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id) AS roles_json FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-90,sid).all();
   return json({members:a.results,can_manage:manager});
  }
  if(section==="roles"&&m==="GET"){
-  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
-  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
-  const a=await getDatabase(env).prepare("SELECT id,name,is_system,position,pingable,color FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
+   await ensureRoleColumns(env);
+   const a=await getDatabase(env).prepare("SELECT id,name,is_system,position,pingable,color FROM roles WHERE server_id=? ORDER BY position DESC,name").bind(sid).all();
   return json({roles:a.results,can_manage:manager});
  }
  if(section==="roles"&&m==="POST"){
