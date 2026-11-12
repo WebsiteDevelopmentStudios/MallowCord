@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from typing import Any
 
@@ -32,8 +33,8 @@ class MallowCordRustEvents:
             raise RuntimeError("MALLOWCORD_RUST_API_URL must be configured.")
         if len(self.secret.encode("utf-8")) < 32:
             raise RuntimeError("MALLOWCORD_INTERNAL_EVENT_SECRET must contain at least 32 bytes.")
-        if not event_id or len(event_id) > 128:
-            raise ValueError("event_id must contain between 1 and 128 characters.")
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", event_id):
+            raise ValueError("event_id must be 1-128 ASCII letters, digits, dots, underscores, or hyphens.")
 
         body = json.dumps(
             {"source": source, "event_type": event_type, "payload": payload},
