@@ -475,7 +475,7 @@ $("#serverSettingsContent").addEventListener("click",async e=>{const emojiDel=e.
 async function checkOnboarding(){if(!serverId)return;const d=await api("/servers/"+serverId+"/onboarding");if(!d.config.enabled||d.completed)return;$("#onboardingTitle").textContent="Welcome to "+(currentServer?.name||"the server");$("#onboardingWelcome").textContent=d.config.welcome_text||"Welcome!";$("#onboardingRules").textContent=d.config.rules_text||"Please be respectful.";$("#onboardingModal").classList.remove("hidden")}
 $("#finishOnboarding").onclick=async()=>{try{await api("/servers/"+serverId+"/onboarding",{method:"POST",body:JSON.stringify({complete:true})});$("#onboardingModal").classList.add("hidden");toast("You're all set.")}catch(e){toast(e.message)}};
 
-let accountProfile={},accountPreferences={},activeAccountPage="account-info";
+var accountProfile={},accountPreferences={},activeAccountPage="account-info";
 const preferenceDefaults={
  privacy:{showOnlineStatus:true,showProfile:true,allowAnalytics:false,personalizedActivity:false},
  messaging:{allowMessagesFrom:"members",allowFriendRequests:true,readReceipts:true},
