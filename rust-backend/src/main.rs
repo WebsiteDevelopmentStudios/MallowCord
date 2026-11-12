@@ -294,7 +294,8 @@ async fn enforce_global_ip_ban(
     };
     let ip = request
         .headers()
-        .get("cf-connecting-ip")
+        .get("x-mallowcord-client-ip")
+        .or_else(|| request.headers().get("cf-connecting-ip"))
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .trim();
