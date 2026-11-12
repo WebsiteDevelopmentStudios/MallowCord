@@ -23,6 +23,7 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/channels\/[^/]+\/messages$/],
   ["POST", /^\/api\/channels\/[^/]+\/attachments$/],
   ["GET", /^\/api\/attachments\/[^/]+$/],
+  ["GET", /^\/api\/public\/avatars\/[^/]+$/],
   ["DELETE", /^\/api\/attachments\/[^/]+$/],
   ["POST", /^\/api\/messages\/[^/]+\/edit$/],
   ["POST", /^\/api\/messages\/[^/]+\/reactions$/],
