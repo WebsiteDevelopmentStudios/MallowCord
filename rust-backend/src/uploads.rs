@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use object_store::path::Path as ObjectPath;
 use serde_json::json;
@@ -346,8 +347,71 @@ async fn delete_attachment(
     }
 }
 
+
+async fn public_avatar(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> Response {
+    let Some(pool) = state.database.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "database_not_configured"})),
+        )
+            .into_response();
+    };
+    let avatar = match sqlx::query_scalar::<_, String>(
+        "SELECT avatar_url FROM user_profiles WHERE user_id = $1",
+    )
+    .bind(&user_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(avatar)) => avatar,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            tracing::error!(%error, "public avatar lookup failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    if avatar.len() > 7 * 1024 * 1024 {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let Some((metadata, encoded)) = avatar.split_once(',') else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(content_type) = metadata
+        .strip_prefix("data:")
+        .and_then(|value| value.strip_suffix(";base64"))
+        .filter(|value| {
+            ["image/png", "image/jpeg", "image/webp", "image/gif"].contains(value)
+        })
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let bytes = match STANDARD.decode(encoded) {
+        Ok(bytes) if bytes.len() <= 5 * 1024 * 1024 => bytes,
+        Ok(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let mut response = Body::from(bytes).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static(content_type),
+    );
+    response.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300, stale-while-revalidate=60"),
+    );
+    response.headers_mut().insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/public/avatars/{user_id}", get(public_avatar))
         .route("/api/channels/{channel_id}/attachments", post(upload_attachment))
         .route("/api/attachments/{attachment_id}", get(get_attachment).delete(delete_attachment))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
