@@ -283,7 +283,7 @@ async function oauthExchange(req,env){
  return json({user:{id:user.id,username:user.username,account_type:user.account_type}},200,{"set-cookie":cookie});
 }
 
-async function handle(req,env){const rustResponse=await proxyToRust(req,env);if(rustResponse)return rustResponse;const p=new URL(req.url).pathname,m=req.method;let x;
+async function handle(req,env){const p=new URL(req.url).pathname,m=req.method;const isMallowBotIntegration=p.startsWith("/api/integrations/mallowbot/");const rustResponse=isMallowBotIntegration?null:await proxyToRust(req,env);if(rustResponse)return rustResponse;let x;
 if(p==="/api/health")return json({ok:true,service:"mallowcord",time:now()});
 const publicAvatar=p.match(/^\/api\/public\/avatars\/([A-Za-z0-9:_-]+)$/);
 if(publicAvatar&&m==="GET"){
