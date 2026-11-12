@@ -12,6 +12,9 @@ Hyperdrive, PostgreSQL, or SQLx.
 - Batched Discord message ingestion at
   `POST /api/integrations/mallowbot/discord/messages/batch`
 - Idempotent Discord message-link records and bounded D1 batches.
+- Bot-generated snapshot fingerprints for structure and stable member batches, allowing unchanged imports to return after one indexed D1 read.
+- Conditional upserts for channels, roles, permissions, emojis, member profiles, and links so unchanged rows are not rewritten.
+- No-op presence writes are suppressed; Mallow-Bot filters duplicate member/presence events before sending them.
 
 The original Worker remains the production API until the remaining auth/OAuth,
 account, permissions, server/channel, message/reaction/reply, friends/DM, upload,
@@ -47,6 +50,10 @@ binding but does not replace `mallowcord-api` or modify production routing.
 
 ## D1 migration
 
-Apply `migrations/0001_rust_discord_sync.sql` to the existing database before using
-the sync endpoints. The migration is additive; it never drops or rewrites existing
-application tables or records.
+Apply the additive migrations in order before deploying this branch:
+
+1. `migrations/0001_rust_discord_sync.sql`
+2. `migrations/0002_discord_sync_fingerprints.sql`
+
+They create only the Discord bridge tables and sync-fingerprint table. They never drop
+or rewrite existing application tables or records.
