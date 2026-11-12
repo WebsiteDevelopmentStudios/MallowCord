@@ -2226,6 +2226,51 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+
+
+/// Dispatch a durable, authenticated Mallow-Bot event through the same validated
+/// handlers used by the compatibility HTTP endpoints.
+pub(crate) async fn process_inbox_event(
+    state: AppState,
+    event_type: &str,
+    payload: Value,
+) -> Result<(), String> {
+    let secret = state
+        .mallowbot_service_key
+        .as_ref()
+        .ok_or_else(|| "Mallow-Bot service key is not configured".to_owned())?;
+    let mut headers = HeaderMap::new();
+    let value = axum::http::HeaderValue::from_bytes(secret.as_slice())
+        .map_err(|_| "Mallow-Bot service key is not a valid HTTP header".to_owned())?;
+    headers.insert("x-mallowbot-key", value);
+
+    let response = match event_type {
+        "discord.member.joined" | "discord.member.updated" => {
+            let input: SyncInput = serde_json::from_value(payload)
+                .map_err(|error| format!("Invalid member event payload: {error}"))?;
+            sync(State(state), headers, Json(input)).await
+        }
+        "discord.presence.updated" => {
+            let input: PresenceInput = serde_json::from_value(payload)
+                .map_err(|error| format!("Invalid presence event payload: {error}"))?;
+            presence(State(state), headers, Json(input)).await
+        }
+        "discord.message.created" => {
+            let input: DiscordMessageInput = serde_json::from_value(payload)
+                .map_err(|error| format!("Invalid message event payload: {error}"))?;
+            discord_message(State(state), headers, Json(input)).await
+        }
+        other => return Err(format!("Unsupported Mallow-Bot event type: {other}")),
+    };
+
+    let status = response.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(format!("Event handler returned HTTP {status}"))
+    }
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/discord/link/status", get(discord_link_status))
