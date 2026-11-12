@@ -22,38 +22,38 @@ fn now() -> i64 {
 async fn require_user(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(PgPool, AuthUser), Response> {
+) -> Result<(PgPool, AuthUser), Box<Response>> {
     let Some(pool) = state.database.as_ref() else {
-        return Err((
+        return Err(Box::new((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"error": "database_not_configured"})),
         )
-            .into_response());
+            .into_response()));
     };
 
     match current_user(headers, pool).await {
         Ok(Some(user)) => {
             if user.status == "timed_out" && user.timeout_until.unwrap_or(0) > now() {
-                return Err((
+                return Err(Box::new((
                     StatusCode::FORBIDDEN,
                     Json(json!({"error": "Your account is timed out."})),
                 )
-                    .into_response());
+                    .into_response()));
             }
             Ok((pool.clone(), user))
         }
-        Ok(None) => Err((
+        Ok(None) => Err(Box::new((
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Sign in required."})),
         )
-            .into_response()),
+            .into_response())),
         Err(error) => {
             tracing::error!(%error, "failed to authenticate social API request");
-            Err((
+            Err(Box::new((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "session_lookup_failed"})),
             )
-                .into_response())
+                .into_response()))
         }
     }
 }
@@ -83,7 +83,7 @@ async fn list_friends(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     let friends = sqlx::query_as::<_, FriendView>(
@@ -328,7 +328,7 @@ async fn friend_action(
             .bind(now())
             .execute(&mut *tx)
             .await
-            .and_then(|_| Ok(()));
+            .map(|_| ());
             let result = match result {
                 Ok(()) => sqlx::query("UPDATE friend_requests SET status = 'accepted', updated_at = $1 WHERE id = $2")
                     .bind(now())
