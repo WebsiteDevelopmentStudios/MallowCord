@@ -395,9 +395,7 @@ async fn linked_user_id(
          UNION ALL
          SELECT user_id FROM discord_user_links
          WHERE discord_user_id = $1 AND server_id = $2
-         UNION ALL
-         SELECT user_id FROM oauth_accounts
-         WHERE provider = 'discord' AND provider_user_id = $1
+
          LIMIT 1",
     )
     .bind(discord_user_id)
