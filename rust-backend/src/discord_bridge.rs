@@ -181,7 +181,7 @@ async fn bot_command(
         Some(prefix) if prefix.eq_ignore_ascii_case("-mb") || prefix.eq_ignore_ascii_case("/mb") => &content[3..],
         _ => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Use -mb help to see the Mallow-Bot command list."}))).into_response(),
     };
-    let command_name = command.trim_start().split_whitespace().next().unwrap_or_default();
+    let command_name = command.split_whitespace().next().unwrap_or_default();
     if command_name.is_empty() || !command_name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "Use -mb help to see the Mallow-Bot command list."}))).into_response();
     }
