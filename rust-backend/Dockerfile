@@ -10,6 +10,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 RUN useradd --system --uid 10001 --create-home mallowcord
 COPY --from=builder /app/target/release/mallowcord-backend /usr/local/bin/mallowcord-backend
 USER mallowcord
-ENV MALLOWCORD_BIND_ADDR=0.0.0.0:8081
-EXPOSE 8081
-CMD ["mallowcord-backend"]
+EXPOSE 10000
+CMD ["sh", "-c", "MALLOWCORD_BIND_ADDR=0.0.0.0:${PORT:-10000} exec /usr/local/bin/mallowcord-backend"]
