@@ -1126,7 +1126,7 @@ if(p==="/api/admin/d1-usage"&&m==="GET"){
  const usage=(account.d1AnalyticsAdaptiveGroups||[]).reduce((v,g)=>({rowsRead:v.rowsRead+Number(g.sum?.rowsRead||0),rowsWritten:v.rowsWritten+Number(g.sum?.rowsWritten||0)}),{rowsRead:0,rowsWritten:0});
  const sizes=new Map();for(const g of account.d1StorageAdaptiveGroups||[]){const id=g.dimensions?.databaseId;if(id)sizes.set(id,Math.max(sizes.get(id)||0,Number(g.max?.databaseSizeBytes||0)));}
  const totalBytes=[...sizes.values()].reduce((a,b)=>a+b,0);
- return json({plan:{rowsRead:5000000,rowsWritten:100000,storageBytes:5*1024**3},today:usage,storage:{totalBytes,mallowcordBytes:sizes.get(mallowcordDbId)||0},updatedAt:new Date().toISOString()});
+ return json({plan:{rowsRead:5000000,rowsWritten:100000,storageBytes:5000000000},today:usage,storage:{totalBytes,mallowcordBytes:sizes.get(mallowcordDbId)||0},updatedAt:new Date().toISOString()});
 }
 if(!p.startsWith("/api/")&&env.FRONTEND_ORIGIN){const target=new URL(p,env.FRONTEND_ORIGIN);target.search=new URL(req.url).search;return fetch(new Request(target.toString(),req));}
 return fail("Not found.",404);}
