@@ -110,7 +110,7 @@ Before enabling the proxy for the Discord bridge routes, configure these Rust se
 - `MALLOWCORD_DISCORD_GUILD_ID`: the official Discord guild ID. It defaults to the current configured guild if omitted.
 - `MALLOWBOT_ICON_URL`: optional public icon URL used for bot-generated command responses.
 
-Do not place these values in the repository or browser configuration. The Discord snapshot `/api/integrations/mallowbot/discord/sync` and Mallow-Bot moderation endpoints remain on the Worker for now.
+Do not place these values in the repository or browser configuration. The Discord snapshot, presence, message ingestion, account linking, command queue/result, and outgoing-message acknowledgement routes are now implemented in Rust. Mallow-Bot user moderation endpoints and account contact verification remain on the Worker for now.
 
 Only routes and HTTP methods already implemented in Rust are forwarded. Google/Discord OAuth start and callbacks, OAuth code exchange, contact verification, Mallow-Bot Discord bridge endpoints, and other unported routes continue to run on the Worker. Browser cookies and request bodies are forwarded so the existing same-origin session contract is preserved. The Worker adds CORS support for the Rust section PATCH route.
 
