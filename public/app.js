@@ -6,6 +6,12 @@ function preloadCheck(name,state,detail=""){
  renderPreloadPanel();
 }
 function renderPreloadPanel(){
+ // Diagnostics are an owner-only developer aid; never expose internal request details to members.
+ if(!me||me.account_type!=="owner"){
+  document.getElementById("mallowPreloadPanel")?.remove();
+  document.getElementById("mallowPreloadShow")?.remove();
+  return;
+ }
  let panel=document.getElementById("mallowPreloadPanel");
  if(!panel){
   panel=document.createElement("section");panel.id="mallowPreloadPanel";
