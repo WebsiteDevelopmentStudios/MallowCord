@@ -322,6 +322,12 @@ async fn bot_command(
         "username": user.username,
         "author_id": user.id
     });
+    if !notification_recipients.is_empty() {
+        let _ = state.realtime.send(json!({
+            "type": "notifications.updated",
+            "recipient_ids": notification_recipients
+        }));
+    }
     let _ = state.realtime.send(json!({
         "type": "message.created",
         "server_id": server_id,
@@ -802,6 +808,7 @@ async fn discord_message(
         .collect();
     mentioned_ids.sort();
     mentioned_ids.dedup();
+    let mut notification_recipients = Vec::new();
     if !mentioned_ids.is_empty() {
         let mut target_user_ids = match sqlx::query_scalar::<_, String>(
             "SELECT user_id FROM discord_account_links
@@ -826,6 +833,7 @@ async fn discord_message(
             }
         };
         target_user_ids.retain(|target_user_id| target_user_id != &user_id);
+        notification_recipients = target_user_ids.clone();
         if !target_user_ids.is_empty() {
             let notification_ids: Vec<String> = target_user_ids
                 .iter()
