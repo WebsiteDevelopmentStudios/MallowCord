@@ -701,6 +701,21 @@ async fn message_metadata(
     .await
 }
 
+async fn has_server_membership(
+    pool: &PgPool,
+    server_id: &str,
+    user_id: &str,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(server_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    .is_some())
+}
+
 async fn edit_message(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -719,6 +734,14 @@ async fn edit_message(
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_lookup_failed"}))).into_response();
         }
     };
+    match has_server_membership(&pool, &metadata.2, &user.id).await {
+        Ok(true) => {}
+        Ok(false) => return (StatusCode::FORBIDDEN, Json(json!({"error": "You cannot access this message."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "message membership check failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_lookup_failed"}))).into_response();
+        }
+    }
     if metadata.0 != user.id {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "You can only edit your own messages."}))).into_response();
     }
@@ -759,6 +782,14 @@ async fn delete_message(
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_lookup_failed"}))).into_response();
         }
     };
+    match has_server_membership(&pool, &metadata.2, &user.id).await {
+        Ok(true) => {}
+        Ok(false) => return (StatusCode::FORBIDDEN, Json(json!({"error": "You cannot access this message."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "message membership check failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_lookup_failed"}))).into_response();
+        }
+    }
     if metadata.0 != user.id && user.account_type != "owner" {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "You can only delete your own messages."}))).into_response();
     }
