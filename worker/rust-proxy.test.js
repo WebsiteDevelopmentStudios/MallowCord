@@ -21,6 +21,7 @@ test("proxies API domains already implemented in Rust", () => {
     ["GET", "/api/account/status"],
     ["POST", "/api/account/profile"],
     ["GET", "/api/servers"],
+    ["POST", "/api/servers"],
     ["GET", "/api/servers/server-1/channels"],
     ["GET", "/api/servers/server-1/onboarding"],
     ["POST", "/api/servers/server-1/onboarding"],
@@ -64,7 +65,6 @@ test("keeps unported and unsupported routes on the Worker", () => {
   const cases = [
     ["GET", "/api/auth/google/token"],
     ["POST", "/api/auth/discord/callback"],
-    ["POST", "/api/servers"],
     ["GET", "/api/servers/server-1/invites"],
     ["GET", "/api/messages/message-1/reactions"],
     ["PUT", "/api/account/profile"],
