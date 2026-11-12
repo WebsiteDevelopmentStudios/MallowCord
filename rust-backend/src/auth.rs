@@ -88,59 +88,70 @@ async fn me(State(state): State<AppState>, headers: HeaderMap) -> Response {
 }
 
 
+const CLEAR_DEVICE_COOKIE: &str =
+    "mallowcord_device=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0";
+
+fn clear_device_cookie(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_static(CLEAR_DEVICE_COOKIE),
+    );
+    response
+}
+
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(pool) = state.database.as_ref() {
-        if let Some(token) = headers
-            .get(axum::http::header::COOKIE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|cookie| {
-                    cookie.trim().strip_prefix("mallowcord_device=")
-                })
-            })
-            .filter(|value| !value.is_empty())
-        {
-            let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
-            match sqlx::query_scalar::<_, String>(
-                "DELETE FROM sessions WHERE token_hash = $1 RETURNING user_id",
+    let Some(pool) = state.database.as_ref() else {
+        return clear_device_cookie(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "database_not_configured"})),
             )
-            .bind(token_hash)
-            .fetch_optional(pool)
-            .await
-            {
-                Ok(Some(user_id)) => {
-                    if let Err(error) = sqlx::query("DELETE FROM user_presence WHERE user_id = $1")
-                        .bind(user_id)
-                        .execute(pool)
-                        .await
-                    {
-                        tracing::warn!(%error, "failed to clear presence during logout");
-                    }
+                .into_response(),
+        );
+    };
+
+    if let Some(token) = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                cookie.trim().strip_prefix("mallowcord_device=")
+            })
+        })
+        .filter(|value| !value.is_empty())
+    {
+        let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+        match sqlx::query_scalar::<_, String>(
+            "DELETE FROM sessions WHERE token_hash = $1 RETURNING user_id",
+        )
+        .bind(token_hash)
+        .fetch_optional(pool)
+        .await
+        {
+            Ok(Some(user_id)) => {
+                if let Err(error) = sqlx::query("DELETE FROM user_presence WHERE user_id = $1")
+                    .bind(user_id)
+                    .execute(pool)
+                    .await
+                {
+                    tracing::warn!(%error, "failed to clear presence during logout");
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::error!(%error, "session logout failed");
-                    let mut response = (
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(%error, "session logout failed");
+                return clear_device_cookie(
+                    (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({"error": "logout_failed"})),
                     )
-                        .into_response();
-                    response.headers_mut().insert(
-                        SET_COOKIE,
-                        HeaderValue::from_static("mallowcord_device=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0"),
-                    );
-                    return response;
-                }
+                        .into_response(),
+                );
             }
         }
     }
 
-    let mut response = Json(json!({"ok": true})).into_response();
-    response.headers_mut().insert(
-        SET_COOKIE,
-        HeaderValue::from_static("mallowcord_device=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0"),
-    );
-    response
+    clear_device_cookie(Json(json!({"ok": true})).into_response())
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
