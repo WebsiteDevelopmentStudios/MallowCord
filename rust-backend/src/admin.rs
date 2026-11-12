@@ -5,7 +5,10 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 use sqlx::PgPool;
 
 use crate::{
@@ -91,6 +94,108 @@ async fn audit_events(
     }
 }
 
+
+#[derive(Deserialize)]
+struct IpBanInput {
+    ip: String,
+    reason: Option<String>,
+}
+
+async fn create_ip_ban(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<IpBanInput>,
+) -> Response {
+    let (pool, user) = match require_owner(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let ip = input.ip.trim();
+    if ip.parse::<std::net::IpAddr>().is_err() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "A valid IP address is required."})))
+            .into_response();
+    }
+    let Some(secret) = state.ip_hash_secret.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "IP_HASH_SECRET is not configured."})),
+        )
+            .into_response();
+    };
+    let mut material = ip.as_bytes().to_vec();
+    material.extend_from_slice(secret.as_slice());
+    let ip_hash = hex::encode(Sha256::digest(material));
+    let reason: String = input
+        .reason
+        .as_deref()
+        .unwrap_or("Global IP ban")
+        .trim()
+        .chars()
+        .take(300)
+        .collect();
+    let timestamp = chrono::Utc::now().timestamp();
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => {
+            tracing::error!(%error, "global IP ban transaction could not start");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "ip_ban_failed"})),
+            )
+                .into_response();
+        }
+    };
+    if let Err(error) = sqlx::query(
+        "INSERT INTO bans(id, ip_hash, reason, created_by, created_at)
+         VALUES($1, $2, $3, $4, $5)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&ip_hash)
+    .bind(&reason)
+    .bind(&user.id)
+    .bind(timestamp)
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::error!(%error, "global IP ban insert failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "ip_ban_failed"})),
+        )
+            .into_response();
+    }
+    let details = json!({"reason": reason}).to_string();
+    if let Err(error) = sqlx::query(
+        "INSERT INTO audit_logs(id, actor_id, target_user_id, action, details, created_at)
+         VALUES($1, $2, NULL, 'global_ip_ban', $3, $4)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&user.id)
+    .bind(details)
+    .bind(timestamp)
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::error!(%error, "global IP ban audit insert failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "ip_ban_audit_failed"})),
+        )
+            .into_response();
+    }
+    if let Err(error) = tx.commit().await {
+        tracing::error!(%error, "global IP ban transaction commit failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "ip_ban_failed"})),
+        )
+            .into_response();
+    }
+    Json(json!({"ok": true})).into_response()
+}
+
 pub(crate) fn router() -> Router<AppState> {
-    Router::new().route("/api/admin/audit", get(audit_events))
+    Router::new()
+        .route("/api/admin/audit", get(audit_events))
+        .route("/api/admin/ip-ban", axum::routing::post(create_ip_ban))
 }
