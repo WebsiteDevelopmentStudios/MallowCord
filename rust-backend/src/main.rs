@@ -24,7 +24,7 @@ struct AppState {
     internal_event_secret: Option<Arc<Vec<u8>>>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct HealthResponse {
     status: &'static str,
     service: &'static str,
