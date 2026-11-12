@@ -339,6 +339,7 @@ struct MemberView {
     bio: Option<String>,
     pronouns: Option<String>,
     presence: String,
+    is_bot: bool,
     account_type: String,
     status: String,
     joined_at: i64,
@@ -370,6 +371,7 @@ async fn list_members(
                     WHEN COALESCE(pr.last_seen_at, 0) >= $1 THEN COALESCE(up.status, 'online')
                     ELSE 'offline'
                 END AS presence,
+                COALESCE(up.is_bot, FALSE) AS is_bot,
                 u.account_type, u.status, m.joined_at,
                 COALESCE((
                     SELECT string_agg(r.name, ', ')
