@@ -359,15 +359,15 @@ async fn public_avatar(
         )
             .into_response();
     };
-    let avatar = match sqlx::query_scalar::<_, String>(
+    let avatar = match sqlx::query_scalar::<_, Option<String>>(
         "SELECT avatar_url FROM user_profiles WHERE user_id = $1",
     )
     .bind(&user_id)
     .fetch_optional(pool)
     .await
     {
-        Ok(Some(avatar)) => avatar,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Ok(Some(Some(avatar))) => avatar,
+        Ok(Some(None)) | Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(error) => {
             tracing::error!(%error, "public avatar lookup failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
