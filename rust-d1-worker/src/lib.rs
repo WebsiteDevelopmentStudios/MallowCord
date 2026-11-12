@@ -677,7 +677,7 @@ async fn sync_presence_batch(db: &D1Database, payload: PresenceBatchInput) -> Re
     let mut changed = 0usize;
     for chunk in writes.chunks(100) {
         let results = db.batch(chunk.to_vec()).await?;
-        changed += results.iter().filter(|result| result.meta().changes > 0).count();
+        changed += results.iter().filter(|result| result.meta().ok().flatten().is_some_and(|meta| meta.changes > 0)).count();
     }
     Ok(json!({"ok":true,"received":ids.len(),"updated":changed,"ignored":ignored}))
 }
