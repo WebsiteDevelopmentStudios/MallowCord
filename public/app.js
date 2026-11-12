@@ -102,7 +102,7 @@ async function loadMemberList(){
    roleGroups=()=>{const map=new Map();for(const member of native){const rs=roleData(member).slice().sort((x,y)=>(Number(y.position)||0)-(Number(x.position)||0));const highest=rs[0];if(!highest){if(!map.has("@everyone"))map.set("@everyone",[]);map.get("@everyone").push(member);continue}if(!map.has(highest.id))map.set(highest.id,{role:highest,members:[]});map.get(highest.id).members.push(member)}return [...map.values()].sort((x,y)=>{const aa=x.role?.position??-1,bb=y.role?.position??-1;return bb-aa})},
    roleMarkup=roleGroups().map(item=>{if(Array.isArray(item))return group("@everyone",item);return '<div class="member-group-title" style="color:'+esc(item.role.color||"#99aab5")+'">'+esc(item.role.name)+' <span>'+item.members.length+'</span></div>'+item.members.map(button).join("")}).join("");
   const officialBot='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>';
-  const botGroup='<div class="member-group-title">Bots <span>'+(discordBots.length+1)+'</span></div>'+officialBot+discordBots.map(button).join("");
+  const mallowBotRecord=discordBots.find(m=>/mallow.?bot/i.test((m.username||"")+" "+(m.display_name||"")));const otherBots=discordBots.filter(m=>m!==mallowBotRecord);const botEntry=mallowBotRecord?button(mallowBotRecord):officialBot;const botGroup='<div class="member-group-title bot-group-title">Bots <span>'+(otherBots.length+1)+'</span></div>'+botEntry+otherBots.map(button).join("");
   box.innerHTML=roleMarkup+botGroup+group("Discord Members — online",discordHumans.filter(online))+group("Discord Members — offline",discordHumans.filter(m=>!online(m)));
  }catch(e){console.warn("Member list:",e.message)}
 }
@@ -303,7 +303,7 @@ async function loadDmProfile(userId){
  const name=p.display_name||p.username||"User",status=p.status||p.presence||"offline";
  $("#dmProfileAvatar").innerHTML=p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':esc(name[0].toUpperCase());
  $("#dmProfileName").textContent=name;$("#dmProfileUsername").textContent="@"+(p.username||"");
- $("#dmProfileStatus").textContent=profileStatusLabel(status);
+ $("#dmProfileStatus").textContent=profileStatusLabel(status);$("#dmProfileStatus").dataset.status=status;
  $("#dmProfileAbout").textContent=p.bio||p.about||"No about me has been added yet.";
  const roles=Array.isArray(p.roles)?p.roles:[];
  $("#dmProfileRoles").innerHTML=roles.map(r=>'<span class="dm-profile-role" style="--role-color:'+esc(r.color||"#9aa3af")+'">'+esc(r.name)+'</span>').join("");
