@@ -13,7 +13,324 @@ use std::collections::HashMap;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::AppState;
+use crate::{auth::{current_user, AuthUser}, server::channel_permission_allowed, AppState};
+
+async fn require_web_user(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(PgPool, AuthUser), Box<Response>> {
+    let Some(pool) = state.database.as_ref() else {
+        return Err(Box::new((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "database_not_configured"})),
+        ).into_response()));
+    };
+    match current_user(headers, pool).await {
+        Ok(Some(user)) if user.status != "timed_out" || user.timeout_until.unwrap_or(0) <= now() => {
+            Ok((pool.clone(), user))
+        }
+        Ok(Some(_)) => Err(Box::new((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Your account is timed out."})),
+        ).into_response())),
+        Ok(None) => Err(Box::new((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Sign in required."})),
+        ).into_response())),
+        Err(error) => {
+            tracing::error!(%error, "Discord account session lookup failed");
+            Err(Box::new((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "session_lookup_failed"})),
+            ).into_response()))
+        }
+    }
+}
+
+async fn discord_link_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let (pool, user) = match require_web_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let server_id = match system_server(&pool).await {
+        Ok(Some((id, _))) => id,
+        Ok(None) => return Json(json!({"linked": false, "discord_user_id": null})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Discord link status server lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response();
+        }
+    };
+    match sqlx::query_scalar::<_, String>(
+        "SELECT discord_user_id FROM discord_account_links WHERE user_id = $1 AND server_id = $2",
+    )
+    .bind(&user.id)
+    .bind(&server_id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(linked) => Json(json!({"linked": linked.is_some(), "discord_user_id": linked})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Discord link status lookup failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response()
+        }
+    }
+}
+
+async fn discord_link_start(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let (pool, user) = match require_web_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let server_id = match system_server(&pool).await {
+        Ok(Some((id, _))) => id,
+        Ok(None) => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Mallow Swamp is not initialized."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Discord link start server lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response();
+        }
+    };
+    let linked = sqlx::query_scalar::<_, String>(
+        "SELECT discord_user_id FROM discord_account_links WHERE user_id = $1 AND server_id = $2",
+    )
+    .bind(&user.id)
+    .bind(&server_id)
+    .fetch_optional(&pool)
+    .await;
+    match linked {
+        Ok(Some(_)) => return (StatusCode::CONFLICT, Json(json!({"error": "A Discord account is already linked."}))).into_response(),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::error!(%error, "Discord existing account link lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response();
+        }
+    };
+
+    const ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let random = Uuid::new_v4();
+    let code: String = random.as_bytes()[..8]
+        .iter()
+        .map(|byte| ALPHABET[(byte % 32) as usize] as char)
+        .collect();
+    let code_hash = hex::encode(Sha256::digest(code.as_bytes()));
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => {
+            tracing::error!(%error, "Discord link code transaction failed to start");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response();
+        }
+    };
+    if let Err(error) = sqlx::query("DELETE FROM discord_link_codes WHERE user_id = $1")
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await
+    {
+        tracing::error!(%error, "old Discord link code cleanup failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response();
+    }
+    if let Err(error) = sqlx::query(
+        "INSERT INTO discord_link_codes(code_hash, user_id, expires_at, created_at) VALUES($1, $2, $3, $4)",
+    )
+    .bind(code_hash)
+    .bind(&user.id)
+    .bind(now() + 600)
+    .bind(now())
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::error!(%error, "Discord link code insert failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response();
+    }
+    if let Err(error) = tx.commit().await {
+        tracing::error!(%error, "Discord link code transaction commit failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_link_failed"}))).into_response();
+    }
+    Json(json!({
+        "code": code,
+        "expires_in": 600,
+        "instructions": format!("Send a private DM to Mallow Bot with -mb link {code}")
+    })).into_response()
+}
+
+#[derive(Deserialize)]
+struct BotCommandInput {
+    channel_id: String,
+    content: String,
+}
+
+async fn bot_command(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<BotCommandInput>,
+) -> Response {
+    let (pool, user) = match require_web_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let channel_id = input.channel_id.trim();
+    let content = input.content.trim();
+    if channel_id.is_empty() || content.is_empty() || content.chars().count() > 4000 {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "A channel and command are required."}))).into_response();
+    }
+    let command = content.strip_prefix("-mb").or_else(|| content.strip_prefix("-MB"))
+        .or_else(|| content.strip_prefix("/mb")).or_else(|| content.strip_prefix("/MB"));
+    let Some(command) = command else {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Use -mb help to see the Mallow-Bot command list."}))).into_response();
+    };
+    let command_name = command.trim_start().split_whitespace().next().unwrap_or_default();
+    if command_name.is_empty() || !command_name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Use -mb help to see the Mallow-Bot command list."}))).into_response();
+    }
+
+    let server_id = match sqlx::query_scalar::<_, String>(
+        "SELECT c.server_id FROM channels c
+         JOIN memberships m ON m.server_id = c.server_id
+         WHERE c.id = $1 AND m.user_id = $2 AND c.kind = 'text'",
+    )
+    .bind(channel_id)
+    .bind(&user.id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => return (StatusCode::FORBIDDEN, Json(json!({"error": "You cannot run bot commands in this channel."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "bot command channel lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+        }
+    };
+    for permission in ["view_channel", "send_messages"] {
+        match channel_permission_allowed(&pool, &user.id, channel_id, permission).await {
+            Ok(true) => {}
+            Ok(false) => return (StatusCode::FORBIDDEN, Json(json!({"error": "You cannot run bot commands in this channel."}))).into_response(),
+            Err(error) => {
+                tracing::error!(%error, permission, "bot command permission lookup failed");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+            }
+        }
+    }
+
+    let official_server_id = match system_server(&pool).await {
+        Ok(Some((id, _))) => id,
+        Ok(None) => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Mallow Swamp is not initialized."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "bot command official server lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+        }
+    };
+    let discord_user_id = match sqlx::query_scalar::<_, String>(
+        "SELECT discord_user_id FROM discord_account_links WHERE user_id = $1 AND server_id = $2",
+    )
+    .bind(&user.id)
+    .bind(&official_server_id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => return (StatusCode::FORBIDDEN, Json(json!({"error": "Link your Discord account in User Settings → Discord Link before running Mallow-Bot commands."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "bot command Discord link lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+        }
+    };
+    let mapped = sqlx::query_scalar::<_, String>(
+        "SELECT discord_channel_id FROM discord_channel_links WHERE mallow_channel_id = $1 AND server_id = $2",
+    )
+    .bind(channel_id)
+    .bind(&official_server_id)
+    .fetch_optional(&pool)
+    .await;
+    match mapped {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Mallow-Bot commands are only available in channels synchronized with the official Discord server."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "bot command channel mapping lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+        }
+    };
+    let pending = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)::bigint FROM discord_command_jobs WHERE user_id = $1 AND status IN ('queued', 'processing')",
+    )
+    .bind(&user.id)
+    .fetch_one(&pool)
+    .await
+    {
+        Ok(count) => count,
+        Err(error) => {
+            tracing::error!(%error, "pending bot command count failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+        }
+    };
+    if pending >= 5 {
+        return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "You have too many commands waiting. Try again in a moment."}))).into_response();
+    }
+
+    let message_id = Uuid::new_v4().to_string();
+    let job_id = Uuid::new_v4().to_string();
+    let created_at = now();
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => {
+            tracing::error!(%error, "bot command transaction failed to start");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+        }
+    };
+    if let Err(error) = sqlx::query(
+        "INSERT INTO messages(id, channel_id, author_id, content, created_at) VALUES($1, $2, $3, $4, $5)",
+    )
+    .bind(&message_id)
+    .bind(channel_id)
+    .bind(&user.id)
+    .bind(content)
+    .bind(created_at)
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::error!(%error, "bot command message insert failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+    }
+    if let Err(error) = sqlx::query(
+        "INSERT INTO discord_command_jobs(id, server_id, channel_id, user_id, discord_user_id, content, status, created_at)
+         VALUES($1, $2, $3, $4, $5, $6, 'queued', $7)",
+    )
+    .bind(&job_id)
+    .bind(&official_server_id)
+    .bind(channel_id)
+    .bind(&user.id)
+    .bind(&discord_user_id)
+    .bind(content)
+    .bind(created_at)
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::error!(%error, "bot command queue insert failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+    }
+    if let Err(error) = tx.commit().await {
+        tracing::error!(%error, "bot command transaction commit failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "bot_command_failed"}))).into_response();
+    }
+
+    let message = json!({
+        "id": message_id,
+        "content": content,
+        "created_at": created_at,
+        "username": user.username,
+        "author_id": user.id
+    });
+    let _ = state.realtime.send(json!({
+        "type": "message.created",
+        "server_id": server_id,
+        "channel_id": channel_id,
+        "message": message
+    }));
+    Json(json!({"ok": true, "accepted": true, "queued": true})).into_response()
+}
 
 fn unauthorized() -> Response {
     (StatusCode::UNAUTHORIZED, Json(json!({"error": "Integration authentication failed."})))
@@ -1904,6 +2221,9 @@ fn now() -> i64 {
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/discord/link/status", get(discord_link_status))
+        .route("/api/discord/link/start", post(discord_link_start))
+        .route("/api/bot/command", post(bot_command))
         .route("/api/integrations/mallowbot/discord/sync", post(sync))
         .route("/api/integrations/mallowbot/discord/presence", post(presence))
         .route("/api/integrations/mallowbot/discord/messages", post(discord_message))
