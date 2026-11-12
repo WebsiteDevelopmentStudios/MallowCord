@@ -6,9 +6,10 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool};
+use std::collections::HashMap;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
@@ -1045,12 +1046,623 @@ async fn command_result(
     Json(json!({"ok": true})).into_response()
 }
 
+
+#[derive(Deserialize, Default)]
+struct SyncChannel {
+    id: String,
+    name: String,
+    position: Option<i64>,
+    category: Option<String>,
+    overwrites: Option<Vec<SyncOverwrite>>,
+    locked: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+struct SyncOverwrite {
+    id: String,
+    target_type: Option<String>,
+    allow: Option<Vec<String>>,
+    deny: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Default)]
+struct SyncRole {
+    id: String,
+    name: String,
+    color: Option<String>,
+    position: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct SyncMember {
+    id: String,
+    bot: Option<bool>,
+    display_name: Option<String>,
+    username: Option<String>,
+    avatar_url: Option<String>,
+    status: Option<String>,
+    roles: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Default)]
+struct SyncEmoji {
+    id: String,
+    name: String,
+    image_url: String,
+}
+
+#[derive(Deserialize)]
+struct SyncInput {
+    guild_id: String,
+    icon_url: Option<String>,
+    everyone_role_id: Option<String>,
+    channels: Option<Vec<SyncChannel>>,
+    roles: Option<Vec<SyncRole>>,
+    members: Option<Vec<SyncMember>>,
+    emojis: Option<Vec<SyncEmoji>>,
+}
+
+async fn sync_snapshot(
+    state: &AppState,
+    pool: &PgPool,
+    system: &(String, String),
+    input: SyncInput,
+) -> Result<Value, sqlx::Error> {
+    let (server_id, owner_id) = system;
+    let icon_url = input
+        .icon_url
+        .as_deref()
+        .filter(|value| value.starts_with("https://") && value.len() <= 1000);
+    sqlx::query("UPDATE servers SET icon_url = COALESCE($1, icon_url) WHERE id = $2")
+        .bind(icon_url)
+        .bind(server_id)
+        .execute(pool)
+        .await?;
+
+    let everyone_role = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM roles WHERE server_id = $1 AND name = '@everyone' LIMIT 1",
+    )
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await?;
+    let member_role = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM roles WHERE server_id = $1 AND name = '@Member' LIMIT 1",
+    )
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let channels: Vec<SyncChannel> = input
+        .channels
+        .unwrap_or_default()
+        .into_iter()
+        .take(250)
+        .collect();
+    let mut channel_lookup = HashMap::<String, String>::new();
+    let mut channel_map: Vec<Value> = Vec::new();
+    for channel in &channels {
+        let discord_channel_id = channel.id.trim();
+        let name: String = channel.name.trim().chars().take(80).collect();
+        if !valid_discord_id(discord_channel_id) || name.chars().count() < 2 {
+            continue;
+        }
+        let linked = sqlx::query_scalar::<_, String>(
+            "SELECT mallow_channel_id FROM discord_channel_links
+             WHERE discord_channel_id = $1 AND server_id = $2",
+        )
+        .bind(discord_channel_id)
+        .bind(server_id)
+        .fetch_optional(pool)
+        .await?;
+        let existing = match linked {
+            Some(id) => Some(id),
+            None => {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM channels WHERE server_id = $1 AND name = $2 AND kind = 'text' LIMIT 1",
+                )
+                .bind(server_id)
+                .bind(&name)
+                .fetch_optional(pool)
+                .await?
+            }
+        };
+        let channel_id = if let Some(id) = existing {
+            sqlx::query(
+                "UPDATE channels SET name = $1, kind = 'text', position = $2
+                 WHERE id = $3 AND server_id = $4",
+            )
+            .bind(&name)
+            .bind(channel.position.unwrap_or_default())
+            .bind(&id)
+            .bind(server_id)
+            .execute(pool)
+            .await?;
+            id
+        } else {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO channels(id, server_id, name, kind, position)
+                 VALUES($1, $2, $3, 'text', $4)",
+            )
+            .bind(&id)
+            .bind(server_id)
+            .bind(&name)
+            .bind(channel.position.unwrap_or_default())
+            .execute(pool)
+            .await?;
+            id
+        };
+        let category = channel
+            .category
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.chars().take(100).collect::<String>());
+        sqlx::query(
+            "INSERT INTO discord_channel_links(discord_channel_id, server_id, mallow_channel_id, category_name, updated_at)
+             VALUES($1, $2, $3, $4, $5)
+             ON CONFLICT(discord_channel_id) DO UPDATE SET
+               server_id = EXCLUDED.server_id,
+               mallow_channel_id = EXCLUDED.mallow_channel_id,
+               category_name = EXCLUDED.category_name,
+               updated_at = EXCLUDED.updated_at",
+        )
+        .bind(discord_channel_id)
+        .bind(server_id)
+        .bind(&channel_id)
+        .bind(category)
+        .bind(now())
+        .execute(pool)
+        .await?;
+        channel_lookup.insert(discord_channel_id.to_owned(), channel_id.clone());
+        channel_map.push(json!({
+            "discord_id": discord_channel_id,
+            "mallow_id": channel_id,
+            "name": name
+        }));
+    }
+
+    let roles: Vec<SyncRole> = input
+        .roles
+        .unwrap_or_default()
+        .into_iter()
+        .take(250)
+        .collect();
+    let mut role_lookup = HashMap::<String, String>::new();
+    for role in &roles {
+        let discord_role_id = role.id.trim();
+        let name: String = role
+            .name
+            .trim()
+            .chars()
+            .filter(|character| *character != '<' && *character != '>')
+            .take(32)
+            .collect();
+        if !valid_discord_id(discord_role_id) || name.is_empty() || name == "@everyone" {
+            continue;
+        }
+        let color = role
+            .color
+            .as_deref()
+            .filter(|value| {
+                value.len() == 7
+                    && value.starts_with('#')
+                    && value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+            })
+            .unwrap_or("#99aab5");
+        let linked = sqlx::query_scalar::<_, String>(
+            "SELECT role_id FROM discord_role_links
+             WHERE discord_role_id = $1 AND server_id = $2",
+        )
+        .bind(discord_role_id)
+        .bind(server_id)
+        .fetch_optional(pool)
+        .await?;
+        let existing = match linked {
+            Some(id) => Some(id),
+            None => {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM roles WHERE server_id = $1 AND name = $2 LIMIT 1",
+                )
+                .bind(server_id)
+                .bind(&name)
+                .fetch_optional(pool)
+                .await?
+            }
+        };
+        let role_id = if let Some(id) = existing {
+            id
+        } else {
+            let id = Uuid::new_v4().to_string();
+            let inserted = sqlx::query_scalar::<_, String>(
+                "INSERT INTO roles(id, server_id, name, is_system, position, color)
+                 VALUES($1, $2, $3, 0, $4, $5)
+                 ON CONFLICT(server_id, name) DO NOTHING
+                 RETURNING id",
+            )
+            .bind(&id)
+            .bind(server_id)
+            .bind(&name)
+            .bind(role.position.unwrap_or_default())
+            .bind(color)
+            .fetch_optional(pool)
+            .await?;
+            match inserted {
+                Some(id) => id,
+                None => {
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT id FROM roles WHERE server_id = $1 AND name = $2",
+                    )
+                    .bind(server_id)
+                    .bind(&name)
+                    .fetch_one(pool)
+                    .await?
+                }
+            }
+        };
+        sqlx::query(
+            "UPDATE roles SET color = $1, position = $2 WHERE id = $3 AND server_id = $4",
+        )
+        .bind(color)
+        .bind(role.position.unwrap_or_default())
+        .bind(&role_id)
+        .bind(server_id)
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO discord_role_links(discord_role_id, server_id, role_id)
+             VALUES($1, $2, $3)
+             ON CONFLICT(discord_role_id) DO UPDATE SET
+               server_id = EXCLUDED.server_id, role_id = EXCLUDED.role_id",
+        )
+        .bind(discord_role_id)
+        .bind(server_id)
+        .bind(&role_id)
+        .execute(pool)
+        .await?;
+        role_lookup.insert(discord_role_id.to_owned(), role_id);
+    }
+
+    let allowed_permissions = [
+        "view_channel",
+        "send_messages",
+        "read_message_history",
+        "attach_files",
+        "embed_links",
+        "manage_messages",
+    ];
+    for channel in &channels {
+        let discord_channel_id = channel.id.trim();
+        let Some(channel_id) = channel_lookup.get(discord_channel_id) else {
+            continue;
+        };
+        for overwrite in channel.overwrites.as_deref().unwrap_or_default() {
+            let discord_target = overwrite.id.trim();
+            let target_type = if overwrite.target_type.as_deref() == Some("user") {
+                "user"
+            } else {
+                "role"
+            };
+            let target_id = if target_type == "role" {
+                if input
+                    .everyone_role_id
+                    .as_deref()
+                    .is_some_and(|everyone_id| everyone_id == discord_target)
+                    || discord_target == input.guild_id
+                {
+                    everyone_role.clone()
+                } else if let Some(id) = role_lookup.get(discord_target) {
+                    Some(id.clone())
+                } else {
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT role_id FROM discord_role_links
+                         WHERE discord_role_id = $1 AND server_id = $2",
+                    )
+                    .bind(discord_target)
+                    .bind(server_id)
+                    .fetch_optional(pool)
+                    .await?
+                }
+            } else {
+                linked_user_id(pool, server_id, discord_target).await?
+            };
+            let Some(target_id) = target_id else {
+                continue;
+            };
+            let allow: Vec<String> = overwrite
+                .allow
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .filter(|permission| allowed_permissions.contains(&permission.as_str()))
+                .cloned()
+                .collect();
+            let deny: Vec<String> = overwrite
+                .deny
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .filter(|permission| allowed_permissions.contains(&permission.as_str()))
+                .cloned()
+                .collect();
+            sqlx::query(
+                "INSERT INTO channel_permissions(channel_id, target_type, target_id, allow_json, deny_json, updated_at)
+                 VALUES($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT(channel_id, target_type, target_id) DO UPDATE SET
+                   allow_json = EXCLUDED.allow_json,
+                   deny_json = EXCLUDED.deny_json,
+                   updated_at = EXCLUDED.updated_at",
+            )
+            .bind(channel_id)
+            .bind(target_type)
+            .bind(target_id)
+            .bind(serde_json::to_string(&allow).unwrap_or_else(|_| "[]".to_owned()))
+            .bind(serde_json::to_string(&deny).unwrap_or_else(|_| "[]".to_owned()))
+            .bind(now())
+            .execute(pool)
+            .await?;
+        }
+        let locked = channel.locked.unwrap_or(false)
+            || ["rules", "server-rules"].contains(&channel.name.to_ascii_lowercase().as_str());
+        if locked {
+            if let Some(everyone_id) = everyone_role.as_deref() {
+                sqlx::query(
+                    "INSERT INTO channel_permissions(channel_id, target_type, target_id, allow_json, deny_json, updated_at)
+                     VALUES($1, 'role', $2, '[]', $3, $4)
+                     ON CONFLICT(channel_id, target_type, target_id) DO UPDATE SET
+                       deny_json = EXCLUDED.deny_json, updated_at = EXCLUDED.updated_at",
+                )
+                .bind(channel_id)
+                .bind(everyone_id)
+                .bind("[\"send_messages\"]")
+                .bind(now())
+                .execute(pool)
+                .await?;
+            }
+        }
+    }
+
+    let emojis: Vec<SyncEmoji> = input
+        .emojis
+        .unwrap_or_default()
+        .into_iter()
+        .take(250)
+        .collect();
+    for emoji in &emojis {
+        let discord_emoji_id = emoji.id.trim();
+        let name: String = emoji
+            .name
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
+            .take(32)
+            .collect();
+        if !valid_discord_id(discord_emoji_id)
+            || name.chars().count() < 2
+            || !emoji.image_url.starts_with("https://")
+            || emoji.image_url.len() > 1000
+        {
+            continue;
+        }
+        let linked = sqlx::query_scalar::<_, String>(
+            "SELECT emoji_id FROM discord_emoji_links
+             WHERE discord_emoji_id = $1 AND server_id = $2",
+        )
+        .bind(discord_emoji_id)
+        .bind(server_id)
+        .fetch_optional(pool)
+        .await?;
+        let existing = match linked {
+            Some(id) => Some(id),
+            None => {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM server_emojis WHERE server_id = $1 AND name = $2 LIMIT 1",
+                )
+                .bind(server_id)
+                .bind(&name)
+                .fetch_optional(pool)
+                .await?
+            }
+        };
+        let emoji_id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
+        sqlx::query(
+            "INSERT INTO server_emojis(id, server_id, name, image_url, created_by, created_at)
+             VALUES($1, $2, $3, $4, $5, $6)
+             ON CONFLICT(id) DO UPDATE SET name = EXCLUDED.name, image_url = EXCLUDED.image_url",
+        )
+        .bind(&emoji_id)
+        .bind(server_id)
+        .bind(&name)
+        .bind(&emoji.image_url)
+        .bind(owner_id)
+        .bind(now())
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO discord_emoji_links(discord_emoji_id, server_id, emoji_id)
+             VALUES($1, $2, $3)
+             ON CONFLICT(discord_emoji_id) DO UPDATE SET
+               server_id = EXCLUDED.server_id, emoji_id = EXCLUDED.emoji_id",
+        )
+        .bind(discord_emoji_id)
+        .bind(server_id)
+        .bind(&emoji_id)
+        .execute(pool)
+        .await?;
+    }
+
+    let members: Vec<SyncMember> = input
+        .members
+        .unwrap_or_default()
+        .into_iter()
+        .take(250)
+        .collect();
+    let mut synced_members = 0usize;
+    for member in &members {
+        let discord_user_id = member.id.trim();
+        if member.bot.unwrap_or(false) || !valid_discord_id(discord_user_id) {
+            continue;
+        }
+        let shadow_user_id = ensure_shadow_user(pool, server_id, discord_user_id).await?;
+        let username = member.username.as_deref().unwrap_or("");
+        let fallback_name = format!("discord_{discord_user_id}");
+        let display_name = member
+            .display_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| member.username.as_deref())
+            .unwrap_or(&fallback_name);
+        let display_name: String = display_name.trim().chars().take(32).collect();
+        let discord_username: String = username.chars().take(32).collect();
+        let avatar_url = member
+            .avatar_url
+            .as_deref()
+            .filter(|value| value.starts_with("https://") && value.len() <= 1000);
+        let status = member
+            .status
+            .as_deref()
+            .filter(|value| ["online", "idle", "dnd", "offline"].contains(value))
+            .unwrap_or("offline");
+        sqlx::query(
+            "INSERT INTO user_profiles(user_id, display_name, avatar_url, status, discord_username, updated_at)
+             VALUES($1, $2, $3, $4, $5, $6)
+             ON CONFLICT(user_id) DO UPDATE SET
+               display_name = EXCLUDED.display_name,
+               avatar_url = EXCLUDED.avatar_url,
+               status = EXCLUDED.status,
+               discord_username = EXCLUDED.discord_username,
+               updated_at = EXCLUDED.updated_at",
+        )
+        .bind(&shadow_user_id)
+        .bind(&display_name)
+        .bind(avatar_url)
+        .bind(status)
+        .bind(&discord_username)
+        .bind(now())
+        .execute(pool)
+        .await?;
+
+        let member_user_id = linked_user_id(pool, server_id, discord_user_id)
+            .await?
+            .unwrap_or(shadow_user_id);
+        sqlx::query(
+            "INSERT INTO memberships(server_id, user_id, joined_at)
+             VALUES($1, $2, $3) ON CONFLICT(server_id, user_id) DO NOTHING",
+        )
+        .bind(server_id)
+        .bind(&member_user_id)
+        .bind(now())
+        .execute(pool)
+        .await?;
+        for default_role in [everyone_role.as_ref(), member_role.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            sqlx::query(
+                "INSERT INTO member_roles(server_id, user_id, role_id)
+                 VALUES($1, $2, $3) ON CONFLICT DO NOTHING",
+            )
+            .bind(server_id)
+            .bind(&member_user_id)
+            .bind(default_role)
+            .execute(pool)
+            .await?;
+        }
+        for discord_role_id in member.roles.as_deref().unwrap_or_default() {
+            let role_id = if let Some(id) = role_lookup.get(discord_role_id) {
+                Some(id.clone())
+            } else {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT role_id FROM discord_role_links
+                     WHERE discord_role_id = $1 AND server_id = $2",
+                )
+                .bind(discord_role_id)
+                .bind(server_id)
+                .fetch_optional(pool)
+                .await?
+            };
+            if let Some(role_id) = role_id {
+                sqlx::query(
+                    "INSERT INTO member_roles(server_id, user_id, role_id)
+                     VALUES($1, $2, $3) ON CONFLICT DO NOTHING",
+                )
+                .bind(server_id)
+                .bind(&member_user_id)
+                .bind(role_id)
+                .execute(pool)
+                .await?;
+            }
+        }
+        synced_members += 1;
+    }
+
+    let _ = state.realtime.send(json!({
+        "type": "server.sync.updated",
+        "server_id": server_id
+    }));
+    Ok(json!({
+        "ok": true,
+        "server_id": server_id,
+        "channels": channel_map.len(),
+        "roles": role_lookup.len(),
+        "members": synced_members,
+        "channel_map": channel_map
+    }))
+}
+
+async fn sync(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<SyncInput>,
+) -> Response {
+    let pool = match require_bot(&state, &headers) {
+        Ok(pool) => pool,
+        Err(response) => return *response,
+    };
+    if !guild_matches(&state, &input.guild_id) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "This bridge is restricted to the configured official Discord server."})),
+        )
+            .into_response();
+    }
+    let system = match system_server(&pool).await {
+        Ok(Some(system)) => system,
+        Ok(None) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "Mallow Swamp could not be initialized."})),
+            )
+                .into_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "Discord snapshot server lookup failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "discord_sync_failed"})),
+            )
+                .into_response();
+        }
+    };
+    match sync_snapshot(&state, &pool, &system, input).await {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Discord snapshot sync failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "discord_sync_failed"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/integrations/mallowbot/discord/sync", post(sync))
         .route("/api/integrations/mallowbot/discord/presence", post(presence))
         .route("/api/integrations/mallowbot/discord/messages", post(discord_message))
         .route("/api/integrations/mallowbot/discord/link/claim", post(claim_link))
