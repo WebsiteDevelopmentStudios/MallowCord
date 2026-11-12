@@ -4,6 +4,8 @@ const $=s=>document.querySelector(s);
 // Bind the settings launcher before the rest of the app initializes. Delegation
 // keeps the button functional even if a later startup listener fails.
 document.addEventListener("click",event=>{
+ const nav=event.target.closest(".account-nav");
+ if(nav){event.preventDefault();showAccountPage(nav.dataset.page).catch(error=>{console.error("Settings page failed:",error);const root=document.querySelector("#accountSettingsContent");if(root)root.innerHTML='<div class="settings-error">'+String(error?.message||"Could not load this settings page.")+'</div>'});return}
  const button=event.target.closest("#settingsBtn");
  if(!button)return;
  event.preventDefault();
@@ -730,7 +732,7 @@ function applyCustomCss(source){
 }
 function applyBackgroundPreferences(){const a=accountPreferences.appearance||{};const enabled=!!a.backgroundEnabled;const url=String(a.backgroundImage||"");document.documentElement.style.setProperty("--mallow-custom-background",enabled&&url?"url("+JSON.stringify(url)+")":"none");document.documentElement.style.setProperty("--mallow-background-dim",String(Math.max(0,Math.min(85,Number(a.backgroundDim??62)))/100));document.documentElement.style.setProperty("--mallow-background-blur",String(Math.max(0,Math.min(20,Number(a.backgroundBlur??0)))+"px"));document.body.classList.toggle("custom-background-enabled",enabled&&!!url)}
 function applyPreferences(){const theme=accountPreferences.appearance?.theme||"dark";applyBackgroundPreferences();document.body.dataset.theme=theme;document.body.classList.toggle("reduced-motion",!!accountPreferences.accessibility?.reducedMotion);document.body.classList.toggle("high-contrast",!!accountPreferences.accessibility?.highContrast);document.documentElement.style.setProperty("--account-font-scale",accountPreferences.appearance?.fontScale||"100%");try{applyCustomCss(accountPreferences.appearance?.customCss||"")}catch(e){console.warn("Custom CSS:",e.message)}}
-document.addEventListener("click",event=>{const nav=event.target.closest(".account-nav");if(nav)showAccountPage(nav.dataset.page).catch(error=>{console.error("Settings page failed:",error);const root=$("#accountSettingsContent");if(root)root.innerHTML='<div class="settings-error">'+esc(error.message||"Could not load this settings page.")+'</div>'})});
+// Account navigation is handled by the early delegated listener.
 // Settings button is handled by the early delegated listener above.
 
 $("#closeModal").onclick=()=>$("#modal").classList.add("hidden");
