@@ -6,6 +6,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use uuid::Uuid;
 use serde_json::json;
 use sqlx::{FromRow, PgPool};
@@ -1293,10 +1294,231 @@ async fn delete_role(
     }
 }
 
+#[derive(FromRow, Serialize)]
+struct ServerEmoji {
+    id: String,
+    name: String,
+    image_url: String,
+    created_at: i64,
+}
+
+async fn server_emoji_manager(
+    pool: &PgPool,
+    user: &AuthUser,
+    server_id: &str,
+) -> Result<bool, Response> {
+    let owner_id = sqlx::query_scalar::<_, String>(
+        "SELECT owner_id FROM servers WHERE id = $1",
+    )
+    .bind(server_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "emoji server lookup failed");
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response()
+    })?;
+    let Some(owner_id) = owner_id else {
+        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Server not found."}))).into_response());
+    };
+    let member = sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(server_id)
+    .bind(&user.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "emoji membership lookup failed");
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response()
+    })?;
+    if member.is_none() {
+        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response());
+    }
+    Ok(user.account_type == "owner" || owner_id == user.id)
+}
+
+fn valid_emoji_image_url(value: &str) -> bool {
+    if value.len() <= 1000
+        && value.get(..8).is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+        && !value.chars().any(char::is_whitespace)
+    {
+        return true;
+    }
+    if value.len() > 350_000 {
+        return false;
+    }
+    let Some((header, encoded)) = value.split_once(',') else {
+        return false;
+    };
+    let Some(mime) = header.strip_prefix("data:").and_then(|value| value.strip_suffix(";base64")) else {
+        return false;
+    };
+    let Ok(bytes) = STANDARD.decode(encoded) else {
+        return false;
+    };
+    if bytes.is_empty() || bytes.len() > 256 * 1024 {
+        return false;
+    }
+    match mime {
+        "image/png" => bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+        "image/jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        _ => false,
+    }
+}
+
+async fn list_emojis(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let can_manage = match server_emoji_manager(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    match sqlx::query_as::<_, ServerEmoji>(
+        "SELECT id, name, image_url, created_at FROM server_emojis
+         WHERE server_id = $1 ORDER BY name",
+    )
+    .bind(&server_id)
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(emojis) => Json(json!({"emojis": emojis, "can_manage": can_manage})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "server emoji list failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateEmojiInput {
+    name: String,
+    image_url: String,
+}
+
+async fn create_emoji(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+    Json(input): Json<CreateEmojiInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let manager = match server_emoji_manager(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let name = input.name.trim().to_ascii_lowercase();
+    let image_url = input.image_url.trim();
+    if !(2..=32).contains(&name.len())
+        || !name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Emoji names must be 2–32 letters, numbers or underscores."}))).into_response();
+    }
+    if !valid_emoji_image_url(image_url) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Use a direct HTTPS image URL or upload a PNG, JPG, GIF or WebP image up to 256 KB."}))).into_response();
+    }
+    let id = Uuid::new_v4().to_string();
+    match sqlx::query(
+        "INSERT INTO server_emojis(id, server_id, name, image_url, created_by, created_at)
+         VALUES($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(&id)
+    .bind(&server_id)
+    .bind(&name)
+    .bind(image_url)
+    .bind(&user.id)
+    .bind(now())
+    .execute(&pool)
+    .await
+    {
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(json!({"emoji": {"id": id, "name": name, "image_url": image_url}})),
+        )
+            .into_response(),
+        Err(error) if error.as_database_error().and_then(|db| db.code()).as_deref() == Some("23505") => {
+            (StatusCode::CONFLICT, Json(json!({"error": "That emoji name already exists or could not be added."}))).into_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "server emoji creation failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_create_failed"}))).into_response()
+        }
+    }
+}
+
+async fn delete_emoji(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((server_id, emoji_id)): Path<(String, String)>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let manager = match server_emoji_manager(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => {
+            tracing::error!(%error, "emoji deletion transaction failed to start");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_delete_failed"}))).into_response();
+        }
+    };
+    if let Err(error) = sqlx::query("DELETE FROM server_emojis WHERE id = $1 AND server_id = $2")
+        .bind(&emoji_id)
+        .bind(&server_id)
+        .execute(&mut *tx)
+        .await
+    {
+        tracing::error!(%error, "server emoji deletion failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_delete_failed"}))).into_response();
+    }
+    if let Err(error) = sqlx::query(
+        "DELETE FROM message_reactions
+         WHERE emoji = $1 AND message_id IN (
+             SELECT m.id FROM messages m JOIN channels c ON c.id = m.channel_id
+             WHERE c.server_id = $2
+         )",
+    )
+    .bind(format!("custom:{emoji_id}"))
+    .bind(&server_id)
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::error!(%error, "server emoji reaction cleanup failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_delete_failed"}))).into_response();
+    }
+    if let Err(error) = tx.commit().await {
+        tracing::error!(%error, "emoji deletion transaction failed to commit");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_delete_failed"}))).into_response();
+    }
+    Json(json!({"ok": true})).into_response()
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/servers", get(list_servers))
         .route("/api/servers/{server_id}/channels", get(list_channels).post(create_channel))
+        .route("/api/servers/{server_id}/emojis", get(list_emojis).post(create_emoji))
+        .route("/api/servers/{server_id}/emojis/{emoji_id}", axum::routing::delete(delete_emoji))
         .route("/api/servers/{server_id}/roles", get(list_roles).post(create_role))
         .route("/api/servers/{server_id}/roles/{role_id}", post(update_role).delete(delete_role))
         .route("/api/servers/{server_id}/members", get(list_members))
