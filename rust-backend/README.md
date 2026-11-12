@@ -6,7 +6,7 @@ The Rust service is the destination for MallowCord's performance-sensitive API a
 
 - Axum/Tokio HTTP service with graceful shutdown, request tracing, and configurable database readiness.
 - Neon PostgreSQL connection pool and versioned SQLx migrations applied at startup.
-- Existing device-cookie session lookup/logout, account status, profile, preferences, presence, username changes, and email/phone verification APIs.
+- Google/Discord OAuth login-code exchange and device-session creation, plus existing device-cookie session lookup/logout, account status, profile, preferences, presence, username changes, and email/phone verification APIs.
 - Server list, channel list, member/role views, sections, role assignment, settings, and channel permission APIs.
 - Message history, send/edit/delete, replies, reactions, forwards, attachment metadata, and S3-compatible attachment storage.
 - Friends, friend requests, DMs, notifications, and notification preferences.
@@ -122,6 +122,6 @@ docker run --rm -p 8081:8081 \
 - Keep browser cookies and OAuth secrets server-side. The browser must not call privileged internal endpoints.
 - Keep Discord bot credentials inside Mallow-Bot. Rust accepts the separate server-only Mallow-Bot service key and signed internal events, never the Discord bot token.
 - Port one domain at a time and maintain API compatibility through the opt-in Worker proxy until the frontend is deliberately switched.
-- OAuth provider redirects/callbacks/code exchange, account contact verification, and Worker error-log utilities still remain on the Worker.
+- Google/Discord OAuth provider redirects and callbacks and Worker error-log utilities remain on the Worker; OAuth login-code exchange and device-session creation now run in Rust.
 - Do not set `RUST_API_ORIGIN` until the Rust host is deployed, migrations are applied, secrets are configured, and route-level testing is complete.
 - Do not remove the Worker or D1 rollback binding until all routes and data paths have been verified.
