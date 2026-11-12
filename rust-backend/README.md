@@ -184,4 +184,4 @@ The PostgreSQL pool is tunable with `DATABASE_MAX_CONNECTIONS`, `DATABASE_MIN_CO
 Rust stores the uploaded file bytes unchanged, including animated GIF frames. Upload parsing now retains the `Bytes` buffer instead of making extra full-file copies, and downloads stream directly from the object store rather than buffering the entire object in RAM. The 25 MB file limit includes a separate 256 KB allowance for multipart form overhead, while the service-wide request limit remains 26 MB.
 
 
-The message-history path also has a partial `message_attachments(message_id)` index. It accelerates fetching attachment metadata for the current page of messages while excluding unattached upload rows from that index.
+The message-history path also has a partial composite `message_attachments(message_id, created_at)` index. It accelerates fetching attachment metadata for the current page of messages while excluding unattached upload rows from that index.
