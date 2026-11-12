@@ -28,7 +28,7 @@ function connectRealtime(){
    let message;try{message=JSON.parse(event.data)}catch{return}
    if(message.type==="resync.required"){if(channelId)loadMessages();if(activeDmId)loadDmMessages();if(serverId)loadMemberList();loadNotifications();return}
    if(message.type?.startsWith("message.")&&message.channel_id===channelId)loadMessages();
-   if(message.type==="dm.message.created"&&message.conversation_id===activeDmId)loadDmMessages();
+   if(message.type==="dm.message.created"){if(message.conversation_id===activeDmId)loadDmMessages();if(!$("#socialModal").classList.contains("hidden"))loadSocial()}
    if(message.type==="notifications.updated")loadNotifications();
    if(message.type==="user.presence.updated"&&message.server_id===serverId)scheduleMemberRefresh();
    if(message.type==="server.sync.updated"&&message.server_id===serverId){loadChannels();scheduleMemberRefresh()}
