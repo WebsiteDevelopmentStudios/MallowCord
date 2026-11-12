@@ -503,8 +503,12 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     )).bind(&message_params)?.all().await?.results::<MessageLinkRow>()?;
     let seen_messages: std::collections::HashSet<String> =
         existing_messages.into_iter().map(|row| row.discord_message_id).collect();
+    let mut batch_seen = std::collections::HashSet::new();
     let valid: Vec<&MessageInput> = valid.into_iter()
-        .filter(|message| !seen_messages.contains(message.message_id.trim()))
+        .filter(|message| {
+            let id = message.message_id.trim();
+            !seen_messages.contains(id) && batch_seen.insert(id.to_owned())
+        })
         .collect();
     if valid.is_empty() {
         return Ok(json!({"ok":true,"accepted":0,"duplicates":message_ids.len()}));
