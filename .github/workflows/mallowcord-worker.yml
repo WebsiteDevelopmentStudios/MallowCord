@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "worker/**"
+      - "public/app.js"
       - "wrangler.jsonc"
       - "package.json"
       - ".github/workflows/mallowcord-worker.yml"
@@ -27,6 +28,8 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run test:worker
+      - name: Check frontend JavaScript syntax
+        run: node --check public/app.js
 
   deploy:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
