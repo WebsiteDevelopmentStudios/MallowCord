@@ -10,7 +10,7 @@ The Rust service is the destination for MallowCord's performance-sensitive API a
 - Server list, channel list, member/role views, sections, role assignment, settings, and channel permission APIs.
 - Message history, send/edit/delete, replies, reactions, forwards, attachment metadata, and S3-compatible attachment storage.
 - Friends, friend requests, DMs, notifications, and notification preferences.
-- Authenticated WebSocket delivery for channel and DM events; the browser now consumes live message events and falls back to short polling only while the Rust socket is unavailable.
+- Authenticated WebSocket delivery for channel and DM events; the browser now consumes live message, member/presence, and mention/reply notification events, with message/DM/member/notification polling retained only while the Rust socket is unavailable.
 - Per-connection, short-lived channel/server visibility caching to avoid a PostgreSQL permission query for every broadcast event, with bounded cache growth.
 - Optimized channel visibility and permission evaluation using batched PostgreSQL queries rather than per-channel query loops, plus additive indexes for sessions, memberships, message history, attachments, sections, and pending Discord outbox rows.
 - Mallow-Bot integration APIs for guild snapshot sync, Discord presence, Discord message ingestion, account linking, command queue/results, and outgoing-message acknowledgements; the web Discord-link flow and `-mb` command submission now use Rust too. PostgreSQL migrations now include the channel-link and outgoing-message outbox tables that the bridge requires.
