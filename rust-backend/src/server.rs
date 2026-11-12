@@ -1379,7 +1379,7 @@ async fn list_emojis(
     };
     let can_manage = match server_emoji_manager(&pool, &user, &server_id).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match sqlx::query_as::<_, ServerEmoji>(
         "SELECT id, name, image_url, created_at FROM server_emojis
@@ -1415,7 +1415,7 @@ async fn create_emoji(
     };
     let manager = match server_emoji_manager(&pool, &user, &server_id).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if !manager {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
@@ -1470,7 +1470,7 @@ async fn delete_emoji(
     };
     let manager = match server_emoji_manager(&pool, &user, &server_id).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if !manager {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
