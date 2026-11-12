@@ -70,22 +70,8 @@ export async function proxyToRust(request, env) {
     }
 
     const target = new URL(incoming.pathname + incoming.search, base);
-    const headers = new Headers(request.headers);
-    headers.delete("host");
-    headers.delete("content-length");
-    headers.set("X-Forwarded-Host", incoming.host);
-    headers.set("X-Forwarded-Proto", incoming.protocol.slice(0, -1));
-
-    const init = {
-      method: request.method,
-      headers,
-      redirect: "manual",
-    };
-    if (request.method !== "GET" && request.method !== "HEAD") {
-      init.body = request.body;
-    }
-
-    return await fetch(new Request(target.toString(), init));
+    const forwarded = new Request(target.toString(), request);
+    return await fetch(forwarded);
   } catch (error) {
     console.error("MallowCord Rust API proxy failed", incoming.pathname, error);
     return new Response(JSON.stringify({ error: "rust_backend_unavailable" }), {
