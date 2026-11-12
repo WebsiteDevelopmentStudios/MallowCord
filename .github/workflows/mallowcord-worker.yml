@@ -13,6 +13,7 @@ on:
     branches: [main]
     paths:
       - "worker/**"
+      - "public/app.js"
       - "wrangler.jsonc"
       - "package.json"
       - ".github/workflows/mallowcord-worker.yml"
