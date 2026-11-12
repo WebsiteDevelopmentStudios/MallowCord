@@ -49,6 +49,8 @@ test("proxies API domains already implemented in Rust", () => {
     ["POST", "/api/integrations/mallowbot/users/user-4/delete"],
     ["POST", "/api/admin/ip-ban"],
     ["GET", "/api/admin/audit"],
+    ["GET", "/api/admin/errors"],
+    ["DELETE", "/api/admin/errors"],
   ];
 
   for (const [method, path] of cases) {
