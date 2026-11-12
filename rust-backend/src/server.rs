@@ -101,75 +101,66 @@ pub(crate) async fn channel_permission_allowed(
     channel_id: &str,
     permission: &str,
 ) -> Result<bool, sqlx::Error> {
-    let server_id = sqlx::query_scalar::<_, String>(
-        "SELECT server_id FROM channels WHERE id = $1",
+    let allowed = sqlx::query_scalar::<_, bool>(
+        "WITH channel AS (
+             SELECT id, server_id FROM channels WHERE id = $1
+         ),
+         member_role_ids AS (
+             SELECT mr.role_id
+             FROM member_roles mr
+             JOIN channel c ON c.server_id = mr.server_id
+             WHERE mr.user_id = $2
+             UNION
+             SELECT r.id
+             FROM roles r
+             JOIN channel c ON c.server_id = r.server_id
+             WHERE r.name = '@everyone'
+         )
+         SELECT CASE
+             WHEN NOT EXISTS (
+                 SELECT 1 FROM memberships m
+                 JOIN channel c ON c.server_id = m.server_id
+                 WHERE m.user_id = $2
+             ) THEN FALSE
+             WHEN EXISTS (
+                 SELECT 1 FROM channel_permissions cp
+                 JOIN channel c ON c.id = cp.channel_id
+                 WHERE cp.target_type = 'user'
+                   AND cp.target_id = $2
+                   AND cp.deny_json::jsonb ? $3
+             ) THEN FALSE
+             WHEN EXISTS (
+                 SELECT 1 FROM channel_permissions cp
+                 JOIN channel c ON c.id = cp.channel_id
+                 WHERE cp.target_type = 'user'
+                   AND cp.target_id = $2
+                   AND cp.allow_json::jsonb ? $3
+             ) THEN TRUE
+             WHEN EXISTS (
+                 SELECT 1 FROM channel_permissions cp
+                 JOIN channel c ON c.id = cp.channel_id
+                 JOIN member_role_ids mr ON mr.role_id = cp.target_id
+                 WHERE cp.target_type = 'role'
+                   AND cp.allow_json::jsonb ? $3
+             ) THEN TRUE
+             WHEN EXISTS (
+                 SELECT 1 FROM channel_permissions cp
+                 JOIN channel c ON c.id = cp.channel_id
+                 JOIN member_role_ids mr ON mr.role_id = cp.target_id
+                 WHERE cp.target_type = 'role'
+                   AND cp.deny_json::jsonb ? $3
+             ) THEN FALSE
+             ELSE TRUE
+         END
+         FROM channel",
     )
     .bind(channel_id)
-    .fetch_optional(pool)
-    .await?;
-    let Some(server_id) = server_id else {
-        return Ok(false);
-    };
-
-    let member = sqlx::query_scalar::<_, i32>(
-        "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
-    )
-    .bind(&server_id)
     .bind(user_id)
+    .bind(permission)
     .fetch_optional(pool)
     .await?;
-    if member.is_none() {
-        return Ok(false);
-    }
 
-    let mut roles = sqlx::query_scalar::<_, String>(
-        "SELECT role_id FROM member_roles WHERE server_id = $1 AND user_id = $2",
-    )
-    .bind(&server_id)
-    .bind(user_id)
-    .fetch_all(pool)
-    .await?;
-    if let Some(everyone) = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM roles WHERE server_id = $1 AND name = '@everyone' LIMIT 1",
-    )
-    .bind(&server_id)
-    .fetch_optional(pool)
-    .await?
-    {
-        roles.push(everyone);
-    }
-
-    let overwrites = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT target_type, target_id, allow_json, deny_json
-         FROM channel_permissions WHERE channel_id = $1",
-    )
-    .bind(channel_id)
-    .fetch_all(pool)
-    .await?;
-
-    let parse = |value: &str| serde_json::from_str::<Vec<String>>(value).unwrap_or_default();
-    let user_rows: Vec<_> = overwrites
-        .iter()
-        .filter(|row| row.0 == "user" && row.1 == user_id)
-        .collect();
-    let role_rows: Vec<_> = overwrites
-        .iter()
-        .filter(|row| row.0 == "role" && roles.iter().any(|role| role == &row.1))
-        .collect();
-
-    if user_rows.iter().any(|row| parse(&row.3).iter().any(|value| value == permission)) {
-        return Ok(false);
-    }
-    if user_rows.iter().any(|row| parse(&row.2).iter().any(|value| value == permission)) {
-        return Ok(true);
-    }
-    if role_rows.iter().any(|row| parse(&row.2).iter().any(|value| value == permission)) {
-        return Ok(true);
-    }
-    if role_rows.iter().any(|row| parse(&row.3).iter().any(|value| value == permission)) {
-        return Ok(false);
-    }
-    Ok(true)
+    Ok(allowed.unwrap_or(false))
 }
 
 #[derive(Serialize, FromRow)]
@@ -239,37 +230,62 @@ async fn list_channels(
     }
 
     let rows = sqlx::query_as::<_, ChannelView>(
-        "SELECT c.id, c.name, c.kind, c.position, c.section_id,
+        "WITH member_role_ids AS (
+             SELECT role_id FROM member_roles WHERE server_id = $1 AND user_id = $2
+             UNION
+             SELECT id FROM roles WHERE server_id = $1 AND name = '@everyone'
+         )
+         SELECT c.id, c.name, c.kind, c.position, c.section_id,
                 ss.name AS section_name, d.category_name, d.discord_channel_id
          FROM channels c
          LEFT JOIN discord_channel_links d
            ON d.mallow_channel_id = c.id AND d.server_id = c.server_id
          LEFT JOIN server_sections ss ON ss.id = c.section_id
          WHERE c.server_id = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM channel_permissions cp
+               WHERE cp.channel_id = c.id
+                 AND cp.target_type = 'user'
+                 AND cp.target_id = $2
+                 AND cp.deny_json::jsonb ? 'view_channel'
+           )
+           AND (
+               EXISTS (
+                   SELECT 1 FROM channel_permissions cp
+                   WHERE cp.channel_id = c.id
+                     AND cp.target_type = 'user'
+                     AND cp.target_id = $2
+                     AND cp.allow_json::jsonb ? 'view_channel'
+               )
+               OR EXISTS (
+                   SELECT 1 FROM channel_permissions cp
+                   JOIN member_role_ids mr ON mr.role_id = cp.target_id
+                   WHERE cp.channel_id = c.id
+                     AND cp.target_type = 'role'
+                     AND cp.allow_json::jsonb ? 'view_channel'
+               )
+               OR NOT EXISTS (
+                   SELECT 1 FROM channel_permissions cp
+                   JOIN member_role_ids mr ON mr.role_id = cp.target_id
+                   WHERE cp.channel_id = c.id
+                     AND cp.target_type = 'role'
+                     AND cp.deny_json::jsonb ? 'view_channel'
+               )
+           )
          ORDER BY COALESCE(ss.position, 999), COALESCE(d.category_name, ss.name), c.position",
     )
     .bind(&server_id)
+    .bind(&user.id)
     .fetch_all(&pool)
     .await;
     let rows = match rows {
         Ok(rows) => rows,
         Err(error) => {
-            tracing::error!(%error, "failed to list server channels");
+            tracing::error!(%error, "failed to list server channels with permissions");
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channels_lookup_failed"}))).into_response();
         }
     };
 
-    let mut visible = Vec::new();
-    for channel in rows {
-        match channel_permission_allowed(&pool, &user.id, &channel.id, "view_channel").await {
-            Ok(true) => visible.push(channel),
-            Ok(false) => {}
-            Err(error) => {
-                tracing::error!(%error, channel_id = %channel.id, "channel permission check failed");
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response();
-            }
-        }
-    }
     Json(json!({"channels": visible})).into_response()
 }
 
