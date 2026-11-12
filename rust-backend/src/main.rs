@@ -17,6 +17,7 @@ use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 mod account;
+mod messages;
 mod auth;
 mod server;
 mod social;
@@ -215,6 +216,7 @@ async fn main() {
         .route("/internal/v1/events", post(ingest_event))
         .merge(auth::router())
         .merge(account::router())
+        .merge(messages::router())
         .merge(server::router())
         .merge(social::router())
         .with_state(state)
