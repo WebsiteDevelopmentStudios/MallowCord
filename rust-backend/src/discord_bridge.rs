@@ -1943,6 +1943,24 @@ async fn sync_snapshot(
             .execute(pool)
             .await?;
         }
+        if let Some(discord_roles) = member.roles.as_deref() {
+            // Replace only Discord-managed role assignments. Native MallowCord
+            // roles are intentionally preserved for linked accounts.
+            sqlx::query(
+                "DELETE FROM member_roles AS assigned
+                 USING discord_role_links AS linked
+                 WHERE assigned.server_id = $1
+                   AND assigned.user_id = $2
+                   AND assigned.role_id = linked.role_id
+                   AND linked.server_id = $1
+                   AND NOT (linked.discord_role_id = ANY($3::text[]))",
+            )
+            .bind(server_id)
+            .bind(&member_user_id)
+            .bind(discord_roles)
+            .execute(pool)
+            .await?;
+        }
         for discord_role_id in member.roles.as_deref().unwrap_or_default() {
             let role_id = if let Some(id) = role_lookup.get(discord_role_id) {
                 Some(id.clone())
