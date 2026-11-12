@@ -13,7 +13,8 @@
     {
       "binding": "DB",
       "database_name": "mallowcord",
-      "database_id": "6b781710-a658-480a-9559-ded3cd61422a"
+      "database_id": "6b781710-a658-480a-9559-ded3cd61422a",
+      "migrations_dir": "migrations"
     }
   ]
 }
