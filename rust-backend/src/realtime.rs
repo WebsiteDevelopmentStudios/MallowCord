@@ -10,7 +10,11 @@ use axum::{
 };
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use std::{collections::HashMap, time::{Duration, Instant}};
 use tokio::sync::broadcast;
+
+const VISIBILITY_CACHE_TTL: Duration = Duration::from_secs(3);
+type VisibilityCache = HashMap<String, (bool, Instant)>;
 
 use crate::{
     auth::{current_user, AuthUser},
@@ -50,7 +54,7 @@ async fn authorize(
     }
 }
 
-async fn event_visible(pool: &PgPool, user: &AuthUser, event: &Value) -> bool {
+async fn event_visible(pool: &PgPool, user: &AuthUser, event: &Value, cache: &mut VisibilityCache) -> bool {
     if event
         .get("recipient_ids")
         .and_then(Value::as_array)
@@ -60,14 +64,28 @@ async fn event_visible(pool: &PgPool, user: &AuthUser, event: &Value) -> bool {
     }
 
     if let Some(channel_id) = event.get("channel_id").and_then(Value::as_str) {
-        return matches!(
+        let key = format!("channel:{channel_id}");
+        if let Some((allowed, expires_at)) = cache.get(&key) {
+            if *expires_at > Instant::now() {
+                return *allowed;
+            }
+        }
+        let allowed = matches!(
             channel_permission_allowed(pool, &user.id, channel_id, "view_channel").await,
             Ok(true)
         );
+        remember_visibility(cache, key, allowed);
+        return allowed;
     }
 
     if let Some(server_id) = event.get("server_id").and_then(Value::as_str) {
-        return matches!(
+        let key = format!("server:{server_id}");
+        if let Some((allowed, expires_at)) = cache.get(&key) {
+            if *expires_at > Instant::now() {
+                return *allowed;
+            }
+        }
+        let allowed = matches!(
             sqlx::query_scalar::<_, i32>(
                 "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
             )
@@ -77,8 +95,21 @@ async fn event_visible(pool: &PgPool, user: &AuthUser, event: &Value) -> bool {
             .await,
             Ok(Some(_))
         );
+        remember_visibility(cache, key, allowed);
+        return allowed;
     }
     false
+}
+
+fn remember_visibility(cache: &mut VisibilityCache, key: String, allowed: bool) {
+    let now = Instant::now();
+    if cache.len() >= 256 {
+        cache.retain(|_, (_, expires_at)| *expires_at > now);
+    }
+    if cache.len() >= 512 {
+        cache.clear();
+    }
+    cache.insert(key, (allowed, now + VISIBILITY_CACHE_TTL));
 }
 
 async fn websocket(
@@ -106,6 +137,7 @@ async fn handle_socket(
     user: AuthUser,
 ) {
     let mut receiver = state.realtime.subscribe();
+    let mut visibility_cache = VisibilityCache::new();
     let welcome = json!({"type": "connected", "user_id": user.id.clone()});
     if socket.send(Message::Text(welcome.to_string().into())).await.is_err() {
         return;
@@ -132,7 +164,7 @@ async fn handle_socket(
             event = receiver.recv() => {
                 match event {
                     Ok(event) => {
-                        if event_visible(&pool, &user, &event).await
+                        if event_visible(&pool, &user, &event, &mut visibility_cache).await
                             && socket.send(Message::Text(event.to_string().into())).await.is_err()
                         {
                             break;
