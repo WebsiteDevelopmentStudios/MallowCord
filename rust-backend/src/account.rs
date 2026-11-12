@@ -370,8 +370,60 @@ async fn update_preferences(
     }
 }
 
+#[derive(Deserialize)]
+struct UpdateUsernameInput {
+    username: String,
+}
+
+async fn update_username(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<UpdateUsernameInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let username = input.username.trim();
+    let valid = (3..=24).contains(&username.len())
+        && username
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    if !valid {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Username must be 3–24 characters."})),
+        )
+            .into_response();
+    }
+
+    match sqlx::query(
+        "UPDATE users SET username = $1, username_key = $2, updated_at = $3 WHERE id = $4",
+    )
+    .bind(username)
+    .bind(username.to_ascii_lowercase())
+    .bind(now())
+    .bind(&user.id)
+    .execute(&pool)
+    .await
+    {
+        Ok(result) if result.rows_affected() == 1 => {
+            Json(json!({"username": username})).into_response()
+        }
+        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "Account not found."}))).into_response(),
+        Err(error) if error.as_database_error().and_then(|db| db.code()).as_deref() == Some("23505") => {
+            (StatusCode::CONFLICT, Json(json!({"error": "That username is already taken."}))).into_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "username update failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "username_update_failed"}))).into_response()
+        }
+    }
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/auth/username", post(update_username))
         .route("/api/account/profile", get(get_profile).post(update_profile))
         .route("/api/account/preferences", get(get_preferences).post(update_preferences))
         .route("/api/presence/heartbeat", post(presence_heartbeat))
