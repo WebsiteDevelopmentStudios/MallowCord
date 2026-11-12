@@ -995,9 +995,14 @@ async fn forward_message(
     .bind(&user.id)
     .fetch_optional(&pool)
     .await;
-    if !matches!(target, Ok(Some(_))) {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "Choose a text channel you belong to."}))).into_response();
-    }
+    let (target_channel_id, target_server_id) = match target {
+        Ok(Some(value)) => value,
+        Ok(None) => return (StatusCode::FORBIDDEN, Json(json!({"error": "Choose a text channel you belong to."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "forward target lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_forward_failed"}))).into_response();
+        }
+    };
     let id = Uuid::new_v4().to_string();
     let created_at = now();
     let mut tx = match pool.begin().await {
@@ -1012,7 +1017,7 @@ async fn forward_message(
          VALUES($1, $2, $3, $4, $5)",
     )
     .bind(&id)
-    .bind(&input.target_channel_id)
+    .bind(&target_channel_id)
     .bind(&user.id)
     .bind(&source_content)
     .bind(created_at)
@@ -1040,7 +1045,14 @@ async fn forward_message(
         tracing::error!(%error, "forward transaction commit failed");
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_forward_failed"}))).into_response();
     }
-    (StatusCode::CREATED, Json(json!({"ok": true, "message": {"id": id, "content": source_content, "created_at": created_at}}))).into_response()
+    let message = json!({"id": id, "content": source_content, "created_at": created_at, "author_id": user.id, "username": user.username, "forwarded_from": source_username});
+    let _ = state.realtime.send(json!({
+        "type": "message.created",
+        "server_id": target_server_id,
+        "channel_id": target_channel_id,
+        "message": message.clone()
+    }));
+    (StatusCode::CREATED, Json(json!({"ok": true, "message": message}))).into_response()
 }
 
 pub(crate) fn router() -> Router<AppState> {
