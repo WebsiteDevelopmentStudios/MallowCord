@@ -21,37 +21,37 @@ fn now() -> i64 {
 async fn require_user(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(PgPool, AuthUser), Response> {
+) -> Result<(PgPool, AuthUser), Box<Response>> {
     let Some(pool) = state.database.as_ref() else {
-        return Err((
+        return Err(Box::new((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"error": "database_not_configured"})),
         )
-            .into_response());
+            .into_response()));
     };
     match current_user(headers, pool).await {
         Ok(Some(user)) => {
             if user.status == "timed_out" && user.timeout_until.unwrap_or(0) > now() {
-                return Err((
+                return Err(Box::new((
                     StatusCode::FORBIDDEN,
                     Json(json!({"error": "Your account is timed out."})),
                 )
-                    .into_response());
+                    .into_response()));
             }
             Ok((pool.clone(), user))
         }
-        Ok(None) => Err((
+        Ok(None) => Err(Box::new((
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Sign in required."})),
         )
-            .into_response()),
+            .into_response())),
         Err(error) => {
             tracing::error!(%error, "server API session lookup failed");
-            Err((
+            Err(Box::new((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "session_lookup_failed"})),
             )
-                .into_response())
+                .into_response()))
         }
     }
 }
@@ -64,7 +64,7 @@ async fn require_membership(
     pool: &PgPool,
     user: &AuthUser,
     server_id: &str,
-) -> Result<(String, bool), Response> {
+) -> Result<(String, bool), Box<Response>> {
     let owner_id = sqlx::query_scalar::<_, String>(
         "SELECT owner_id FROM servers WHERE id = $1",
     )
@@ -73,9 +73,9 @@ async fn require_membership(
     .await
     .map_err(|error| {
         tracing::error!(%error, "server lookup failed");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "server_lookup_failed"}))).into_response()
+        Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "server_lookup_failed"}))).into_response())
     })?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Server not found."}))).into_response())?;
+    .ok_or_else(|| Box::new((StatusCode::NOT_FOUND, Json(json!({"error": "Server not found."}))).into_response()))?;
 
     let member = sqlx::query_scalar::<_, i32>(
         "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
@@ -89,7 +89,7 @@ async fn require_membership(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "server_lookup_failed"}))).into_response()
     })?;
     if member.is_none() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response());
+        return Err(Box::new((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response()));
     }
     Ok((owner_id.clone(), can_manage(user, &owner_id)))
 }
@@ -186,7 +186,7 @@ async fn list_servers(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let default_icon = std::env::var("MALLOWCORD_DEFAULT_SERVER_ICON")
         .unwrap_or_else(|_| "https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png".to_owned());
@@ -234,7 +234,7 @@ async fn list_channels(
         Err(response) => return response,
     };
     if let Err(response) = require_membership(&pool, &user, &server_id).await {
-        return response;
+        return *response;
     }
 
     let rows = sqlx::query_as::<_, ChannelView>(
