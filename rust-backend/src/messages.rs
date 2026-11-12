@@ -64,7 +64,7 @@ async fn channel_access(
     user: &AuthUser,
     channel_id: &str,
     permission: &str,
-) -> Result<String, Response> {
+) -> Result<String, Box<Response>> {
     let server_id = sqlx::query_scalar::<_, String>(
         "SELECT server_id FROM channels WHERE id = $1",
     )
@@ -73,16 +73,16 @@ async fn channel_access(
     .await
     .map_err(|error| {
         tracing::error!(%error, "channel lookup failed");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_lookup_failed"}))).into_response()
+        Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_lookup_failed"}))).into_response())
     })?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Channel not found."}))).into_response())?;
+    .ok_or_else(|| Box::new((StatusCode::NOT_FOUND, Json(json!({"error": "Channel not found."}))).into_response()))?;
 
     match channel_permission_allowed(pool, &user.id, channel_id, permission).await {
         Ok(true) => Ok(server_id),
-        Ok(false) => Err((StatusCode::FORBIDDEN, Json(json!({"error": "You cannot access this channel."}))).into_response()),
+        Ok(false) => Err(Box::new((StatusCode::FORBIDDEN, Json(json!({"error": "You cannot access this channel."}))).into_response())),
         Err(error) => {
             tracing::error!(%error, "channel permission lookup failed");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response())
+            Err(Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()))
         }
     }
 }
@@ -149,7 +149,7 @@ async fn list_messages(
     };
     let server_id = match channel_access(&pool, &user, &channel_id, "view_channel").await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if let Err(response) = channel_access(&pool, &user, &channel_id, "read_message_history").await {
         return response;
@@ -201,7 +201,7 @@ async fn list_messages(
     };
     regular.reverse();
 
-    let mut message_ids: Vec<String> = regular.iter().map(|message| message.id.clone()).collect();
+    let message_ids: Vec<String> = regular.iter().map(|message| message.id.clone()).collect();
     let attachments = if message_ids.is_empty() {
         Ok(Vec::new())
     } else {
@@ -341,7 +341,8 @@ async fn list_messages(
         ));
     }
     combined.sort_by_key(|item| item.0);
-    let messages: Vec<Value> = combined.into_iter().rev().take(75).collect::<Vec<_>>().into_iter().rev().map(|item| item).collect();
+    let start = combined.len().saturating_sub(75);
+    let messages: Vec<Value> = combined.into_iter().skip(start).map(|(_, message)| message).collect();
 
     let mut result = json!({"messages": messages});
     if query.get("include_directory").map(String::as_str) == Some("1") {
