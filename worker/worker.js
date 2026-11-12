@@ -314,7 +314,7 @@ const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
 if(discordBridgePath){
  if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
  const expectedGuild="1560367587542433812";
- await ensureAccountTables(env);const system=await ensureBridgeSystemServer(env);
+ await ensureAccountTables(env);await ensureOAuthTables(env);const system=await ensureBridgeSystemServer(env);
  if(!system)return fail("Mallow Swamp could not be initialized.",503);
  await ensureDiscordBridgeTables(env);
 
