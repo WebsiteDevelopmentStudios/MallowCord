@@ -33,19 +33,19 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
 async fn authorize(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(PgPool, AuthUser), Response> {
+) -> Result<(PgPool, AuthUser), Box<Response>> {
     let Some(pool) = state.database.as_ref() else {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "database_not_configured"}))).into_response());
+        return Err(Box::new((StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "database_not_configured"}))).into_response()));
     };
     match current_user(headers, pool).await {
         Ok(Some(user)) if user.status != "timed_out" || user.timeout_until.unwrap_or(0) <= chrono::Utc::now().timestamp() => {
             Ok((pool.clone(), user))
         }
-        Ok(Some(_)) => Err((StatusCode::FORBIDDEN, Json(json!({"error": "Your account is timed out."}))).into_response()),
-        Ok(None) => Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign in required."}))).into_response()),
+        Ok(Some(_)) => Err(Box::new((StatusCode::FORBIDDEN, Json(json!({"error": "Your account is timed out."}))).into_response())),
+        Ok(None) => Err(Box::new((StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign in required."}))).into_response())),
         Err(error) => {
             tracing::error!(%error, "websocket session lookup failed");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "session_lookup_failed"}))).into_response())
+            Err(Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "session_lookup_failed"}))).into_response()))
         }
     }
 }
@@ -91,7 +91,7 @@ async fn websocket(
     }
     let (pool, user) = match authorize(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     upgrade
         .max_message_size(64 * 1024)
@@ -106,7 +106,7 @@ async fn handle_socket(
     user: AuthUser,
 ) {
     let mut receiver = state.realtime.subscribe();
-    let welcome = json!({"type": "connected", "user_id": user.id});
+    let welcome = json!({"type": "connected", "user_id": user.id.clone()});
     if socket.send(Message::Text(welcome.to_string().into())).await.is_err() {
         return;
     }
