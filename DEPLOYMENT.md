@@ -90,3 +90,20 @@ Use `mallowbot-integration/rust_events.py` to send events. Supply the same event
 ### Production cutover gate
 
 The Worker remains the browser API until Rust has feature parity and regression coverage for OAuth/device sessions, account and profile reads, server/channel/member/role permissions, messages, reactions, replies, friends, DMs, uploads, and moderation. A Rust deployment alone does not replace those routes. Keep the existing Worker and Neon database intact throughout the migration.
+
+
+### Optional staged API proxy
+
+The Worker now has an opt-in route allowlist for Rust. It is disabled unless `RUST_API_ORIGIN` is configured.
+
+When the Rust host is deployed and verified:
+
+1. Set the Cloudflare Worker variable `RUST_API_ORIGIN` to the Rust service's HTTPS origin only (for example, `https://rust-api.example.com`; no path or trailing API prefix).
+2. Keep the Rust service reachable only through the intended Cloudflare-protected network path.
+3. Verify `/health` and `/ready` on Rust before enabling the variable.
+4. Confirm the proxy allowlist tests and Rust CI are green.
+5. Enable the variable only after checking the exact routes being forwarded.
+
+Only routes and HTTP methods already implemented in Rust are forwarded. Google/Discord OAuth start and callbacks, OAuth code exchange, contact verification, Mallow-Bot Discord bridge endpoints, and other unported routes continue to run on the Worker. Browser cookies and request bodies are forwarded so the existing same-origin session contract is preserved. The Worker adds CORS support for the Rust section PATCH route.
+
+If Rust is unavailable, forwarded requests return HTTP 502; they do not silently fall back to Worker database writes. Leave `RUST_API_ORIGIN` unset until the Rust service is ready. This branch does not set the variable or change the live deployment.
