@@ -48,6 +48,8 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/integrations\/mallowbot\/discord\/commands\/result$/],
   ["GET", /^\/api\/integrations\/mallowbot\/discord\/outbox$/],
   ["POST", /^\/api\/integrations\/mallowbot\/discord\/outbox\/[^/]+\/ack$/],
+  ["GET", /^\/api\/integrations\/mallowbot\/users$/],
+  ["POST", /^\/api\/integrations\/mallowbot\/users\/[^/]+\/(?:timeout|ban|unban|delete)$/],
   ["GET", /^\/api\/admin\/audit$/],
 ];
 
