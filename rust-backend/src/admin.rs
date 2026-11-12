@@ -16,34 +16,34 @@ use crate::{
 async fn require_owner(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(PgPool, AuthUser), Response> {
+) -> Result<(PgPool, AuthUser), Box<Response>> {
     let Some(pool) = state.database.as_ref() else {
-        return Err((
+        return Err(Box::new((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"error": "database_not_configured"})),
         )
-            .into_response());
+            .into_response()));
     };
 
     match current_user(headers, pool).await {
         Ok(Some(user)) if user.account_type == "owner" => Ok((pool.clone(), user)),
-        Ok(Some(_)) => Err((
+        Ok(Some(_)) => Err(Box::new((
             StatusCode::FORBIDDEN,
             Json(json!({"error": "Owner access required."})),
         )
-            .into_response()),
-        Ok(None) => Err((
+            .into_response())),
+        Ok(None) => Err(Box::new((
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "Sign in required."})),
         )
-            .into_response()),
+            .into_response())),
         Err(error) => {
             tracing::error!(%error, "admin session lookup failed");
-            Err((
+            Err(Box::new((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "admin_authentication_failed"})),
             )
-                .into_response())
+                .into_response()))
         }
     }
 }
@@ -54,7 +54,7 @@ async fn audit_events(
 ) -> Response {
     let (pool, _) = match require_owner(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     match sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>, i64)>(
