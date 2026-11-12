@@ -18,6 +18,7 @@ use tracing_subscriber::EnvFilter;
 
 mod account;
 mod messages;
+mod notifications;
 mod auth;
 mod server;
 mod social;
@@ -217,6 +218,7 @@ async fn main() {
         .merge(auth::router())
         .merge(account::router())
         .merge(messages::router())
+        .merge(notifications::router())
         .merge(server::router())
         .merge(social::router())
         .with_state(state)
