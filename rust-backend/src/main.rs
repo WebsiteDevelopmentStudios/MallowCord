@@ -41,6 +41,7 @@ pub(crate) struct AppState {
     pub(crate) discord_guild_id: Arc<String>,
     pub(crate) mallowbot_icon_url: Option<String>,
     pub(crate) ip_hash_secret: Option<Arc<Vec<u8>>>,
+    pub(crate) public_api_origin: Arc<String>,
 }
 
 #[derive(Serialize)]
@@ -235,6 +236,10 @@ async fn main() {
         .ok()
         .filter(|value| !value.is_empty())
         .map(|value| Arc::new(value.into_bytes()));
+    let public_api_origin = Arc::new(
+        env::var("MALLOWCORD_PUBLIC_API_ORIGIN")
+            .unwrap_or_else(|_| "https://mallowcord-api.wowgrayhaha.workers.dev".to_owned()),
+    );
 
     let object_store = storage::from_env();
     let (realtime, _) = tokio::sync::broadcast::channel(4096);
@@ -247,6 +252,7 @@ async fn main() {
         discord_guild_id,
         mallowbot_icon_url,
         ip_hash_secret,
+        public_api_origin,
     };
     let app = Router::new()
         .route("/health", get(health))
