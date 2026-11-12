@@ -13,6 +13,14 @@ async fn postgres_migrations_apply_and_create_runtime_tables() {
         .await
         .expect("connect to the disposable PostgreSQL test database");
 
+    let baseline = include_str!("fixtures/neon_base_schema.sql");
+    for statement in baseline.split(';').map(str::trim).filter(|value| !value.is_empty()) {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect("create the pre-existing Neon baseline tables");
+    }
+
     let migrator = sqlx::migrate!("./migrations");
     migrator
         .run(&pool)
@@ -34,7 +42,7 @@ async fn postgres_migrations_apply_and_create_runtime_tables() {
         "server_onboarding",
         "onboarding_completions",
         "messages",
-        "attachments",
+        "message_attachments",
         "event_inbox",
         "worker_error_logs",
     ] {
@@ -54,7 +62,7 @@ async fn postgres_migrations_apply_and_create_runtime_tables() {
     )
     .bind(vec![
         "event_inbox_pending_idx",
-        "messages_channel_created_idx",
+        "messages_channel_idx",
         "oauth_states_expiry_idx",
         "worker_error_logs_created_idx",
         "onboarding_completions_user_idx",
