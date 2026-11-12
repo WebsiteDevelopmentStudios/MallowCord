@@ -477,34 +477,65 @@ async fn discord_message(
         }
     }
 
-    for mentioned_id in input.mentioned_user_ids.unwrap_or_default().into_iter().take(100) {
-        if !valid_discord_id(&mentioned_id) || mentioned_id == input.author_id {
-            continue;
-        }
-        let target = linked_user_id(&pool, &server_id, &mentioned_id).await;
-        let Ok(Some(target_user_id)) = target else {
-            continue;
-        };
-        if let Err(error) = sqlx::query(
-            "INSERT INTO message_notifications(id, user_id, server_id, channel_id, message_id, kind, created_at)
-             VALUES($1, $2, $3, $4, $5, 'mention', $6)
-             ON CONFLICT(user_id, message_id, kind) DO NOTHING",
+    let mut mentioned_ids: Vec<String> = input
+        .mentioned_user_ids
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|discord_id| valid_discord_id(discord_id) && discord_id != &input.author_id)
+        .take(100)
+        .collect();
+    mentioned_ids.sort();
+    mentioned_ids.dedup();
+    if !mentioned_ids.is_empty() {
+        let target_user_ids = match sqlx::query_scalar::<_, String>(
+            "SELECT user_id FROM discord_account_links
+             WHERE server_id = $1 AND discord_user_id = ANY($2)
+             UNION
+             SELECT user_id FROM discord_user_links
+             WHERE server_id = $1 AND discord_user_id = ANY($2)",
         )
-        .bind(Uuid::new_v4().to_string())
-        .bind(target_user_id)
         .bind(&server_id)
-        .bind(&channel_id)
-        .bind(&message_id)
-        .bind(now())
-        .execute(&mut *tx)
+        .bind(&mentioned_ids)
+        .fetch_all(&mut *tx)
         .await
         {
-            tracing::error!(%error, "Discord mention notification insert failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "discord_message_failed"})),
+            Ok(targets) => targets,
+            Err(error) => {
+                tracing::error!(%error, "Discord mention target lookup failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "discord_message_failed"})),
+                )
+                    .into_response();
+            }
+        };
+        if !target_user_ids.is_empty() {
+            let notification_ids: Vec<String> = target_user_ids
+                .iter()
+                .map(|_| Uuid::new_v4().to_string())
+                .collect();
+            if let Err(error) = sqlx::query(
+                "INSERT INTO message_notifications(id, user_id, server_id, channel_id, message_id, kind, created_at)
+                 SELECT entries.id, entries.user_id, $3, $4, $5, 'mention', $6
+                 FROM unnest($1::text[], $2::text[]) AS entries(id, user_id)
+                 ON CONFLICT(user_id, message_id, kind) DO NOTHING",
             )
-                .into_response();
+            .bind(&notification_ids)
+            .bind(&target_user_ids)
+            .bind(&server_id)
+            .bind(&channel_id)
+            .bind(&message_id)
+            .bind(now())
+            .execute(&mut *tx)
+            .await
+            {
+                tracing::error!(%error, "Discord mention notification insert failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "discord_message_failed"})),
+                )
+                    .into_response();
+            }
         }
     }
 
