@@ -637,6 +637,7 @@ async fn send_message(
         }
     }
 
+    let notification_recipients: Vec<String> = notifications.iter().cloned().collect();
     for target_id in notifications {
         let kind = if reply_recipient.as_deref() == Some(target_id.as_str()) {
             "reply"
@@ -674,6 +675,12 @@ async fn send_message(
         "username": user.username,
         "author_id": user.id
     });
+    if !notification_recipients.is_empty() {
+        let _ = state.realtime.send(json!({
+            "type": "notifications.updated",
+            "recipient_ids": notification_recipients
+        }));
+    }
     let _ = state.realtime.send(json!({
         "type": "message.created",
         "server_id": server_id,
