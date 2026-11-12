@@ -35,6 +35,7 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/dms\/open$/],
   ["GET", /^\/api\/dms\/[^/]+\/messages$/],
   ["POST", /^\/api\/dms\/[^/]+\/messages$/],
+  ["GET", /^\/api\/realtime$/],
   ["GET", /^\/api\/notifications$/],
   ["POST", /^\/api\/notifications\/(?:read|clear)$/],
   ["GET", /^\/api\/notification-settings$/],
