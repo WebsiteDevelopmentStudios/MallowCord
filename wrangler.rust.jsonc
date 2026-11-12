@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mallowcord-rust-d1-staging",
+  "account_id": "760bb0ff9afeb64ec51be54c045dd78c",
   "main": "rust-d1-worker/build/worker/shim.mjs",
   "compatibility_date": "2026-11-11",
   "build": {
