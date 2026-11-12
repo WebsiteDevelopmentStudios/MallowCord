@@ -64,7 +64,7 @@ async fn finish_event(
                 "UPDATE event_inbox
                  SET locked_at = NULL,
                      last_error = $2,
-                     next_attempt_at = NOW() + (LEAST(300, power(2, LEAST(attempts, 8))) * INTERVAL '1 second'),
+                     next_attempt_at = NOW() + make_interval(secs => LEAST(300, power(2, LEAST(attempts, 8)))::double precision),
                      dead_lettered_at = CASE WHEN attempts >= $3 THEN NOW() ELSE NULL END
                  WHERE event_id = $1",
             )
