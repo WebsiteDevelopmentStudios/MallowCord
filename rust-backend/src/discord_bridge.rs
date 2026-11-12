@@ -2002,7 +2002,21 @@ async fn sync_snapshot(
 
         let member_user_id = linked_user_id(pool, server_id, discord_user_id)
             .await?
-            .unwrap_or(shadow_user_id);
+            .unwrap_or(shadow_user_id.clone());
+        // The shadow profile is maintained for Discord directory data, but a
+        // linked Discord member's visible MallowCord profile is the linked
+        // account. Mirror the current Discord status onto that profile during
+        // the initial/member snapshot sync as well as on live presence events.
+        if member_user_id != shadow_user_id {
+            sqlx::query(
+                "UPDATE user_profiles SET status = $1, updated_at = $2 WHERE user_id = $3",
+            )
+            .bind(status)
+            .bind(now())
+            .bind(&member_user_id)
+            .execute(pool)
+            .await?;
+        }
         sqlx::query(
             "INSERT INTO memberships(server_id, user_id, joined_at)
              VALUES($1, $2, $3) ON CONFLICT(server_id, user_id) DO NOTHING",
