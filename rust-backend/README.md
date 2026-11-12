@@ -177,3 +177,8 @@ The Rust CI job starts a disposable PostgreSQL 16 service, seeds only the pre-ex
 
 
 The PostgreSQL pool is tunable with `DATABASE_MAX_CONNECTIONS`, `DATABASE_MIN_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS`, `DATABASE_IDLE_TIMEOUT_SECS`, and `DATABASE_MAX_LIFETIME_SECS`. Values are clamped to bounded ranges so an accidental environment typo cannot create an unbounded connection pool or excessive timeout.
+
+
+## Attachment memory and GIF handling
+
+Rust stores the uploaded file bytes unchanged, including animated GIF frames. Upload parsing now retains the `Bytes` buffer instead of making extra full-file copies, and downloads stream directly from the object store rather than buffering the entire object in RAM. The 25 MB file limit includes a separate 256 KB allowance for multipart form overhead, while the service-wide request limit remains 26 MB.
