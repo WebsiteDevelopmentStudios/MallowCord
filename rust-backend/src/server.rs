@@ -1066,82 +1066,77 @@ struct PermissionOverwriteInput {
     deny: Vec<String>,
 }
 
-async fn channel_permissions(
+async fn channel_manager_context(
+    state: &AppState,
+    headers: &HeaderMap,
+    channel_id: &str,
+) -> Result<(PgPool, String), Box<Response>> {
+    let (pool, user) = require_user(state, headers).await?;
+    let server_id = sqlx::query_scalar::<_, String>(
+        "SELECT server_id FROM channels WHERE id = $1",
+    )
+    .bind(channel_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "channel permission server lookup failed");
+        Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response())
+    })?
+    .ok_or_else(|| Box::new((StatusCode::NOT_FOUND, Json(json!({"error": "Channel not found."}))).into_response()))?;
+    let (_, manager) = require_membership(&pool, &user, &server_id).await?;
+    if !manager {
+        return Err(Box::new((StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response()));
+    }
+    Ok((pool, server_id))
+}
+
+async fn get_channel_permissions(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(channel_id): Path<String>,
-    method: axum::http::Method,
-    body: Option<Json<PermissionOverwriteInput>>,
 ) -> Response {
-    let (pool, user) = match require_user(&state, &headers).await {
+    let (pool, _) = match channel_manager_context(&state, &headers, &channel_id).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    let server_id = match sqlx::query_scalar::<_, String>(
-        "SELECT server_id FROM channels WHERE id = $1",
+    let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT target_type, target_id, allow_json, deny_json
+         FROM channel_permissions WHERE channel_id = $1",
     )
     .bind(&channel_id)
-    .fetch_optional(&pool)
-    .await
-    {
-        Ok(Some(id)) => id,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Channel not found."}))).into_response(),
+    .fetch_all(&pool)
+    .await;
+    match rows {
+        Ok(rows) => Json(json!({"permissions": rows.into_iter().map(|(target_type, target_id, allow_json, deny_json)| json!({
+            "target_type": target_type,
+            "target_id": target_id,
+            "allow": serde_json::from_str::<Vec<String>>(&allow_json).unwrap_or_default(),
+            "deny": serde_json::from_str::<Vec<String>>(&deny_json).unwrap_or_default()
+        })).collect::<Vec<_>>()})).into_response(),
         Err(error) => {
-            tracing::error!(%error, "channel permission server lookup failed");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response();
+            tracing::error!(%error, "channel permission list failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()
         }
-    };
-    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+    }
+}
+
+#[derive(Deserialize)]
+struct PermissionOverwriteInput {
+    target_type: String,
+    target_id: String,
+    allow: Vec<String>,
+    deny: Vec<String>,
+}
+
+async fn save_channel_permissions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(channel_id): Path<String>,
+    Json(input): Json<PermissionOverwriteInput>,
+) -> Response {
+    let (pool, server_id) = match channel_manager_context(&state, &headers, &channel_id).await {
         Ok(value) => value,
         Err(response) => return *response,
-    };
-    if !manager {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
-    }
-
-    if method == axum::http::Method::GET {
-        let rows = sqlx::query_as::<_, (String, String, String, String)>(
-            "SELECT target_type, target_id, allow_json, deny_json FROM channel_permissions WHERE channel_id = $1",
-        )
-        .bind(&channel_id)
-        .fetch_all(&pool)
-        .await;
-        return match rows {
-            Ok(rows) => Json(json!({"permissions": rows.into_iter().map(|(target_type,target_id,allow_json,deny_json)| json!({
-                "target_type":target_type,
-                "target_id":target_id,
-                "allow":serde_json::from_str::<Vec<String>>(&allow_json).unwrap_or_default(),
-                "deny":serde_json::from_str::<Vec<String>>(&deny_json).unwrap_or_default()
-            })).collect::<Vec<_>>()})).into_response(),
-            Err(error) => {
-                tracing::error!(%error, "channel permission list failed");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()
-            }
-        };
-    }
-
-    if method == axum::http::Method::DELETE {
-        let Some(Json(input)) = body else {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid permission overwrite."}))).into_response();
-        };
-        let target_type = if input.target_type == "user" { "user" } else { "role" };
-        return match sqlx::query("DELETE FROM channel_permissions WHERE channel_id = $1 AND target_type = $2 AND target_id = $3")
-            .bind(&channel_id)
-            .bind(target_type)
-            .bind(input.target_id)
-            .execute(&pool)
-            .await
-        {
-            Ok(_) => Json(json!({"ok": true})).into_response(),
-            Err(error) => {
-                tracing::error!(%error, "channel permission delete failed");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()
-            }
-        };
-    }
-
-    let Some(Json(input)) = body else {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid permission overwrite."}))).into_response();
     };
     let target_type = if input.target_type == "user" { "user" } else { "role" };
     let valid_permissions = ["view_channel", "send_messages", "read_message_history", "attach_files", "embed_links", "manage_messages"];
@@ -1163,11 +1158,16 @@ async fn channel_permissions(
             .fetch_optional(&pool)
             .await
     };
-    if !matches!(target_exists, Ok(Some(_))) {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "Permission target is not part of this server."}))).into_response();
+    match target_exists {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Permission target is not part of this server."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "permission target lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response();
+        }
     }
-    let allow = serde_json::to_string(&input.allow.into_iter().collect::<HashSet<_>>()).unwrap_or_else(|_| "[]".to_owned());
-    let deny = serde_json::to_string(&input.deny.into_iter().collect::<HashSet<_>>()).unwrap_or_else(|_| "[]".to_owned());
+    let allow = serde_json::to_string(&input.allow.into_iter().collect::<std::collections::BTreeSet<_>>()).unwrap_or_else(|_| "[]".to_owned());
+    let deny = serde_json::to_string(&input.deny.into_iter().collect::<std::collections::BTreeSet<_>>()).unwrap_or_else(|_| "[]".to_owned());
     match sqlx::query(
         "INSERT INTO channel_permissions(channel_id, target_type, target_id, allow_json, deny_json, updated_at)
          VALUES($1, $2, $3, $4, $5, $6)
@@ -1191,17 +1191,97 @@ async fn channel_permissions(
     }
 }
 
+async fn delete_channel_permissions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(channel_id): Path<String>,
+    Json(input): Json<DeletePermissionInput>,
+) -> Response {
+    let (pool, _) = match channel_manager_context(&state, &headers, &channel_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let target_type = if input.target_type == "user" { "user" } else { "role" };
+    match sqlx::query(
+        "DELETE FROM channel_permissions WHERE channel_id = $1 AND target_type = $2 AND target_id = $3",
+    )
+    .bind(&channel_id)
+    .bind(target_type)
+    .bind(input.target_id)
+    .execute(&pool)
+    .await
+    {
+        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "channel permission delete failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DeletePermissionInput {
+    target_type: String,
+    target_id: String,
+}
+
+async fn delete_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((server_id, role_id)): Path<(String, String)>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let is_system = sqlx::query_scalar::<_, i64>(
+        "SELECT is_system FROM roles WHERE id = $1 AND server_id = $2",
+    )
+    .bind(&role_id)
+    .bind(&server_id)
+    .fetch_optional(&pool)
+    .await;
+    match is_system {
+        Ok(Some(value)) if value != 0 => return (StatusCode::FORBIDDEN, Json(json!({"error": "System roles cannot be deleted."}))).into_response(),
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Role not found."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "role lookup failed before delete");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "role_delete_failed"}))).into_response();
+        }
+        _ => {}
+    }
+    match sqlx::query("DELETE FROM roles WHERE id = $1 AND server_id = $2")
+        .bind(&role_id)
+        .bind(&server_id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "role deletion failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "role_delete_failed"}))).into_response()
+        }
+    }
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/servers", get(list_servers))
         .route("/api/servers/{server_id}/channels", get(list_channels).post(create_channel))
         .route("/api/servers/{server_id}/roles", get(list_roles).post(create_role))
-        .route("/api/servers/{server_id}/roles/{role_id}", post(update_role).delete(update_role))
+        .route("/api/servers/{server_id}/roles/{role_id}", post(update_role).delete(delete_role))
         .route("/api/servers/{server_id}/members", get(list_members))
         .route("/api/servers/{server_id}/members/{target_id}/roles", post(update_member_role))
         .route("/api/servers/{server_id}/settings", get(get_server_settings).post(update_server_settings))
         .route("/api/servers/{server_id}/stats", get(get_server_stats))
         .route("/api/servers/{server_id}/sections", get(list_sections).post(create_section))
         .route("/api/servers/{server_id}/sections/{section_id}", patch(update_section).delete(delete_section))
-        .route("/api/channels/{channel_id}/permissions", get(channel_permissions).post(channel_permissions).delete(channel_permissions))
+        .route("/api/channels/{channel_id}/permissions", get(get_channel_permissions).post(save_channel_permissions).delete(delete_channel_permissions))
 }
