@@ -19,6 +19,7 @@ use tracing_subscriber::EnvFilter;
 mod account;
 mod messages;
 mod notifications;
+mod realtime;
 mod auth;
 mod server;
 mod social;
@@ -31,6 +32,7 @@ type HmacSha256 = Hmac<Sha256>;
 pub(crate) struct AppState {
     pub(crate) database: Option<PgPool>,
     pub(crate) object_store: Option<Arc<dyn object_store::ObjectStore>>,
+    pub(crate) realtime: tokio::sync::broadcast::Sender<Value>,
     internal_event_secret: Option<Arc<Vec<u8>>>,
 }
 
@@ -214,7 +216,8 @@ async fn main() {
         .map(|value| Arc::new(value.into_bytes()));
 
     let object_store = storage::from_env();
-    let state = AppState { database, object_store, internal_event_secret };
+    let (realtime, _) = tokio::sync::broadcast::channel(4096);
+    let state = AppState { database, object_store, realtime, internal_event_secret };
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -223,6 +226,7 @@ async fn main() {
         .merge(account::router())
         .merge(messages::router())
         .merge(notifications::router())
+        .merge(realtime::router())
         .merge(uploads::router())
         .merge(server::router())
         .merge(social::router())
