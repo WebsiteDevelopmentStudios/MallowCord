@@ -188,6 +188,15 @@ async fn ingest_event(
     }
 }
 
+
+fn bounded_env_u32(name: &str, default: u32, minimum: u32, maximum: u32) -> u32 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(default)
+        .clamp(minimum, maximum)
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -196,10 +205,20 @@ async fn main() {
 
     let database = match env::var("DATABASE_URL") {
         Ok(url) if !url.trim().is_empty() => {
+            let max_connections = bounded_env_u32("DATABASE_MAX_CONNECTIONS", 20, 1, 100);
+            let min_connections =
+                bounded_env_u32("DATABASE_MIN_CONNECTIONS", 1, 0, max_connections);
+            let acquire_timeout =
+                bounded_env_u32("DATABASE_ACQUIRE_TIMEOUT_SECS", 10, 1, 60);
+            let idle_timeout = bounded_env_u32("DATABASE_IDLE_TIMEOUT_SECS", 300, 30, 3600);
+            let max_lifetime =
+                bounded_env_u32("DATABASE_MAX_LIFETIME_SECS", 1800, 60, 7200);
             let pool = PgPoolOptions::new()
-                .max_connections(20)
-                .min_connections(1)
-                .acquire_timeout(Duration::from_secs(10))
+                .max_connections(max_connections)
+                .min_connections(min_connections)
+                .acquire_timeout(Duration::from_secs(acquire_timeout.into()))
+                .idle_timeout(Some(Duration::from_secs(idle_timeout.into())))
+                .max_lifetime(Some(Duration::from_secs(max_lifetime.into())))
                 .connect(&url)
                 .await
                 .expect("DATABASE_URL is set but PostgreSQL connection failed");
@@ -382,5 +401,22 @@ mod tests {
         mac.update(body);
         let signature = hex::encode(mac.finalize().into_bytes());
         assert_eq!(signature.len(), 64);
+    }
+}
+
+#[cfg(test)]
+mod pool_config_tests {
+    use super::bounded_env_u32;
+
+    #[test]
+    fn pool_settings_use_defaults_for_missing_or_invalid_values() {
+        assert_eq!(bounded_env_u32("UNUSED", 20, 1, 100), 20);
+        assert_eq!(bounded_env_u32("UNUSED", 20, 1, 100), 20);
+    }
+
+    #[test]
+    fn pool_settings_are_clamped_to_safe_bounds() {
+        assert_eq!(bounded_env_u32("UNUSED", 20, 1, 10), 10);
+        assert_eq!(bounded_env_u32("UNUSED", 1, 0, 20), 1);
     }
 }
