@@ -322,12 +322,6 @@ async fn bot_command(
         "username": user.username,
         "author_id": user.id
     });
-    if !notification_recipients.is_empty() {
-        let _ = state.realtime.send(json!({
-            "type": "notifications.updated",
-            "recipient_ids": notification_recipients
-        }));
-    }
     let _ = state.realtime.send(json!({
         "type": "message.created",
         "server_id": server_id,
@@ -881,6 +875,12 @@ async fn discord_message(
         "username": input.username.unwrap_or_else(|| format!("discord_{}", input.author_id)),
         "display_name": display_name
     });
+    if !notification_recipients.is_empty() {
+        let _ = state.realtime.send(json!({
+            "type": "notifications.updated",
+            "recipient_ids": notification_recipients
+        }));
+    }
     let _ = state.realtime.send(json!({
         "type": "message.created",
         "server_id": server_id,
