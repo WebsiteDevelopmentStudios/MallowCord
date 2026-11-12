@@ -166,3 +166,6 @@ Rust now owns the existing onboarding API:
 - `POST /api/servers/{server_id}/onboarding` lets a server owner update the enabled flag and text, or lets a member mark their own onboarding as complete.
 
 The defaults and response shape match the current Worker implementation. Migration `0013_server_onboarding.sql` creates the configuration and completion tables. Server creation remains disabled; this migration does not add server creation or invites.
+
+
+Server creation remains intentionally disabled in Rust with the same HTTP 403 response as the Worker. The API does not create a server until the separate server-invitation flow is ready.
