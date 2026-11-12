@@ -380,10 +380,13 @@ async fn friend_action(
                 .bind(&high)
                 .execute(&mut *tx)
                 .await;
-            if let Err(error) = removed {
-                tracing::error!(%error, "friend removal failed");
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "friend_action_failed"}))).into_response();
-            }
+            let friendship_existed = match removed {
+                Ok(result) => result.rows_affected() > 0,
+                Err(error) => {
+                    tracing::error!(%error, "friend removal failed");
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "friend_action_failed"}))).into_response();
+                }
+            };
             let requests = sqlx::query(
                 "DELETE FROM friend_requests
                  WHERE (sender_id = $1 AND recipient_id = $2)
@@ -411,6 +414,9 @@ async fn friend_action(
             if let Err(error) = tx.commit().await {
                 tracing::error!(%error, "friend removal commit failed");
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "friend_action_failed"}))).into_response();
+            }
+            if !friendship_existed {
+                return (StatusCode::NOT_FOUND, Json(json!({"error": "Friendship not found."}))).into_response();
             }
             Json(json!({"ok": true})).into_response()
         }
