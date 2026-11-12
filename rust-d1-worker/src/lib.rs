@@ -79,6 +79,18 @@ struct PresenceInput {
 }
 
 #[derive(Deserialize)]
+struct PresenceUpdate {
+    user_id: String,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct PresenceBatchInput {
+    guild_id: String,
+    updates: Vec<PresenceUpdate>,
+}
+
+#[derive(Deserialize)]
 struct SingleMessagePayload {
     guild_id: String,
     #[serde(flatten)]
@@ -551,6 +563,67 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     Ok(json!({"ok":true,"accepted":accepted}))
 }
 
+async fn sync_presence_batch(db: &D1Database, payload: PresenceBatchInput) -> Result<Value> {
+    if payload.guild_id != EXPECTED_GUILD {
+        return Ok(json!({"error":"This bridge is restricted to the configured official Discord server."}));
+    }
+    if payload.updates.len() > 100 {
+        return Ok(json!({"error":"A presence batch may contain at most 100 updates."}));
+    }
+    let mut latest = std::collections::HashMap::<String, String>::new();
+    for update in payload.updates {
+        let user_id = update.user_id.trim();
+        if user_id.is_empty() || user_id.len() > 32 { continue; }
+        let status = match update.status.as_str() {
+            "online" | "idle" | "dnd" | "offline" => update.status,
+            _ => "offline".to_string(),
+        };
+        latest.insert(user_id.to_owned(), status);
+    }
+    if latest.is_empty() {
+        return Ok(json!({"ok":true,"received":0,"updated":0,"ignored":0}));
+    }
+
+    let server = system_server(db).await?;
+    let ids: Vec<String> = latest.keys().cloned().collect();
+    let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
+    let mut params = vec![text(&server.id)];
+    params.extend(ids.iter().map(|id| text(id)));
+
+    // Resolve every linked account in two bounded indexed reads, rather than
+    // two D1 lookups for each individual Discord presence event.
+    let account_rows = db.prepare(&format!(
+        "SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({})",
+        placeholders
+    )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+    let mut users = std::collections::HashMap::<String, String>::new();
+    for row in account_rows {
+        users.insert(row.discord_user_id, row.user_id);
+    }
+    let shadow_rows = db.prepare(&format!(
+        "SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ({})",
+        placeholders
+    )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+    for row in shadow_rows {
+        users.entry(row.discord_user_id).or_insert(row.user_id);
+    }
+
+    let ignored = ids.iter().filter(|id| !users.contains_key(*id)).count();
+    let mut writes = Vec::new();
+    for (discord_id, user_id) in users.iter() {
+        let Some(status) = latest.get(discord_id) else { continue; };
+        writes.push(db.prepare(
+            "UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND (status IS NULL OR status != ?)"
+        ).bind(&[text(status), number(now()), text(user_id), text(status)])?);
+    }
+    let mut changed = 0usize;
+    for chunk in writes.chunks(100) {
+        let results = db.batch(chunk.to_vec()).await?;
+        changed += results.iter().filter(|result| result.meta().changes > 0).count();
+    }
+    Ok(json!({"ok":true,"received":ids.len(),"updated":changed,"ignored":ignored}))
+}
+
 #[event(fetch)]
 pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let path = req.path();
@@ -592,6 +665,19 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 // schema/constraint failures actionable in the bot logs.
                 return response(&json!({"error":"Discord sync failed","detail":error.to_string()}),500);
             }
+        };
+        if result.get("error").is_some() { return response(&result,400); }
+        return response(&result,200);
+    }
+
+    if path == "/api/integrations/mallowbot/discord/presence/batch" && method == Method::Post {
+        let payload: PresenceBatchInput = req.json().await?;
+        if payload.guild_id != EXPECTED_GUILD {
+            return response(&json!({"error":"This bridge is restricted to the configured official Discord server."}),403);
+        }
+        let result = match sync_presence_batch(&db, payload).await {
+            Ok(value) => value,
+            Err(error) => return response(&json!({"error":"Presence batch failed","detail":error.to_string()}),500),
         };
         if result.get("error").is_some() { return response(&result,400); }
         return response(&result,200);
