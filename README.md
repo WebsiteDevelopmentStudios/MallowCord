@@ -5,7 +5,7 @@ Discord-inspired community chat for Mallow Swamp.
 ## Current architecture
 
 - Render Static Site hosts the existing browser application in `public/`.
-- Cloudflare Worker currently provides the production browser API, OAuth callbacks, device-cookie sessions, and compatibility with the current frontend.
+- Cloudflare Worker remains the browser-facing API origin and compatibility gateway. It proxies completed routes—including Google/Discord OAuth start and callbacks—to Rust when `RUST_API_ORIGIN` is enabled; unported routes retain their Worker implementation.
 - Neon PostgreSQL is the primary application database, accessed by the Worker through Cloudflare Hyperdrive.
 - Cloudflare D1 remains bound temporarily as a rollback resource; it is not the current primary database.
 - Mallow-Bot remains the Discord Gateway bot and retains its Discord bot token.
