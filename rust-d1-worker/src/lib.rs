@@ -77,6 +77,19 @@ struct PresenceInput {
 }
 
 #[derive(Deserialize)]
+struct PresenceBatchInput {
+    guild_id: String,
+    #[serde(default)]
+    updates: Vec<PresenceUpdate>,
+}
+
+#[derive(Deserialize)]
+struct PresenceUpdate {
+    user_id: String,
+    status: String,
+}
+
+#[derive(Deserialize)]
 struct SingleMessagePayload {
     guild_id: String,
     #[serde(flatten)]
@@ -572,6 +585,49 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
         };
         if result.get("error").is_some() { return response(&result,400); }
         return response(&result,200);
+    }
+
+    if path == "/api/integrations/mallowbot/discord/presence/batch" && method == Method::Post {
+        let payload: PresenceBatchInput = req.json().await?;
+        if payload.guild_id != EXPECTED_GUILD {
+            return response(&json!({"error":"This bridge is restricted to the configured official Discord server."}),403);
+        }
+        let updates: Vec<PresenceUpdate> = payload.updates.into_iter().take(100)
+            .filter(|item| item.user_id.chars().all(|c| c.is_ascii_digit()) && (15..=22).contains(&item.user_id.len()))
+            .collect();
+        if updates.is_empty() {
+            return response(&json!({"ok":true,"updated":0}),200);
+        }
+        let server = system_server(&db).await?;
+        let ids: Vec<String> = updates.iter().map(|item| item.user_id.clone()).collect();
+        let marks = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let mut binds = vec![text(&server.id)];
+        binds.extend(ids.iter().map(|id| text(id)));
+        let user_links = db.prepare(&format!("SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ({marks})"))
+            .bind(&binds)?.all::<DiscordUserRow>().await?;
+        let mut account_binds = vec![text(&server.id)];
+        account_binds.extend(ids.iter().map(|id| text(id)));
+        let account_links = db.prepare(&format!("SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({marks})"))
+            .bind(&account_binds)?.all::<DiscordUserRow>().await?;
+        let oauth_links = db.prepare(&format!("SELECT provider_user_id AS discord_user_id,user_id FROM oauth_accounts WHERE provider='discord' AND provider_user_id IN ({})", ids.iter().map(|_| "?").collect::<Vec<_>>().join(",")))
+            .bind(&ids.iter().map(|id| text(id)).collect::<Vec<_>>())?.all::<DiscordUserRow>().await?;
+        let mut linked: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+        for row in user_links.results.into_iter().chain(account_links.results).chain(oauth_links.results) {
+            linked.entry(row.discord_user_id).or_default().insert(row.user_id);
+        }
+        let mut statements = Vec::new();
+        for item in updates {
+            let status = if ["online","idle","dnd","offline"].contains(&item.status.as_str()) { item.status.as_str() } else { "offline" };
+            if let Some(user_ids) = linked.get(&item.user_id) {
+                for user_id in user_ids {
+                    statements.push(db.prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status")
+                        .bind(&[text(user_id),text(status),number(now())])?);
+                }
+            }
+        }
+        let updated = statements.len();
+        if !statements.is_empty() { db.batch(statements).await?; }
+        return response(&json!({"ok":true,"updated":updated}),200);
     }
 
     if path == "/api/integrations/mallowbot/discord/presence" && method == Method::Post {
