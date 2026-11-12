@@ -82,6 +82,8 @@ export async function proxyToRust(request, env) {
 
     const target = new URL(incoming.pathname + incoming.search, base);
     const forwarded = new Request(target.toString(), request);
+    const clientIp = request.headers.get("cf-connecting-ip");
+    if (clientIp) forwarded.headers.set("x-mallowcord-client-ip", clientIp);
     return await fetch(forwarded);
   } catch (error) {
     console.error("MallowCord Rust API proxy failed", incoming.pathname, error);
