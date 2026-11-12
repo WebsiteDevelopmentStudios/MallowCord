@@ -2,10 +2,11 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{delete, get, patch, post},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use serde_json::json;
 use sqlx::{FromRow, PgPool};
 
@@ -468,12 +469,739 @@ async fn get_server_stats(
     }
 }
 
+
+#[derive(Deserialize)]
+struct CreateRoleInput {
+    name: String,
+}
+
+async fn create_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+    Json(input): Json<CreateRoleInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let name = input.name.trim();
+    if name.chars().count() < 2 || name.chars().count() > 32
+        || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == ' ' || ch == '_' || ch == '-')
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Role names must be 2–32 letters, numbers, spaces, _ or -."}))).into_response();
+    }
+    let position = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(position), 1) + 1 FROM roles WHERE server_id = $1",
+    )
+    .bind(&server_id)
+    .fetch_one(&pool)
+    .await;
+    let position = match position {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(%error, "role position lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "role_create_failed"}))).into_response();
+        }
+    };
+    let id = Uuid::new_v4().to_string();
+    match sqlx::query(
+        "INSERT INTO roles(id, server_id, name, is_system, position) VALUES($1, $2, $3, 0, $4)",
+    )
+    .bind(&id)
+    .bind(&server_id)
+    .bind(name)
+    .bind(position)
+    .execute(&pool)
+    .await
+    {
+        Ok(_) => (StatusCode::CREATED, Json(json!({"role": {"id": id, "name": name, "is_system": 0, "position": position}}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "role create failed");
+            (StatusCode::CONFLICT, Json(json!({"error": "A role with that name already exists."}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateRoleInput {
+    name: Option<String>,
+    color: Option<String>,
+    pingable: Option<bool>,
+    remove: Option<bool>,
+}
+
+async fn update_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((server_id, role_id)): Path<(String, String)>,
+    Json(input): Json<UpdateRoleInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let role = sqlx::query_scalar::<_, i64>(
+        "SELECT is_system FROM roles WHERE id = $1 AND server_id = $2",
+    )
+    .bind(&role_id)
+    .bind(&server_id)
+    .fetch_optional(&pool)
+    .await;
+    let is_system = match role {
+        Ok(Some(value)) => value != 0,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Role not found."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "role lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "role_update_failed"}))).into_response();
+        }
+    };
+
+    if input.remove.unwrap_or(false) {
+        if is_system {
+            return (StatusCode::FORBIDDEN, Json(json!({"error": "System roles cannot be deleted."}))).into_response();
+        }
+        return match sqlx::query("DELETE FROM roles WHERE id = $1 AND server_id = $2")
+            .bind(&role_id)
+            .bind(&server_id)
+            .execute(&pool)
+            .await
+        {
+            Ok(_) => Json(json!({"ok": true})).into_response(),
+            Err(error) => {
+                tracing::error!(%error, "role deletion failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "role_update_failed"}))).into_response()
+            }
+        };
+    }
+
+    if let Some(color) = input.color {
+        if color.len() != 7 || !color.starts_with('#') || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Role color must be a six-digit hex color."}))).into_response();
+        }
+        return match sqlx::query("UPDATE roles SET color = $1 WHERE id = $2 AND server_id = $3")
+            .bind(color.to_lowercase())
+            .bind(&role_id)
+            .bind(&server_id)
+            .execute(&pool)
+            .await
+        {
+            Ok(_) => Json(json!({"ok": true, "color": color.to_lowercase()})).into_response(),
+            Err(error) => {
+                tracing::error!(%error, "role color update failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "role_update_failed"}))).into_response()
+            }
+        };
+    }
+
+    if let Some(pingable) = input.pingable {
+        let value = if pingable { 1_i64 } else { 0_i64 };
+        return match sqlx::query("UPDATE roles SET pingable = $1 WHERE id = $2 AND server_id = $3")
+            .bind(value)
+            .bind(&role_id)
+            .bind(&server_id)
+            .execute(&pool)
+            .await
+        {
+            Ok(_) => Json(json!({"ok": true, "pingable": pingable})).into_response(),
+            Err(error) => {
+                tracing::error!(%error, "role ping setting update failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "role_update_failed"}))).into_response()
+            }
+        };
+    }
+
+    if let Some(name) = input.name {
+        if is_system {
+            return (StatusCode::FORBIDDEN, Json(json!({"error": "System role names cannot be changed."}))).into_response();
+        }
+        let name = name.trim();
+        if name.chars().count() < 2 || name.chars().count() > 32
+            || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == ' ' || ch == '_' || ch == '-')
+        {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Role names must be 2–32 letters, numbers, spaces, _ or -."}))).into_response();
+        }
+        return match sqlx::query("UPDATE roles SET name = $1 WHERE id = $2 AND server_id = $3")
+            .bind(name)
+            .bind(&role_id)
+            .bind(&server_id)
+            .execute(&pool)
+            .await
+        {
+            Ok(_) => Json(json!({"ok": true, "name": name})).into_response(),
+            Err(error) => {
+                tracing::error!(%error, "role name update failed");
+                (StatusCode::CONFLICT, Json(json!({"error": "A role with that name already exists."}))).into_response()
+            }
+        };
+    }
+    (StatusCode::BAD_REQUEST, Json(json!({"error": "No role update was provided."}))).into_response()
+}
+
+#[derive(Deserialize)]
+struct MemberRoleInput {
+    role_id: String,
+    remove: Option<bool>,
+}
+
+async fn update_member_role(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((server_id, target_id)): Path<(String, String)>,
+    Json(input): Json<MemberRoleInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let member = sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(&server_id)
+    .bind(&target_id)
+    .fetch_optional(&pool)
+    .await;
+    let role_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM roles WHERE id = $1 AND server_id = $2",
+    )
+    .bind(&input.role_id)
+    .bind(&server_id)
+    .fetch_optional(&pool)
+    .await;
+    match (member, role_name) {
+        (Ok(Some(_)), Ok(Some(name))) => {
+            if name == "@everyone" {
+                return (StatusCode::FORBIDDEN, Json(json!({"error": "The @everyone role is assigned automatically."}))).into_response();
+            }
+        }
+        (Ok(_), Ok(None)) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Member or role not found."}))).into_response(),
+        (Ok(None), Ok(Some(_))) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Member or role not found."}))).into_response(),
+        (Err(error), _) | (_, Err(error)) => {
+            tracing::error!(%error, "member role lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "member_role_update_failed"}))).into_response();
+        }
+    }
+    let result = if input.remove.unwrap_or(false) {
+        sqlx::query("DELETE FROM member_roles WHERE server_id = $1 AND user_id = $2 AND role_id = $3")
+            .bind(&server_id)
+            .bind(&target_id)
+            .bind(&input.role_id)
+            .execute(&pool)
+            .await
+    } else {
+        sqlx::query("INSERT INTO member_roles(server_id, user_id, role_id) VALUES($1, $2, $3) ON CONFLICT DO NOTHING")
+            .bind(&server_id)
+            .bind(&target_id)
+            .bind(&input.role_id)
+            .execute(&pool)
+            .await
+    };
+    match result {
+        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "member role update failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "member_role_update_failed"}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateChannelInput {
+    name: String,
+    kind: Option<String>,
+    section_id: Option<String>,
+}
+
+async fn create_channel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+    Json(input): Json<CreateChannelInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let mut name = String::new();
+    let mut previous_dash = false;
+    for ch in input.name.trim().to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            name.push(ch);
+            previous_dash = false;
+        } else if (ch == '-' || ch.is_whitespace() || ch == '_') && !previous_dash && !name.is_empty() {
+            name.push('-');
+            previous_dash = true;
+        }
+        if name.len() >= 50 {
+            break;
+        }
+    }
+    while name.ends_with('-') {
+        name.pop();
+    }
+    if name.chars().count() < 2 {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Channel name must be at least 2 characters."}))).into_response();
+    }
+    let kind = if input.kind.as_deref() == Some("voice") { "voice" } else { "text" };
+    let section_id = input.section_id.filter(|value| !value.trim().is_empty());
+    if let Some(section_id) = section_id.as_ref() {
+        let section = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM server_sections WHERE id = $1 AND server_id = $2",
+        )
+        .bind(section_id)
+        .bind(&server_id)
+        .fetch_optional(&pool)
+        .await;
+        if !matches!(section, Ok(Some(_))) {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "Section not found."}))).into_response();
+        }
+    }
+    let position = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM channels WHERE server_id = $1",
+    )
+    .bind(&server_id)
+    .fetch_one(&pool)
+    .await;
+    let position = match position {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(%error, "channel position lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_create_failed"}))).into_response();
+        }
+    };
+    let id = Uuid::new_v4().to_string();
+    match sqlx::query(
+        "INSERT INTO channels(id, server_id, name, kind, position, section_id)
+         VALUES($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(&id)
+    .bind(&server_id)
+    .bind(&name)
+    .bind(kind)
+    .bind(position)
+    .bind(section_id)
+    .execute(&pool)
+    .await
+    {
+        Ok(_) => (StatusCode::CREATED, Json(json!({"channel": {"id": id, "name": name, "kind": kind, "position": position}}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "channel create failed");
+            (StatusCode::CONFLICT, Json(json!({"error": "A channel with that name could not be created."}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateServerSettingsInput {
+    name: Option<String>,
+    icon_url: Option<String>,
+}
+
+async fn update_server_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+    Json(input): Json<UpdateServerSettingsInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let name = input.name.unwrap_or_default().trim().chars().take(50).collect::<String>();
+    let icon = input.icon_url.unwrap_or_default().trim().to_owned();
+    if name.chars().count() < 2 {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Server name must be at least 2 characters."}))).into_response();
+    }
+    if !icon.is_empty() && !icon.starts_with("https://") {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Server icon must be an HTTPS URL."}))).into_response();
+    }
+    match sqlx::query("UPDATE servers SET name = $1, icon_url = $2 WHERE id = $3")
+        .bind(&name)
+        .bind(if icon.is_empty() { None } else { Some(icon.as_str()) })
+        .bind(&server_id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Json(json!({"ok": true, "server": {"id": server_id, "name": name, "icon_url": if icon.is_empty() { None } else { Some(icon) }}})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "server settings update failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "server_update_failed"}))).into_response()
+        }
+    }
+}
+
+#[derive(Serialize, FromRow)]
+struct SectionView {
+    id: String,
+    name: String,
+    position: i64,
+}
+
+async fn list_sections(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    match sqlx::query_as::<_, SectionView>(
+        "SELECT id, name, position FROM server_sections WHERE server_id = $1 ORDER BY position, name",
+    )
+    .bind(&server_id)
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(sections) => Json(json!({"sections": sections, "can_manage": manager})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "server sections lookup failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "sections_lookup_failed"}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateSectionInput {
+    name: String,
+}
+
+async fn create_section(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+    Json(input): Json<CreateSectionInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let name = input.name.trim();
+    if name.chars().count() < 2 || name.chars().count() > 40
+        || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == ' ' || ch == '_' || ch == '-')
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Section names must be 2–40 letters, numbers, spaces, _ or -."}))).into_response();
+    }
+    let position = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM server_sections WHERE server_id = $1",
+    )
+    .bind(&server_id)
+    .fetch_one(&pool)
+    .await;
+    let position = match position {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(%error, "section position lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "section_create_failed"}))).into_response();
+        }
+    };
+    let id = Uuid::new_v4().to_string();
+    match sqlx::query("INSERT INTO server_sections(id, server_id, name, position, created_at) VALUES($1, $2, $3, $4, $5)")
+        .bind(&id)
+        .bind(&server_id)
+        .bind(name)
+        .bind(position)
+        .bind(now())
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => (StatusCode::CREATED, Json(json!({"section": {"id": id, "name": name, "position": position}}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "section create failed");
+            (StatusCode::CONFLICT, Json(json!({"error": "A section with that name already exists."}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateSectionInput {
+    name: Option<String>,
+    position: Option<i64>,
+}
+
+async fn update_section(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((server_id, section_id)): Path<(String, String)>,
+    Json(input): Json<UpdateSectionInput>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let name = input.name.unwrap_or_default().trim().to_owned();
+    if name.chars().count() < 2 || name.chars().count() > 40
+        || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == ' ' || ch == '_' || ch == '-')
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid section name."}))).into_response();
+    }
+    let position = input.position.unwrap_or(0).clamp(0, 500);
+    match sqlx::query("UPDATE server_sections SET name = $1, position = $2 WHERE id = $3 AND server_id = $4")
+        .bind(name)
+        .bind(position)
+        .bind(&section_id)
+        .bind(&server_id)
+        .execute(&pool)
+        .await
+    {
+        Ok(result) if result.rows_affected() > 0 => Json(json!({"ok": true})).into_response(),
+        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "Section not found."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "section update failed");
+            (StatusCode::CONFLICT, Json(json!({"error": "Section update failed."}))).into_response()
+        }
+    }
+}
+
+async fn delete_section(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((server_id, section_id)): Path<(String, String)>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => {
+            tracing::error!(%error, "section deletion transaction failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "section_delete_failed"}))).into_response();
+        }
+    };
+    let clear = sqlx::query("UPDATE channels SET section_id = NULL WHERE section_id = $1 AND server_id = $2")
+        .bind(&section_id)
+        .bind(&server_id)
+        .execute(&mut *tx)
+        .await;
+    if let Err(error) = clear {
+        tracing::error!(%error, "section channel unlink failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "section_delete_failed"}))).into_response();
+    }
+    let deleted = sqlx::query("DELETE FROM server_sections WHERE id = $1 AND server_id = $2")
+        .bind(&section_id)
+        .bind(&server_id)
+        .execute(&mut *tx)
+        .await;
+    match deleted {
+        Ok(result) if result.rows_affected() > 0 => {}
+        Ok(_) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Section not found."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "section delete failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "section_delete_failed"}))).into_response();
+        }
+    }
+    if let Err(error) = tx.commit().await {
+        tracing::error!(%error, "section delete commit failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "section_delete_failed"}))).into_response();
+    }
+    Json(json!({"ok": true})).into_response()
+}
+
+#[derive(Deserialize)]
+struct PermissionOverwriteInput {
+    target_type: String,
+    target_id: String,
+    allow: Vec<String>,
+    deny: Vec<String>,
+}
+
+async fn channel_permissions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(channel_id): Path<String>,
+    method: axum::http::Method,
+    body: Option<Json<PermissionOverwriteInput>>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let server_id = match sqlx::query_scalar::<_, String>(
+        "SELECT server_id FROM channels WHERE id = $1",
+    )
+    .bind(&channel_id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Channel not found."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "channel permission server lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response();
+        }
+    };
+    let (_, manager) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if !manager {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
+    }
+
+    if method == axum::http::Method::GET {
+        let rows = sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT target_type, target_id, allow_json, deny_json FROM channel_permissions WHERE channel_id = $1",
+        )
+        .bind(&channel_id)
+        .fetch_all(&pool)
+        .await;
+        return match rows {
+            Ok(rows) => Json(json!({"permissions": rows.into_iter().map(|(target_type,target_id,allow_json,deny_json)| json!({
+                "target_type":target_type,
+                "target_id":target_id,
+                "allow":serde_json::from_str::<Vec<String>>(&allow_json).unwrap_or_default(),
+                "deny":serde_json::from_str::<Vec<String>>(&deny_json).unwrap_or_default()
+            })).collect::<Vec<_>>()})).into_response(),
+            Err(error) => {
+                tracing::error!(%error, "channel permission list failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()
+            }
+        };
+    }
+
+    if method == axum::http::Method::DELETE {
+        let Some(Json(input)) = body else {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid permission overwrite."}))).into_response();
+        };
+        let target_type = if input.target_type == "user" { "user" } else { "role" };
+        return match sqlx::query("DELETE FROM channel_permissions WHERE channel_id = $1 AND target_type = $2 AND target_id = $3")
+            .bind(&channel_id)
+            .bind(target_type)
+            .bind(input.target_id)
+            .execute(&pool)
+            .await
+        {
+            Ok(_) => Json(json!({"ok": true})).into_response(),
+            Err(error) => {
+                tracing::error!(%error, "channel permission delete failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()
+            }
+        };
+    }
+
+    let Some(Json(input)) = body else {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid permission overwrite."}))).into_response();
+    };
+    let target_type = if input.target_type == "user" { "user" } else { "role" };
+    let valid_permissions = ["view_channel", "send_messages", "read_message_history", "attach_files", "embed_links", "manage_messages"];
+    if input.target_id.is_empty()
+        || input.allow.iter().chain(input.deny.iter()).any(|value| !valid_permissions.contains(&value.as_str()))
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid permission overwrite."}))).into_response();
+    }
+    let target_exists = if target_type == "role" {
+        sqlx::query_scalar::<_, String>("SELECT id FROM roles WHERE id = $1 AND server_id = $2")
+            .bind(&input.target_id)
+            .bind(&server_id)
+            .fetch_optional(&pool)
+            .await
+    } else {
+        sqlx::query_scalar::<_, String>("SELECT user_id FROM memberships WHERE user_id = $1 AND server_id = $2")
+            .bind(&input.target_id)
+            .bind(&server_id)
+            .fetch_optional(&pool)
+            .await
+    };
+    if !matches!(target_exists, Ok(Some(_))) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "Permission target is not part of this server."}))).into_response();
+    }
+    let allow = serde_json::to_string(&input.allow.into_iter().collect::<HashSet<_>>()).unwrap_or_else(|_| "[]".to_owned());
+    let deny = serde_json::to_string(&input.deny.into_iter().collect::<HashSet<_>>()).unwrap_or_else(|_| "[]".to_owned());
+    match sqlx::query(
+        "INSERT INTO channel_permissions(channel_id, target_type, target_id, allow_json, deny_json, updated_at)
+         VALUES($1, $2, $3, $4, $5, $6)
+         ON CONFLICT(channel_id, target_type, target_id)
+         DO UPDATE SET allow_json = EXCLUDED.allow_json, deny_json = EXCLUDED.deny_json, updated_at = EXCLUDED.updated_at",
+    )
+    .bind(&channel_id)
+    .bind(target_type)
+    .bind(&input.target_id)
+    .bind(allow)
+    .bind(deny)
+    .bind(now())
+    .execute(&pool)
+    .await
+    {
+        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "channel permission update failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "channel_permissions_failed"}))).into_response()
+        }
+    }
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/servers", get(list_servers))
-        .route("/api/servers/{server_id}/channels", get(list_channels))
-        .route("/api/servers/{server_id}/roles", get(list_roles))
+        .route("/api/servers/{server_id}/channels", get(list_channels).post(create_channel))
+        .route("/api/servers/{server_id}/roles", get(list_roles).post(create_role))
+        .route("/api/servers/{server_id}/roles/{role_id}", post(update_role).delete(update_role))
         .route("/api/servers/{server_id}/members", get(list_members))
-        .route("/api/servers/{server_id}/settings", get(get_server_settings))
+        .route("/api/servers/{server_id}/members/{target_id}/roles", post(update_member_role))
+        .route("/api/servers/{server_id}/settings", get(get_server_settings).post(update_server_settings))
         .route("/api/servers/{server_id}/stats", get(get_server_stats))
+        .route("/api/servers/{server_id}/sections", get(list_sections).post(create_section))
+        .route("/api/servers/{server_id}/sections/{section_id}", patch(update_section).delete(delete_section))
+        .route("/api/channels/{channel_id}/permissions", get(channel_permissions).post(channel_permissions).delete(channel_permissions))
 }
