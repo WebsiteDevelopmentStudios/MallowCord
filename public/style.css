@@ -1084,3 +1084,44 @@ body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-fil
 .dm-profile-status[data-status="online"]{background:rgba(67,181,129,.14);color:#9de0bf}
 .bot-group-title{color:#b9c8d8!important;background:linear-gradient(90deg,rgba(88,166,255,.13),transparent);border-left:2px solid #6ea8e8;margin:8px 7px 2px;padding:9px 10px!important;border-radius:0 6px 6px 0}
 .bot-group-title span{background:rgba(110,168,232,.18);padding:2px 7px;border-radius:20px;color:#b8d8ff!important}
+
+
+/* Lock the application viewport: only the message, channel, member and DM panes may scroll. */
+html,body{
+  width:100%;
+  height:100%;
+  min-height:0;
+  margin:0;
+  overflow:hidden!important;
+  overscroll-behavior:none;
+}
+body{
+  position:fixed;
+  inset:0;
+}
+#app.app{
+  position:fixed!important;
+  inset:0!important;
+  width:100%!important;
+  height:100vh!important;
+  height:100dvh!important;
+  min-height:0!important;
+  max-height:100dvh!important;
+  overflow:hidden!important;
+  overscroll-behavior:none;
+  box-sizing:border-box;
+}
+#app.app>*{
+  min-height:0;
+  min-width:0;
+}
+#app .chat,#app .channels,#app .members,
+#app .dm-workspace,#app .dm-window,#app .dm-sidebar,
+#app .dm-main{
+  min-height:0;
+  max-height:100%;
+}
+#app .messages,#app .member-list,#app #channelList,
+#app .dm-sidebar-scroll,#app .dm-messages{
+  overscroll-behavior:contain;
+}
