@@ -1513,6 +1513,179 @@ async fn delete_emoji(
     Json(json!({"ok": true})).into_response()
 }
 
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+struct OnboardingConfig {
+    enabled: i32,
+    welcome_text: String,
+    rules_text: String,
+}
+
+#[derive(Deserialize)]
+struct OnboardingUpdate {
+    complete: Option<bool>,
+    enabled: Option<bool>,
+    welcome_text: Option<String>,
+    rules_text: Option<String>,
+}
+
+async fn get_onboarding(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, can_manage) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+
+    let config = match sqlx::query_as::<_, OnboardingConfig>(
+        "SELECT enabled, welcome_text, rules_text
+         FROM server_onboarding WHERE server_id = $1",
+    )
+    .bind(&server_id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(Some(config)) => config,
+        Ok(None) => OnboardingConfig {
+            enabled: 0,
+            welcome_text: "Welcome! Please read the rules before chatting.".to_owned(),
+            rules_text: "Be respectful. No spam or harassment.".to_owned(),
+        },
+        Err(error) => {
+            tracing::error!(%error, "server onboarding configuration lookup failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "onboarding_lookup_failed"})),
+            )
+                .into_response();
+        }
+    };
+
+    let completed = match sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM onboarding_completions WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(&server_id)
+    .bind(&user.id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(value) => value.is_some(),
+        Err(error) => {
+            tracing::error!(%error, "server onboarding completion lookup failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "onboarding_lookup_failed"})),
+            )
+                .into_response();
+        }
+    };
+
+    Json(json!({
+        "config": config,
+        "completed": completed,
+        "can_manage": can_manage
+    }))
+    .into_response()
+}
+
+async fn update_onboarding(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(server_id): Path<String>,
+    Json(input): Json<OnboardingUpdate>,
+) -> Response {
+    let (pool, user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let (_, can_manage) = match require_membership(&pool, &user, &server_id).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+
+    if input.complete == Some(true) {
+        return match sqlx::query(
+            "INSERT INTO onboarding_completions(server_id, user_id, completed_at)
+             VALUES($1, $2, $3)
+             ON CONFLICT(server_id, user_id) DO UPDATE
+             SET completed_at = EXCLUDED.completed_at",
+        )
+        .bind(&server_id)
+        .bind(&user.id)
+        .bind(now())
+        .execute(&pool)
+        .await
+        {
+            Ok(_) => Json(json!({"ok": true})).into_response(),
+            Err(error) => {
+                tracing::error!(%error, "server onboarding completion update failed");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "onboarding_update_failed"})),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    if !can_manage {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Server owner access required."})),
+        )
+            .into_response();
+    }
+
+    let welcome_text: String = input
+        .welcome_text
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(1000)
+        .collect();
+    let rules_text: String = input
+        .rules_text
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(3000)
+        .collect();
+
+    match sqlx::query(
+        "INSERT INTO server_onboarding(server_id, enabled, welcome_text, rules_text, updated_at)
+         VALUES($1, $2, $3, $4, $5)
+         ON CONFLICT(server_id) DO UPDATE SET
+           enabled = EXCLUDED.enabled,
+           welcome_text = EXCLUDED.welcome_text,
+           rules_text = EXCLUDED.rules_text,
+           updated_at = EXCLUDED.updated_at",
+    )
+    .bind(&server_id)
+    .bind(i32::from(input.enabled.unwrap_or(false)))
+    .bind(welcome_text)
+    .bind(rules_text)
+    .bind(now())
+    .execute(&pool)
+    .await
+    {
+        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "server onboarding configuration update failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "onboarding_update_failed"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/servers", get(list_servers))
@@ -1524,6 +1697,7 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/servers/{server_id}/members", get(list_members))
         .route("/api/servers/{server_id}/members/{target_id}/roles", post(update_member_role))
         .route("/api/servers/{server_id}/settings", get(get_server_settings).post(update_server_settings))
+        .route("/api/servers/{server_id}/onboarding", get(get_onboarding).post(update_onboarding))
         .route("/api/servers/{server_id}/stats", get(get_server_stats))
         .route("/api/servers/{server_id}/sections", get(list_sections).post(create_section))
         .route("/api/servers/{server_id}/sections/{section_id}", patch(update_section).delete(delete_section))
