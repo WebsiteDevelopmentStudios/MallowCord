@@ -93,7 +93,7 @@ async function loadMemberList(){
  if(!serverId)return;
  try{
   const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[];
-  const discord=members.filter(m=>String(m.id).startsWith("discord:")),native=members.filter(m=>!String(m.id).startsWith("discord:"));
+  const discord=members.filter(m=>String(m.id).startsWith("discord:")),discordBots=discord.filter(m=>m.is_bot),discordHumans=discord.filter(m=>!m.is_bot),native=members.filter(m=>!String(m.id).startsWith("discord:"));
   $("#memberCountLabel").textContent="MEMBERS — "+(members.length+1);
   const online=m=>["online","idle","dnd"].includes(m.presence),
    roleData=m=>{try{return JSON.parse(m.roles_json||"[]")}catch{return []}},
@@ -101,8 +101,9 @@ async function loadMemberList(){
    group=(name,rows)=>rows.length?'<div class="member-group-title">'+esc(name)+' <span>'+rows.length+'</span></div>'+rows.map(button).join(""):"",
    roleGroups=()=>{const map=new Map();for(const member of native){const rs=roleData(member).slice().sort((x,y)=>(Number(y.position)||0)-(Number(x.position)||0));const highest=rs[0];if(!highest){if(!map.has("@everyone"))map.set("@everyone",[]);map.get("@everyone").push(member);continue}if(!map.has(highest.id))map.set(highest.id,{role:highest,members:[]});map.get(highest.id).members.push(member)}return [...map.values()].sort((x,y)=>{const aa=x.role?.position??-1,bb=y.role?.position??-1;return bb-aa})},
    roleMarkup=roleGroups().map(item=>{if(Array.isArray(item))return group("@everyone",item);return '<div class="member-group-title" style="color:'+esc(item.role.color||"#99aab5")+'">'+esc(item.role.name)+' <span>'+item.members.length+'</span></div>'+item.members.map(button).join("")}).join("");
-  const bot='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>';
-  box.innerHTML=bot+roleMarkup+group("Discord Members — online",discord.filter(online))+group("Discord Members — offline",discord.filter(m=>!online(m)));
+  const officialBot='<button type="button" class="member mallowbot-member member-profile-trigger" data-bot-profile="1"><span class="avatar"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></span><span class="member-copy"><b>MallowBot <span class="bot-tag">BOT</span></b><small>Official MallowCord bot</small></span><span class="member-presence" data-status="online"></span></button>';
+  const botGroup='<div class="member-group-title">Bots <span>'+(discordBots.length+1)+'</span></div>'+officialBot+discordBots.map(button).join("");
+  box.innerHTML=roleMarkup+botGroup+group("Discord Members — online",discordHumans.filter(online))+group("Discord Members — offline",discordHumans.filter(m=>!online(m)));
  }catch(e){console.warn("Member list:",e.message)}
 }
 function renderChannelLabel(name){
@@ -293,7 +294,7 @@ async function loadSocial(){
 }
 async function openSocial(){try{$("#app").classList.add("dm-mode");$("#dmWindow").classList.remove("dm-conversation-open");$("#dmProfilePanel").classList.add("hidden");$("#socialModal").classList.remove("hidden");document.querySelectorAll(".servers .server-icon").forEach(b=>b.classList.toggle("active",b.id==="dmHomeBtn"));await loadSocial()}catch(e){toast(e.message)}}
 $("#startConversationBtn").onclick=()=>$("#addFriendForm [name=username]")?.focus();
-async function openDm(userId){try{$("#dmWindow").classList.add("dm-conversation-open");const conversationButton=Array.from(document.querySelectorAll("#dmList [data-open-dm]")).find(el=>el.dataset.openDm===String(userId));const conversationName=conversationButton?.querySelector("span")?.childNodes?.[0]?.textContent?.trim()||"Direct Message";$("#dmHeaderTitle").textContent=conversationName;const d=await api("/dms/open",{method:"POST",body:JSON.stringify({user_id:userId})});activeDmId=d.conversation.id;activeDmUser=userId;$("#dmEmpty").classList.add("hidden");await loadDmProfile(userId);$("#dmMessages").classList.remove("hidden");$("#dmForm").classList.remove("hidden");await loadDmMessages();if(dmPoll)clearInterval(dmPoll);dmPoll=null;if(!realtimeConnected())dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},8000);$("#dmForm [name=content]").focus()}catch(e){toast(e.message)}}
+async function openDm(userId){try{stopDmTyping();if(dmTypingPoll)clearInterval(dmTypingPoll);$("#dmWindow").classList.add("dm-conversation-open");const conversationButton=Array.from(document.querySelectorAll("#dmList [data-open-dm]")).find(el=>el.dataset.openDm===String(userId));const conversationName=conversationButton?.querySelector("span")?.childNodes?.[0]?.textContent?.trim()||"Direct Message";$("#dmHeaderTitle").textContent=conversationName;const d=await api("/dms/open",{method:"POST",body:JSON.stringify({user_id:userId})});activeDmId=d.conversation.id;activeDmUser=userId;$("#dmEmpty").classList.add("hidden");await loadDmProfile(userId);$("#dmMessages").classList.remove("hidden");$("#dmForm").classList.remove("hidden");await loadDmMessages();if(dmTypingPoll)clearInterval(dmTypingPoll);dmTypingPoll=setInterval(refreshDmTyping,2500);refreshDmTyping();if(dmPoll)clearInterval(dmPoll);dmPoll=null;if(!realtimeConnected())dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},8000);$("#dmForm [name=content]").focus()}catch(e){toast(e.message)}}
 async function loadDmProfile(userId){
  const panel=$("#dmProfilePanel");if(!panel)return;
  const cached=socialPeople.find(p=>String(p.user_id||p.id)===String(userId))||{};
@@ -308,13 +309,30 @@ async function loadDmProfile(userId){
  $("#dmProfileRoles").innerHTML=roles.map(r=>'<span class="dm-profile-role" style="--role-color:'+esc(r.color||"#9aa3af")+'">'+esc(r.name)+'</span>').join("");
  panel.classList.remove("hidden");
 }
+let dmTypingPoll=null,dmTypingLastSent=0,dmTypingIdleTimer=null,dmTypingValue="";
+async function sendDmTyping(typing){
+ if(!activeDmId)return;
+ const nowMs=Date.now();if(typing&&nowMs-dmTypingLastSent<2500)return;
+ dmTypingLastSent=nowMs;
+ try{await api("/dms/"+activeDmId+"/typing",{method:"POST",body:JSON.stringify({typing})})}catch(e){console.debug("DM typing:",e.message)}
+}
+async function refreshDmTyping(){
+ if(!activeDmId)return;
+ try{const d=await api("/dms/"+activeDmId+"/typing");const indicator=$("#dmTypingIndicator");if(d.typing){indicator.textContent=(d.typing.display_name||d.typing.username||"User")+" is typing…";indicator.classList.remove("hidden")}else{indicator.classList.add("hidden")}}catch(e){console.debug("DM typing refresh:",e.message)}
+}
+function stopDmTyping(){
+ if(dmTypingIdleTimer)clearTimeout(dmTypingIdleTimer);dmTypingIdleTimer=null;
+ if(dmTypingValue){dmTypingValue="";sendDmTyping(false)}
+}
 async function loadDmMessages(){if(!activeDmId)return;try{const d=await api("/dms/"+activeDmId+"/messages"),box=$("#dmMessages"),bottom=box.scrollHeight-box.scrollTop-box.clientHeight<80;box.innerHTML=(d.messages||[]).map(m=>'<div class="dm-message '+(m.author_id===me.id?"mine":"")+'"><small>'+esc(m.display_name||m.username)+' · '+new Date(m.created_at*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})+'</small>'+renderMarkdown(m.content)+'</div>').join("");if(bottom)box.scrollTop=box.scrollHeight}catch(e){console.warn("DM refresh:",e.message)}}
 $("#friendsBtn").onclick=openSocial;
-$("#dmBackToList").onclick=()=>{$("#dmWindow").classList.remove("dm-conversation-open");activeDmId=null;if(dmPoll)clearInterval(dmPoll);dmPoll=null;$("#dmProfilePanel").classList.add("hidden")};
+$("#dmBackToList").onclick=()=>{stopDmTyping();if(dmTypingPoll)clearInterval(dmTypingPoll);dmTypingPoll=null;$("#dmTypingIndicator").classList.add("hidden");$("#dmWindow").classList.remove("dm-conversation-open");activeDmId=null;if(dmPoll)clearInterval(dmPoll);dmPoll=null;$("#dmProfilePanel").classList.add("hidden")};
 $("#closeSocialModal").onclick=()=>{$("#socialModal").classList.add("hidden");$("#dmWindow").classList.remove("dm-conversation-open");$("#app").classList.remove("dm-mode");if(dmPoll)clearInterval(dmPoll);dmPoll=null;activeDmId=null;document.querySelectorAll(".servers .server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===serverId))};
 $("#dmHomeBtn")?.addEventListener("click",openSocial);
 $("#addFriendForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget;try{const d=await api("/friends/request",{method:"POST",body:JSON.stringify({username:form.username.value})});toast(d.message||"Friend request sent.");form.reset();await loadSocial()}catch(x){toast(x.message)}};
-$("#dmForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,input=form.elements.content,value=input.value.trim();if(!value||!activeDmId)return;const conversation=activeDmId;input.value="";const pending=document.createElement("div");pending.className="dm-message mine optimistic-message";pending.innerHTML='<small>'+esc(me?.username||"You")+' · Sending…</small>'+renderMarkdown(value);$("#dmMessages").append(pending);$("#dmMessages").scrollTop=$("#dmMessages").scrollHeight;try{await api("/dms/"+conversation+"/messages",{method:"POST",body:JSON.stringify({content:value})});pending.remove();await loadDmMessages()}catch(x){pending.remove();input.value=value;toast(x.message)}};
+$("#dmForm [name=content]").addEventListener("input",()=>{if(!activeDmId)return;dmTypingValue=$("#dmForm [name=content]").value;sendDmTyping(true);if(dmTypingIdleTimer)clearTimeout(dmTypingIdleTimer);dmTypingIdleTimer=setTimeout(stopDmTyping,5000)});
+$("#dmForm [name=content]").addEventListener("blur",stopDmTyping);
+$("#dmForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,input=form.elements.content,value=input.value.trim();if(!value||!activeDmId)return;const conversation=activeDmId;stopDmTyping();input.value="";const pending=document.createElement("div");pending.className="dm-message mine optimistic-message";pending.innerHTML='<small>'+esc(me?.username||"You")+' · Sending…</small>'+renderMarkdown(value);$("#dmMessages").append(pending);$("#dmMessages").scrollTop=$("#dmMessages").scrollHeight;try{await api("/dms/"+conversation+"/messages",{method:"POST",body:JSON.stringify({content:value})});pending.remove();await loadDmMessages()}catch(x){pending.remove();input.value=value;toast(x.message)}};
 $("#socialModal").addEventListener("click",async e=>{const action=e.target.closest("[data-friend-action]"),dm=e.target.closest("[data-open-dm]"),profile=e.target.closest("[data-social-profile]");try{if(action){await api("/friends/"+encodeURIComponent(action.dataset.userId)+"/"+action.dataset.friendAction,{method:"POST",body:"{}"});toast("Friend list updated.");await loadSocial()}else if(dm)await openDm(dm.dataset.openDm);else if(profile){$("#socialModal").classList.add("hidden");openUserProfile(profile.dataset.socialProfile)}}catch(x){toast(x.message)}});
 function profileStatusLabel(s){return({online:"Online",idle:"Away",dnd:"Do Not Disturb",invisible:"Invisible"})[s]||"Offline"}
 function renderProfilePopover(p,own=false){
