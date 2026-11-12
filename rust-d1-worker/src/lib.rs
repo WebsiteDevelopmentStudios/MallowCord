@@ -561,7 +561,15 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
         if payload.guild_id != EXPECTED_GUILD {
             return response(&json!({"error":"This bridge is restricted to the configured official Discord server."}),403);
         }
-        let result = sync_discord(&db,payload).await?;
+        let result = match sync_discord(&db,payload).await {
+            Ok(value) => value,
+            Err(error) => {
+                // Return a structured diagnostic to the authenticated bridge instead
+                // of Cloudflare's generic plain-text 500 response. This makes D1
+                // schema/constraint failures actionable in the bot logs.
+                return response(&json!({"error":"Discord sync failed","detail":error.to_string()}),500);
+            }
+        };
         if result.get("error").is_some() { return response(&result,400); }
         return response(&result,200);
     }
