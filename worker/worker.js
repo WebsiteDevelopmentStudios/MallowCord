@@ -1109,6 +1109,25 @@ if(p==="/api/admin/errors"&&(m==="GET"||m==="DELETE")){
  return json({errors:a.results});
 }
 if(p==="/api/admin/audit"&&m==="GET"&&isOwner(u)){const a=await getDatabase(env, "audit_logs").prepare("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100").all();return json({events:a.results});}
+if(p==="/api/admin/d1-usage"&&m==="GET"){
+ if(!isOwner(u))return fail("Owner access required.",403);
+ if(!env.CF_ANALYTICS_API_TOKEN)return fail("D1 analytics token is not configured on the Worker.",503);
+ const date=new Date().toISOString().slice(0,10),accountId=env.CF_ACCOUNT_ID||"760bb0ff9afeb64ec51be54c045dd78c",mallowcordDbId="6b781710-a658-480a-9559-ded3cd61422a";
+ const query=`query($accountTag:string!,$start:Date,$end:Date){
+  viewer{accounts(filter:{accountTag:$accountTag}){
+   d1AnalyticsAdaptiveGroups(limit:100,filter:{date_geq:$start,date_leq:$end}){sum{rowsRead rowsWritten} dimensions{date databaseId}}
+   d1StorageAdaptiveGroups(limit:100,filter:{date_geq:$start,date_leq:$end}){max{databaseSizeBytes} dimensions{date databaseId}}
+  }}
+ }`;
+ const response=await fetch("https://api.cloudflare.com/client/v4/graphql",{method:"POST",headers:{"Authorization":"Bearer "+env.CF_ANALYTICS_API_TOKEN,"Content-Type":"application/json"},body:JSON.stringify({query,variables:{accountTag:accountId,start:date,end:date}})});
+ if(!response.ok)return fail("Cloudflare Analytics returned HTTP "+response.status+".",502);
+ const payload=await response.json();if(payload.errors?.length)return fail("Cloudflare Analytics: "+String(payload.errors[0].message||"query failed"),502);
+ const account=payload.data?.viewer?.accounts?.[0];if(!account)return fail("Cloudflare account analytics were unavailable.",502);
+ const usage=(account.d1AnalyticsAdaptiveGroups||[]).reduce((v,g)=>({rowsRead:v.rowsRead+Number(g.sum?.rowsRead||0),rowsWritten:v.rowsWritten+Number(g.sum?.rowsWritten||0)}),{rowsRead:0,rowsWritten:0});
+ const sizes=new Map();for(const g of account.d1StorageAdaptiveGroups||[]){const id=g.dimensions?.databaseId;if(id)sizes.set(id,Math.max(sizes.get(id)||0,Number(g.max?.databaseSizeBytes||0)));}
+ const totalBytes=[...sizes.values()].reduce((a,b)=>a+b,0);
+ return json({plan:{rowsRead:5000000,rowsWritten:100000,storageBytes:5000000000},today:usage,storage:{totalBytes,mallowcordBytes:sizes.get(mallowcordDbId)||0},updatedAt:new Date().toISOString()});
+}
 if(!p.startsWith("/api/")&&env.FRONTEND_ORIGIN){const target=new URL(p,env.FRONTEND_ORIGIN);target.search=new URL(req.url).search;return fetch(new Request(target.toString(),req));}
 return fail("Not found.",404);}
 export default {async fetch(req,env){const origin=req.headers.get("Origin")||"";const allowed=origin===env.FRONTEND_ORIGIN;const cors={"Access-Control-Allow-Origin":allowed?origin:"null","Access-Control-Allow-Credentials":"true","Access-Control-Allow-Methods":"GET,POST,PATCH,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type,X-MallowBot-Key","Vary":"Origin"};if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});const requestEnv=Object.create(env);try{const response=await handle(req,requestEnv);const headers=new Headers(response.headers);if(allowed)for(const [k,v] of Object.entries(cors))headers.set(k,v);return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}catch(e){const errorPath=new URL(req.url).pathname,errorMessage=String(e&&e.message||"Unknown Worker error"),errorStack=String(e&&e.stack||e||"").slice(0,12000);console.error("MallowCord Worker request failed",req.method,errorPath,errorStack);try{const db=getDatabase(requestEnv,"worker_error_logs");await db.prepare("CREATE TABLE IF NOT EXISTS worker_error_logs(id TEXT PRIMARY KEY,method TEXT NOT NULL,path TEXT NOT NULL,message TEXT NOT NULL,stack TEXT,origin TEXT,user_agent TEXT,created_at INTEGER NOT NULL)").run();await db.prepare("INSERT INTO worker_error_logs(id,method,path,message,stack,origin,user_agent,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(uid(),req.method,errorPath,errorMessage,errorStack,origin,req.headers.get("User-Agent")||"",Date.now()).run();}catch(logError){console.error("Could not persist MallowCord error log",logError&&logError.message||logError)}const response=json({error:"Internal server error.",detail:errorMessage,path:errorPath},500);const headers=new Headers(response.headers);if(allowed)for(const [k,v] of Object.entries(cors))headers.set(k,v);return new Response(response.body,{status:500,headers});}}};

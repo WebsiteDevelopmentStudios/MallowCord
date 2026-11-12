@@ -929,3 +929,20 @@ body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-fil
   opacity:0!important;
   pointer-events:none!important;
 }
+
+
+/* Owner-only Cloudflare D1 quota panel in the profile popover. */
+.d1-usage-card{width:100%;margin-top:14px;padding:12px;border:1px solid var(--border-color);border-radius:12px;background:var(--panel-bg,rgba(255,255,255,.035));text-align:left}
+.d1-usage-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;font-weight:750;margin-bottom:5px}
+.d1-usage-live{font-size:9px;letter-spacing:.7px;color:#22c55e}
+.d1-usage-subtitle,.d1-usage-footer{font-size:10px;color:var(--muted-text,#9aa0aa);line-height:1.45}
+.d1-usage-metric{margin-top:12px}
+.d1-usage-label,.d1-usage-storage>div{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:10px}
+.d1-usage-label strong,.d1-usage-storage strong{font-size:10px;text-align:right}
+.d1-usage-track{height:6px;margin:6px 0 4px;border-radius:99px;background:rgba(127,127,127,.2);overflow:hidden}
+.d1-usage-track span{display:block;height:100%;border-radius:99px;background:#22c55e}
+.d1-usage-metric small,.d1-usage-storage small{font-size:10px;color:var(--muted-text,#9aa0aa)}
+.d1-usage-storage{border-top:1px solid var(--border-color);margin-top:12px;padding-top:11px}
+.d1-usage-footer{margin-top:10px}
+.d1-usage-loading,.d1-usage-error{font-size:11px;color:var(--muted-text,#9aa0aa);line-height:1.45}
+.d1-usage-error{color:#f87171}
