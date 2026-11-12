@@ -174,3 +174,6 @@ Server creation remains intentionally disabled in Rust with the same HTTP 403 re
 ## PostgreSQL migration verification
 
 The Rust CI job starts a disposable PostgreSQL 16 service, seeds only the pre-existing Worker-owned baseline tables, applies every Rust migration twice, and verifies the new runtime tables and hot-path indexes. This checks that the additive migrations work against the shape of the existing Neon schema without resetting application data. The same job runs Rust unit tests and Clippy.
+
+
+The PostgreSQL pool is tunable with `DATABASE_MAX_CONNECTIONS`, `DATABASE_MIN_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS`, `DATABASE_IDLE_TIMEOUT_SECS`, and `DATABASE_MAX_LIFETIME_SECS`. Values are clamped to bounded ranges so an accidental environment typo cannot create an unbounded connection pool or excessive timeout.
