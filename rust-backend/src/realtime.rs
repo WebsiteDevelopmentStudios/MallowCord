@@ -196,4 +196,18 @@ mod tests {
     fn websocket_rejects_requests_without_an_origin() {
         assert!(!origin_allowed(&HeaderMap::new()));
     }
+
+    #[test]
+    fn visibility_cache_removes_expired_entries_before_growing() {
+        let mut cache = VisibilityCache::new();
+        let expired = Instant::now() - Duration::from_secs(1);
+        for index in 0..256 {
+            cache.insert(format!("channel:{index}"), (false, expired));
+        }
+
+        remember_visibility(&mut cache, "channel:active".to_owned(), true);
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get("channel:active").map(|entry| entry.0), Some(true));
+    }
 }
