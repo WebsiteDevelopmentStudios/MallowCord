@@ -54,6 +54,34 @@ async fn postgres_migrations_apply_and_create_runtime_tables() {
         assert!(exists, "migration did not create table {table}");
     }
 
+    for column in ["next_attempt_at", "locked_at", "dead_lettered_at"] {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'event_inbox'
+                  AND column_name = $1
+            )",
+        )
+        .bind(column)
+        .fetch_one(&pool)
+        .await
+        .expect("check event inbox retry column");
+        assert!(exists, "event inbox migration did not add {column}");
+    }
+
+    let ready_index: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND indexname = 'event_inbox_ready_idx'
+        )",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("check event inbox ready index");
+    assert!(ready_index, "event inbox ready index is missing");
+
     let index_count: i64 = sqlx::query(
         "SELECT COUNT(*)::BIGINT AS count
          FROM pg_indexes
