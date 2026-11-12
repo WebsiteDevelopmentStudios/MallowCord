@@ -79,6 +79,7 @@ test("Rust proxy forwards the existing cookie, body, and query string", async ()
         method: "POST",
         headers: {
           cookie: "mallowcord_device=test-session",
+          "cf-connecting-ip": "203.0.113.10",
           "content-type": "application/json",
         },
         body,
@@ -91,6 +92,7 @@ test("Rust proxy forwards the existing cookie, body, and query string", async ()
     assert.equal(response.status, 200);
     assert.equal(forwarded.url, "https://rust.example.com/api/account/profile?from=web");
     assert.equal(forwarded.headers.get("cookie"), "mallowcord_device=test-session");
+    assert.equal(forwarded.headers.get("x-mallowcord-client-ip"), "203.0.113.10");
     assert.equal(await forwarded.text(), body);
   } finally {
     globalThis.fetch = originalFetch;
