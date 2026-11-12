@@ -117,13 +117,21 @@ async fn websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    let origin = headers.get(ORIGIN).and_then(|value| value.to_str().ok()).unwrap_or("<missing>");
     if !origin_allowed(&headers) {
+        let configured = std::env::var("MALLOWCORD_ALLOWED_ORIGINS")
+            .unwrap_or_else(|_| "https://mallowcord-web.onrender.com".to_owned());
+        tracing::warn!(origin, %configured, "websocket rejected: origin not allowed");
         return (StatusCode::FORBIDDEN, Json(json!({"error": "WebSocket origin is not allowed."}))).into_response();
     }
     let (pool, user) = match authorize(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return *response,
+        Err(response) => {
+            tracing::warn!(origin, "websocket rejected: session authorization failed");
+            return *response;
+        }
     };
+    tracing::info!(origin, user_id = %user.id, "websocket upgrade accepted");
     upgrade
         .max_message_size(64 * 1024)
         .max_frame_size(64 * 1024)
