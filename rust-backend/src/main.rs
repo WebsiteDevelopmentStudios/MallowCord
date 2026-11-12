@@ -21,6 +21,7 @@ mod account;
 mod admin;
 mod messages;
 mod notifications;
+mod oauth;
 mod realtime;
 mod auth;
 mod discord_bridge;
@@ -264,6 +265,7 @@ async fn main() {
         .merge(discord_bridge::router())
         .merge(messages::router())
         .merge(notifications::router())
+        .merge(oauth::router())
         .merge(realtime::router())
         .merge(uploads::router())
         .merge(server::router())
