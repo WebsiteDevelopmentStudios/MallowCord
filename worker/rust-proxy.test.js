@@ -26,6 +26,11 @@ test("proxies API domains already implemented in Rust", () => {
     ["POST", "/api/integrations/mallowbot/discord/commands/result"],
     ["GET", "/api/integrations/mallowbot/discord/outbox"],
     ["POST", "/api/integrations/mallowbot/discord/outbox/outbox-1/ack"],
+    ["GET", "/api/integrations/mallowbot/users"],
+    ["POST", "/api/integrations/mallowbot/users/user-1/timeout"],
+    ["POST", "/api/integrations/mallowbot/users/user-2/ban"],
+    ["POST", "/api/integrations/mallowbot/users/user-3/unban"],
+    ["POST", "/api/integrations/mallowbot/users/user-4/delete"],
     ["GET", "/api/admin/audit"],
   ];
 
