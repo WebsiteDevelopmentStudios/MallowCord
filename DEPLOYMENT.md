@@ -128,3 +128,10 @@ The Rust API now contains Google and Discord start/callback handlers. Keep the e
 The Worker proxy forwards those callback paths to Rust when the Rust origin is enabled. This lets Rust perform the token exchange and account provisioning without changing the provider-console redirect URIs during the first rollout.
 
 Before enabling the proxy, copy the existing OAuth client IDs/secrets and owner-match settings into the Rust host environment: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `OWNER_GOOGLE_EMAIL`, `OWNER_DISCORD_ID`, and `FRONTEND_ORIGIN`. Keep all values server-side. The callback routes are part of the opt-in proxy allowlist; do not enable `RUST_API_ORIGIN` until the Rust host has these variables and OAuth tests have passed.
+
+
+### Owner D1 usage dashboard
+
+The owner-only **D1 Usage** page calls `GET /api/admin/d1-usage`. The endpoint reads row and storage metrics from Cloudflare's GraphQL Analytics API (`d1AnalyticsAdaptiveGroups` and `d1StorageAdaptiveGroups`) and does not query or write D1 for metric collection. It aggregates the current UTC day's rows read/written across all D1 databases in the Cloudflare account and sums the latest per-database storage sizes. The UI fetches once when opened and only fetches again when the owner presses **Refresh**; it does not poll or persist metrics.
+
+Configure the production `mallowcord-api` Worker with a secret named `CF_ANALYTICS_API_TOKEN`. Create a Cloudflare API token scoped to this account with **Account Analytics: Read** permission only, then add the token under **Workers & Pages → mallowcord-api → Settings → Variables and Secrets** as a secret (never a plain variable). The account ID defaults to the current account; optionally override it with `CF_ANALYTICS_ACCOUNT_ID`. The dashboard uses the Free-plan limits currently configured in the UI: 5,000,000 rows read/day, 100,000 rows written/day, and 5 GiB account storage. Update those display limits if the account plan changes.
