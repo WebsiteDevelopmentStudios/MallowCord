@@ -1,0 +1,156 @@
+use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        State,
+    },
+    http::{header::ORIGIN, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use tokio::sync::broadcast;
+
+use crate::{
+    auth::{current_user, AuthUser},
+    server::channel_permission_allowed,
+    AppState,
+};
+
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) else {
+        return true;
+    };
+    let configured = std::env::var("MALLOWCORD_ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "https://mallowcord-web.onrender.com".to_owned());
+    configured
+        .split(',')
+        .map(str::trim)
+        .any(|allowed| !allowed.is_empty() && allowed == origin)
+}
+
+async fn authorize(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(PgPool, AuthUser), Response> {
+    let Some(pool) = state.database.as_ref() else {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "database_not_configured"}))).into_response());
+    };
+    match current_user(headers, pool).await {
+        Ok(Some(user)) if user.status != "timed_out" || user.timeout_until.unwrap_or(0) <= chrono::Utc::now().timestamp() => {
+            Ok((pool.clone(), user))
+        }
+        Ok(Some(_)) => Err((StatusCode::FORBIDDEN, Json(json!({"error": "Your account is timed out."}))).into_response()),
+        Ok(None) => Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign in required."}))).into_response()),
+        Err(error) => {
+            tracing::error!(%error, "websocket session lookup failed");
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "session_lookup_failed"}))).into_response())
+        }
+    }
+}
+
+async fn event_visible(pool: &PgPool, user: &AuthUser, event: &Value) -> bool {
+    if event
+        .get("recipient_ids")
+        .and_then(Value::as_array)
+        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(user.id.as_str())))
+    {
+        return true;
+    }
+
+    if let Some(channel_id) = event.get("channel_id").and_then(Value::as_str) {
+        return matches!(
+            channel_permission_allowed(pool, &user.id, channel_id, "view_channel").await,
+            Ok(true)
+        );
+    }
+
+    if let Some(server_id) = event.get("server_id").and_then(Value::as_str) {
+        return matches!(
+            sqlx::query_scalar::<_, i32>(
+                "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
+            )
+            .bind(server_id)
+            .bind(&user.id)
+            .fetch_optional(pool)
+            .await,
+            Ok(Some(_))
+        );
+    }
+    false
+}
+
+async fn websocket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if !origin_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "WebSocket origin is not allowed."}))).into_response();
+    }
+    let (pool, user) = match authorize(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    upgrade
+        .max_message_size(64 * 1024)
+        .max_frame_size(64 * 1024)
+        .on_upgrade(move |socket| handle_socket(socket, state, pool, user))
+}
+
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    pool: PgPool,
+    user: AuthUser,
+) {
+    let mut receiver = state.realtime.subscribe();
+    let welcome = json!({"type": "connected", "user_id": user.id});
+    if socket.send(Message::Text(welcome.to_string().into())).await.is_err() {
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            incoming = socket.recv() => {
+                match incoming {
+                    Some(Ok(Message::Ping(payload))) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Text(text))) if text.as_str() == "ping" => {
+                        if socket.send(Message::Text("pong".into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(Message::Text(_))) | Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {}
+                }
+            }
+            event = receiver.recv() => {
+                match event {
+                    Ok(event) => {
+                        if event_visible(&pool, &user, &event).await
+                            && socket.send(Message::Text(event.to_string().into())).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let resync = json!({"type": "resync.required"});
+                        if socket.send(Message::Text(resync.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn router() -> Router<AppState> {
+    Router::new().route("/api/realtime", get(websocket))
+}
