@@ -66,12 +66,13 @@ async fn postgres_migrations_apply_and_create_runtime_tables() {
         "oauth_states_expiry_idx",
         "worker_error_logs_created_idx",
         "onboarding_completions_user_idx",
+        "message_attachments_message_idx",
     ])
     .fetch_one(&pool)
     .await
     .expect("check hot-path indexes")
     .get("count");
-    assert_eq!(index_count, 5, "expected all migration indexes to exist");
+    assert_eq!(index_count, 6, "expected all migration indexes to exist");
 
     pool.close().await;
 }
