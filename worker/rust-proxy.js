@@ -50,6 +50,7 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/integrations\/mallowbot\/discord\/outbox\/[^/]+\/ack$/],
   ["GET", /^\/api\/integrations\/mallowbot\/users$/],
   ["POST", /^\/api\/integrations\/mallowbot\/users\/[^/]+\/(?:timeout|ban|unban|delete)$/],
+  ["POST", /^\/api\/admin\/ip-ban$/],
   ["GET", /^\/api\/admin\/audit$/],
 ];
 
