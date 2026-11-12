@@ -1,3 +1,6 @@
+ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_content_check;
+ALTER TABLE messages ADD CONSTRAINT messages_content_check CHECK (length(content) <= 4000);
+
 CREATE TABLE IF NOT EXISTS message_replies (
     message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     reply_to_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE
