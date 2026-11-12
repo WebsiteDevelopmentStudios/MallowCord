@@ -1667,7 +1667,7 @@ async fn update_onboarding(
            updated_at = EXCLUDED.updated_at",
     )
     .bind(&server_id)
-    .bind(i32::from(input.enabled.unwrap_or(false)))
+    .bind(if input.enabled.unwrap_or(false) { 1 } else { 0 })
     .bind(welcome_text)
     .bind(rules_text)
     .bind(now())
