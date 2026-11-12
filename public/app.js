@@ -636,14 +636,30 @@ $("#settingsBtn").onclick=openAccountSettings;
 
 $("#closeModal").onclick=()=>$("#modal").classList.add("hidden");
 $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};
+// OAuth handoff runs immediately after the API helper, before the rest of the UI
+// initializes. This prevents unrelated UI startup errors from swallowing the login code.
 (async()=>{
- const params=new URLSearchParams(location.search),code=params.get("oauth_code"),loginError=params.get("login_error");
+ const params=new URLSearchParams(location.search);
+ const code=params.get("oauth_code");
+ const loginError=params.get("login_error");
  if(code){
-  history.replaceState(null,"",location.pathname+location.hash);
-  try{await api("/auth/exchange",{method:"POST",body:JSON.stringify({code})});me=(await api("/auth/me")).user;await enterApp();return}
-  catch(e){status("Sign-in failed: "+(e?.message||"Please try again."));}
+  try{
+   const result=await api("/auth/exchange",{method:"POST",body:JSON.stringify({code})});
+   history.replaceState(null,"",location.pathname+location.hash);
+   me=result.user;
+   await enterApp();
+  }catch(e){
+   history.replaceState(null,"",location.pathname+location.hash);
+   status("Sign-in failed: "+(e?.message||"Please try again."));
+   console.error("MallowCord OAuth exchange failed:",e);
+  }
+  return;
  }
- if(loginError){history.replaceState(null,"",location.pathname+location.hash);status("Sign-in with "+(loginError==="google"?"Google":"Discord")+" failed. Please try again.");}
+ if(loginError){
+  history.replaceState(null,"",location.pathname+location.hash);
+  status("Sign-in with "+(loginError==="google"?"Google":"Discord")+" failed. Please try again.");
+  return;
+ }
  try{me=(await api("/auth/me")).user;await enterApp()}catch{}
 })();
 
