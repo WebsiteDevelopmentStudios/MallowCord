@@ -16,7 +16,7 @@ The Rust service is the destination for MallowCord's performance-sensitive API a
 - Mallow-Bot integration APIs for guild snapshot sync, Discord presence, Discord message ingestion, account linking, command queue/results, and outgoing-message acknowledgements; the web Discord-link flow and `-mb` command submission now use Rust too. PostgreSQL migrations include the bridge channel-link/outbox schema and additional indexes for channel lookups and pending outgoing-message delivery.
 - Mallow-Bot user listing and timeout/ban/unban/delete moderation endpoints.
 - Owner-only user listing/moderation, audit log, global IP-ban creation/enforcement, and Worker error-log listing/clearing.
-- Durable `event_inbox` table and `POST /internal/v1/events` for timestamped HMAC-SHA256 events, with body limits and idempotent event IDs.
+- Durable `event_inbox` table and `POST /internal/v1/events` for timestamped HMAC-SHA256 events, with idempotent event IDs, PostgreSQL `SKIP LOCKED` claiming, lease recovery, bounded exponential retries, and dead-letter marking after 12 failed attempts. The consumer dispatches Discord member join/update, presence, and message events through the same validated handlers used by the compatibility API.
 - Optional Cloudflare Worker proxy with a method-specific route allowlist. It remains disabled until the Worker variable `RUST_API_ORIGIN` is configured.
 - Container build and CI tests, including a syntax check for the browser application JavaScript.
 
@@ -76,7 +76,7 @@ Body format:
 }
 ```
 
-The event is stored in `event_inbox`; this endpoint does not yet claim that downstream business logic has completed. Event consumers and feature-specific handlers are a subsequent migration step.
+The event is stored in `event_inbox` and acknowledged as accepted, not completed. A background Rust consumer claims rows with `FOR UPDATE SKIP LOCKED`, leases them for crash recovery, and retries transient failures with bounded exponential backoff. After 12 failed attempts an event is marked dead-lettered for inspection; successful processing sets `processed_at`. The first supported event types are `discord.member.joined`, `discord.member.updated`, `discord.presence.updated`, and `discord.message.created`. The event handlers reuse the existing bridge validation and idempotency checks.
 
 ## Run locally
 
