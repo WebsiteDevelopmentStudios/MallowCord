@@ -1,6 +1,6 @@
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -22,12 +22,15 @@ mod notifications;
 mod auth;
 mod server;
 mod social;
+mod storage;
+mod uploads;
 
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) database: Option<PgPool>,
+    pub(crate) object_store: Option<Arc<dyn object_store::ObjectStore>>,
     internal_event_secret: Option<Arc<Vec<u8>>>,
 }
 
@@ -210,19 +213,21 @@ async fn main() {
         .filter(|value| value.len() >= 32)
         .map(|value| Arc::new(value.into_bytes()));
 
-    let state = AppState { database, internal_event_secret };
+    let object_store = storage::from_env();
+    let state = AppState { database, object_store, internal_event_secret };
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
-        .route("/internal/v1/events", post(ingest_event))
+        .route("/internal/v1/events", post(ingest_event).layer(DefaultBodyLimit::max(256 * 1024)))
         .merge(auth::router())
         .merge(account::router())
         .merge(messages::router())
         .merge(notifications::router())
+        .merge(uploads::router())
         .merge(server::router())
         .merge(social::router())
         .with_state(state)
-        .layer(RequestBodyLimitLayer::new(256 * 1024))
+        .layer(RequestBodyLimitLayer::new(26 * 1024 * 1024))
         .layer(TraceLayer::new_for_http());
 
     let address: SocketAddr = env::var("MALLOWCORD_BIND_ADDR")
