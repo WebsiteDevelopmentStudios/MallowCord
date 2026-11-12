@@ -842,8 +842,22 @@ async fn update_server_settings(
     if !manager {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Server owner access required."}))).into_response();
     }
-    let name = input.name.unwrap_or_default().trim().chars().take(50).collect::<String>();
-    let icon = input.icon_url.unwrap_or_default().trim().to_owned();
+    let current = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT name, icon_url FROM servers WHERE id = $1",
+    )
+    .bind(&server_id)
+    .fetch_optional(&pool)
+    .await;
+    let (current_name, current_icon) = match current {
+        Ok(Some(value)) => value,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Server not found."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "server settings lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "server_update_failed"}))).into_response();
+        }
+    };
+    let name = input.name.map(|value| value.trim().chars().take(50).collect::<String>()).unwrap_or(current_name);
+    let icon = input.icon_url.map(|value| value.trim().to_owned()).unwrap_or_else(|| current_icon.unwrap_or_default());
     if name.chars().count() < 2 {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "Server name must be at least 2 characters."}))).into_response();
     }
