@@ -321,8 +321,12 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             "INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at)              VALUES(?,?,?,'basic','active',?,?)"
         ).bind(&[text(&user_id),text(&username),text(&username.to_lowercase()),number(timestamp),number(timestamp)])?);
         member_writes.push(db.prepare(
-            "INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?)              ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at"
-        ).bind(&[text(&user_id),text(display),text(avatar),number(timestamp)])?);
+            "INSERT INTO user_profiles(user_id,display_name,avatar_url,status,discord_username,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,discord_username=excluded.discord_username,updated_at=excluded.updated_at"
+        ).bind(&[
+            text(&user_id), text(display), text(avatar),
+            text(match member.status.as_deref() { Some("online") => "online", Some("idle") => "idle", Some("dnd") => "dnd", _ => "offline" }),
+            text(&member.username), number(timestamp)
+        ])?);
         member_writes.push(db.prepare(
             "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?)              ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at"
         ).bind(&[text(discord_id),text(&server.id),text(&user_id),number(timestamp)])?);
@@ -494,11 +498,12 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
             .bind(&[text(&payload.user_id),text(&server.id)])?.first::<UserRow>(None).await?
             .or(db.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?")
                 .bind(&[text(&payload.user_id),text(&server.id)])?.first::<UserRow>(None).await?);
-        if let Some(user) = linked {
+        let ignored = linked.is_none();
+        if let Some(user) = linked.as_ref() {
             db.prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=?")
                 .bind(&[text(status),number(now()),text(&user.user_id)])?.run().await?;
         }
-        return response(&json!({"ok":true,"ignored":linked.is_none()}),200);
+        return response(&json!({"ok":true,"ignored":ignored}),200);
     }
 
     if path == "/api/integrations/mallowbot/discord/messages" && method == Method::Post {
