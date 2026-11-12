@@ -61,6 +61,7 @@ async function ensureOAuthTables(env){return ensureSchemaOnce("oauth-tables",asy
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS oauth_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
 
 });}
+async function ensureNotificationTables(env){return ensureSchemaOnce("notification-tables",async()=>{await ensureNotificationTables(env);});}
 async function ensureBridgeSystemServer(env){if(!bridgeSystemServerPromise){bridgeSystemServerPromise=(async()=>{
  let server=await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(server){await restoreLegacySystemServer(env,server.id);return server;}
@@ -553,7 +554,7 @@ if(p==="/api/presence/heartbeat"&&m==="POST"){
 }
 if(p==="/api/notifications"&&m==="GET"){
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS message_notifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,message_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('mention','reply')),created_at INTEGER NOT NULL,seen_at INTEGER,UNIQUE(user_id,message_id,kind))").run();
- await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),scope_id TEXT NOT NULL,muted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,scope_type,scope_id))").run();
+ 
  const rows=(await getDatabase(env).prepare("SELECT mn.server_id,mn.channel_id,COUNT(*) AS count FROM message_notifications mn WHERE mn.user_id=? AND mn.seen_at IS NULL AND NOT EXISTS(SELECT 1 FROM user_notification_settings ns WHERE ns.user_id=mn.user_id AND ns.muted=1 AND ((ns.scope_type='server' AND ns.scope_id=mn.server_id) OR (ns.scope_type='channel' AND ns.scope_id=mn.channel_id))) GROUP BY mn.server_id,mn.channel_id").bind(u.id).all()).results;
  return json({unread:rows,total:rows.reduce((n,r)=>n+Number(r.count||0),0)});
 }
@@ -566,7 +567,7 @@ if(p==="/api/notifications/read"&&m==="POST"){
  return json({ok:true});
 }
 if(p==="/api/notification-settings"&&(m==="GET"||m==="POST")){
- await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),scope_id TEXT NOT NULL,muted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,scope_type,scope_id))").run();
+ 
  if(m==="GET"){const rows=await getDatabase(env).prepare("SELECT scope_type,scope_id,muted FROM user_notification_settings WHERE user_id=? AND muted=1").bind(u.id).all();return json({settings:rows.results})}
  const b=await body(req),scope=String(b.scope_type||""),id=String(b.scope_id||""),muted=!!b.muted;if(!["server","channel"].includes(scope)||!id)return fail("Invalid notification setting.");
  const access=scope==="server"?await getDatabase(env).prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(id,u.id).first():await getDatabase(env).prepare("SELECT 1 FROM channels c JOIN memberships m ON m.server_id=c.server_id WHERE c.id=? AND m.user_id=?").bind(id,u.id).first();if(!access)return fail("You cannot change notifications for this item.",403);
