@@ -205,7 +205,7 @@ async fn update_profile(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let display_name = bounded(input.display_name, 32);
     let avatar_url = input.avatar_url.unwrap_or_default().trim().to_owned();
@@ -265,7 +265,7 @@ async fn presence_heartbeat(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let settings = sqlx::query_scalar::<_, String>(
         "SELECT settings_json FROM user_preferences WHERE user_id = $1",
@@ -310,7 +310,7 @@ async fn get_preferences(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let settings = sqlx::query_scalar::<_, String>(
         "SELECT settings_json FROM user_preferences WHERE user_id = $1",
@@ -343,7 +343,7 @@ async fn update_preferences(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if !input.settings.is_object() {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid settings payload."}))).into_response();
