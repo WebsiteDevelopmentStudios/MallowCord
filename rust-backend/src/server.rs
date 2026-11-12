@@ -1329,7 +1329,7 @@ async fn server_emoji_manager(
     .await
     .map_err(|error| {
         tracing::error!(%error, "emoji membership lookup failed");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response()
+        Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response())
     })?;
     if member.is_none() {
         return Err(Box::new((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response()));
