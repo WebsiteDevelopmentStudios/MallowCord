@@ -464,17 +464,19 @@ async fn presence_batch(
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_presence_failed"}))).into_response();
             }
         };
-        match sqlx::query(
-            "UPDATE user_profiles SET status = $1, updated_at = $2
-             WHERE user_id = $3 AND COALESCE(status, 'offline') <> $1",
-        )
-        .bind(status)
-        .bind(now())
-        .bind(&user_id)
-        .execute(&pool)
-        .await
-        {
-            Ok(result) if result.rows_affected() > 0 => {
+        let seen_at = if status == "offline" { 0 } else { now() };
+        let update_result = async {
+            sqlx::query("UPDATE user_profiles SET status = $1, updated_at = $2 WHERE user_id = $3")
+                .bind(status).bind(now()).bind(&user_id).execute(&pool).await?;
+            sqlx::query(
+                "INSERT INTO user_presence(user_id, last_seen_at) VALUES($1, $2)
+                 ON CONFLICT(user_id) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at",
+            )
+                .bind(&user_id).bind(seen_at).execute(&pool).await?;
+            Ok::<(), sqlx::Error>(())
+        }.await;
+        match update_result {
+            Ok(()) => {
                 updated += 1;
                 let _ = state.realtime.send(json!({
                     "type": "user.presence.updated",
@@ -483,7 +485,6 @@ async fn presence_batch(
                     "status": status
                 }));
             }
-            Ok(_) => {}
             Err(error) => {
                 tracing::error!(%error, discord_user_id = %item.user_id, "Discord presence batch update failed");
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_presence_failed"}))).into_response();
@@ -545,16 +546,19 @@ async fn presence(
     } else {
         "offline"
     };
-    match sqlx::query(
-        "UPDATE user_profiles SET status = $1, updated_at = $2 WHERE user_id = $3",
-    )
-    .bind(status)
-    .bind(now())
-    .bind(&user_id)
-    .execute(&pool)
-    .await
-    {
-        Ok(_) => {
+    let seen_at = if status == "offline" { 0 } else { now() };
+    let update_result = async {
+        sqlx::query("UPDATE user_profiles SET status = $1, updated_at = $2 WHERE user_id = $3")
+            .bind(status).bind(now()).bind(&user_id).execute(&pool).await?;
+        sqlx::query(
+            "INSERT INTO user_presence(user_id, last_seen_at) VALUES($1, $2)
+             ON CONFLICT(user_id) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at",
+        )
+            .bind(&user_id).bind(seen_at).execute(&pool).await?;
+        Ok::<(), sqlx::Error>(())
+    }.await;
+    match update_result {
+        Ok(()) => {
             let _ = state.realtime.send(json!({
                 "type": "user.presence.updated",
                 "server_id": server_id,
@@ -1958,7 +1962,7 @@ async fn sync_snapshot(
     let mut synced_members = 0usize;
     for member in &members {
         let discord_user_id = member.id.trim();
-        if member.bot.unwrap_or(false) || !valid_discord_id(discord_user_id) {
+        if !valid_discord_id(discord_user_id) {
             continue;
         }
         let shadow_user_id = ensure_shadow_user(pool, server_id, discord_user_id).await?;
@@ -1982,13 +1986,14 @@ async fn sync_snapshot(
             .filter(|value| ["online", "idle", "dnd", "offline"].contains(value))
             .unwrap_or("offline");
         sqlx::query(
-            "INSERT INTO user_profiles(user_id, display_name, avatar_url, status, discord_username, updated_at)
-             VALUES($1, $2, $3, $4, $5, $6)
+            "INSERT INTO user_profiles(user_id, display_name, avatar_url, status, discord_username, is_bot, updated_at)
+             VALUES($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT(user_id) DO UPDATE SET
                display_name = EXCLUDED.display_name,
                avatar_url = EXCLUDED.avatar_url,
                status = EXCLUDED.status,
                discord_username = EXCLUDED.discord_username,
+               is_bot = EXCLUDED.is_bot,
                updated_at = EXCLUDED.updated_at",
         )
         .bind(&shadow_user_id)
@@ -1996,6 +2001,7 @@ async fn sync_snapshot(
         .bind(avatar_url)
         .bind(status)
         .bind(&discord_username)
+        .bind(member.bot.unwrap_or(false))
         .bind(now())
         .execute(pool)
         .await?;
@@ -2009,14 +2015,24 @@ async fn sync_snapshot(
         // the initial/member snapshot sync as well as on live presence events.
         if member_user_id != shadow_user_id {
             sqlx::query(
-                "UPDATE user_profiles SET status = $1, updated_at = $2 WHERE user_id = $3",
+                "UPDATE user_profiles SET status = $1, is_bot = $2, updated_at = $3 WHERE user_id = $4",
             )
             .bind(status)
+            .bind(member.bot.unwrap_or(false))
             .bind(now())
             .bind(&member_user_id)
             .execute(pool)
             .await?;
         }
+        let presence_seen_at = if status == "offline" { 0 } else { now() };
+        sqlx::query(
+            "INSERT INTO user_presence(user_id, last_seen_at) VALUES($1, $2)
+             ON CONFLICT(user_id) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at",
+        )
+        .bind(&member_user_id)
+        .bind(presence_seen_at)
+        .execute(pool)
+        .await?;
         sqlx::query(
             "INSERT INTO memberships(server_id, user_id, joined_at)
              VALUES($1, $2, $3) ON CONFLICT(server_id, user_id) DO NOTHING",
