@@ -7,7 +7,7 @@ The Rust service is the destination for MallowCord's performance-sensitive API a
 - Axum/Tokio HTTP service with graceful shutdown, request tracing, and configurable database readiness.
 - Neon PostgreSQL connection pool and versioned SQLx migrations applied at startup.
 - Google/Discord OAuth login-code exchange and device-session creation, plus existing device-cookie session lookup/logout, account status, profile, preferences, presence, username changes, and email/phone verification APIs.
-- Server list, channel list, member/role views, sections, role assignment, settings, and channel permission APIs.
+- Server list, channel list, member/role views, sections, role assignment, settings, channel permission APIs, and custom emoji management with image validation and reaction cleanup.
 - Message history, send/edit/delete, replies, reactions, forwards, attachment metadata, and S3-compatible attachment storage.
 - Friends, friend requests, DMs, notifications, and notification preferences.
 - Authenticated WebSocket delivery for channel and DM events; the browser now consumes live message, member/presence, and mention/reply notification events, with message/DM/member/notification polling retained only while the Rust socket is unavailable.
