@@ -116,3 +116,15 @@ Do not place these values in the repository or browser configuration. Keep the R
 Only routes and HTTP methods already implemented in Rust are forwarded. Google/Discord OAuth start and callbacks, OAuth code exchange, contact verification, Mallow-Bot Discord bridge endpoints, and other unported routes continue to run on the Worker. Browser cookies and request bodies are forwarded so the existing same-origin session contract is preserved. The Worker adds CORS support for the Rust section PATCH route.
 
 If Rust is unavailable, forwarded requests return HTTP 502; they do not silently fall back to Worker database writes. Leave `RUST_API_ORIGIN` unset until the Rust service is ready. This branch does not set the variable or change the live deployment.
+
+
+### OAuth provider cutover
+
+The Rust API now contains Google and Discord start/callback handlers. Keep the existing provider redirect URIs registered as:
+
+- `https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/google/callback`
+- `https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/discord/callback`
+
+The Worker proxy forwards those callback paths to Rust when the Rust origin is enabled. This lets Rust perform the token exchange and account provisioning without changing the provider-console redirect URIs during the first rollout.
+
+Before enabling the proxy, copy the existing OAuth client IDs/secrets and owner-match settings into the Rust host environment: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `OWNER_GOOGLE_EMAIL`, `OWNER_DISCORD_ID`, and `FRONTEND_ORIGIN`. Keep all values server-side. The callback routes are part of the opt-in proxy allowlist; do not enable `RUST_API_ORIGIN` until the Rust host has these variables and OAuth tests have passed.
