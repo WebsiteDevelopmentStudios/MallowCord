@@ -65,6 +65,8 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/integrations\/mallowbot\/users\/[^/]+\/(?:timeout|ban|unban|delete)$/],
   ["POST", /^\/api\/admin\/ip-ban$/],
   ["GET", /^\/api\/admin\/audit$/],
+  ["GET", /^\/api\/admin\/errors$/],
+  ["DELETE", /^\/api\/admin\/errors$/],
 ];
 
 export function shouldProxyRustApi(path, method) {
