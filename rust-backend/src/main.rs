@@ -114,7 +114,7 @@ async fn ingest_event(
     };
 
     let now = chrono::Utc::now().timestamp();
-    if (now - timestamp).abs() > 300 {
+    if timestamp.abs_diff(now) > 300 {
         return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "signature_expired" })).into_response();
     }
 
