@@ -681,9 +681,9 @@ async fn send_dm(
         "id": id,
         "content": content,
         "created_at": created_at,
-        "author_id": user.id,
-        "username": user.username,
-        "display_name": user.username
+        "author_id": user.id.clone(),
+        "username": user.username.clone(),
+        "display_name": user.username.clone()
     });
     let recipients = sqlx::query_as::<_, (String, String)>(
         "SELECT user_low_id, user_high_id FROM dm_conversations WHERE id = $1",
