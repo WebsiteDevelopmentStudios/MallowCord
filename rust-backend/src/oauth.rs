@@ -244,17 +244,13 @@ async fn ensure_system_membership(
         (server_id, user.id.clone())
     };
 
-    let effective_owner = if user.account_type == "owner" && server_owner != user.id {
+    if user.account_type == "owner" && server_owner != user.id {
         sqlx::query("UPDATE servers SET owner_id = $1 WHERE id = $2")
             .bind(&user.id)
             .bind(&server_id)
             .execute(&mut *transaction)
             .await?;
-        user.id.as_str()
-    } else {
-        server_owner.as_str()
-    };
-    let _ = effective_owner;
+    }
 
     sqlx::query(
         "INSERT INTO memberships(server_id, user_id, joined_at)
