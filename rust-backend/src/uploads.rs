@@ -379,14 +379,18 @@ async fn public_avatar(
     let Some((metadata, encoded)) = avatar.split_once(',') else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(content_type) = metadata
+    let Some(mime) = metadata
         .strip_prefix("data:")
         .and_then(|value| value.strip_suffix(";base64"))
-        .filter(|value| {
-            ["image/png", "image/jpeg", "image/webp", "image/gif"].contains(value)
-        })
     else {
         return StatusCode::NOT_FOUND.into_response();
+    };
+    let content_type = match mime {
+        "image/png" => "image/png",
+        "image/jpeg" => "image/jpeg",
+        "image/webp" => "image/webp",
+        "image/gif" => "image/gif",
+        _ => return StatusCode::NOT_FOUND.into_response(),
     };
     let bytes = match STANDARD.decode(encoded) {
         Ok(bytes) if bytes.len() <= 5 * 1024 * 1024 => bytes,
