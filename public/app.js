@@ -93,7 +93,7 @@ async function loadMemberList(){
  if(!serverId)return;
  try{
   const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[];
-  const isBot=m=>Boolean(Number(m.is_bot));
+  const isBot=m=>m.is_bot===true||m.is_bot===1||m.is_bot==="1"||String(m.is_bot).toLowerCase()==="true";
   const discord=members.filter(m=>String(m.id).startsWith("discord:"));
   const discordBots=members.filter(isBot);
   const discordHumans=discord.filter(m=>!isBot(m));
