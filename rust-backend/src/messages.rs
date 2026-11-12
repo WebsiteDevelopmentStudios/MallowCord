@@ -5,7 +5,7 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{FromRow, PgPool};
 use std::collections::{HashMap, HashSet};
@@ -152,7 +152,7 @@ async fn list_messages(
         Err(response) => return *response,
     };
     if let Err(response) = channel_access(&pool, &user, &channel_id, "read_message_history").await {
-        return response;
+        return *response;
     }
 
     let regular = sqlx::query_as::<_, MessageRow>(
@@ -401,7 +401,7 @@ async fn send_message(
     };
     let server_id = match channel_access(&pool, &user, &channel_id, "view_channel").await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if let Err(response) = channel_access(&pool, &user, &channel_id, "send_messages").await {
         return response;
