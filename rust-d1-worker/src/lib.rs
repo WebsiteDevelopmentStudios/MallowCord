@@ -534,7 +534,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
     let method = req.method();
 
     if method == Method::Options {
-        return Response::empty()?.with_status(204);
+        return Ok(Response::empty()?.with_status(204));
     }
     if path == "/health" && method == Method::Get {
         return response(&Health { status:"ok", service:"mallowcord-rust-d1", database:"bound" }, 200);
