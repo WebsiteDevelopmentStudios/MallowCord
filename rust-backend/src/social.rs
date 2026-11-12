@@ -150,7 +150,7 @@ async fn create_friend_request(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let username = input.username.trim().to_lowercase();
     if username.is_empty() {
@@ -284,7 +284,7 @@ async fn friend_action(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if target == user.id || !matches!(action.as_str(), "accept" | "decline" | "remove") {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid friend action."}))).into_response();
@@ -436,7 +436,7 @@ async fn list_dms(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let rows = sqlx::query_as::<_, DmConversationView>(
         "SELECT c.id, c.updated_at,
@@ -475,7 +475,7 @@ async fn open_dm(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let target = input.user_id.trim();
     if target.is_empty() || target == user.id {
@@ -551,7 +551,7 @@ async fn dm_messages(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let conversation = sqlx::query_scalar::<_, String>(
         "SELECT id FROM dm_conversations
@@ -609,7 +609,7 @@ async fn send_dm(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let conversation = sqlx::query_scalar::<_, String>(
         "SELECT id FROM dm_conversations
