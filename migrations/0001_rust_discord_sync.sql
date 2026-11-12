@@ -8,7 +8,11 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   email_verified_at INTEGER,
   phone TEXT,
   phone_verified_at INTEGER,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  bio TEXT,
+  status TEXT NOT NULL DEFAULT 'online',
+  pronouns TEXT,
+  discord_username TEXT
 );
 
 CREATE TABLE IF NOT EXISTS discord_channel_links (
