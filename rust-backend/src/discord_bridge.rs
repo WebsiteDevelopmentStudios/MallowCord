@@ -1541,7 +1541,7 @@ async fn sync_snapshot(
             .display_name
             .as_deref()
             .filter(|value| !value.trim().is_empty())
-            .or_else(|| member.username.as_deref())
+            .or(member.username.as_deref())
             .unwrap_or(&fallback_name);
         let display_name: String = display_name.trim().chars().take(32).collect();
         let discord_username: String = username.chars().take(32).collect();
