@@ -262,9 +262,49 @@ async fn clear_worker_errors(
     }
 }
 
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+struct AdminUserRow {
+    id: String,
+    username: String,
+    account_type: String,
+    status: String,
+    timeout_until: Option<i64>,
+    created_at: i64,
+}
+
+async fn list_admin_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let (pool, _) = match require_owner(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+
+    match sqlx::query_as::<_, AdminUserRow>(
+        "SELECT id, username, account_type, status, timeout_until, created_at
+         FROM users ORDER BY created_at DESC LIMIT 500",
+    )
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(users) => Json(json!({"users": users})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "admin user list lookup failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "admin_user_list_failed"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/admin/audit", get(audit_events))
+        .route("/api/admin/users", get(list_admin_users))
         .route("/api/admin/errors", get(list_worker_errors).delete(clear_worker_errors))
         .route("/api/admin/ip-ban", axum::routing::post(create_ip_ban))
 }
