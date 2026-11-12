@@ -285,6 +285,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
     }
     for chunk in role_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
 
+    let placeholders = |count: usize| std::iter::repeat("?").take(count).collect::<Vec<_>>().join(",");
     // Preload all permission targets once per bounded batch. Channel overwrites
     // can reference many users; resolving each target separately was another
     // avoidable N+1 D1 read pattern.
@@ -391,7 +392,6 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
     // Resolve member identities and persisted role links in bounded batches.
     // The previous per-member/per-role SELECT pattern could issue hundreds of
     // D1 reads for a single 100-member import batch.
-    let placeholders = |count: usize| std::iter::repeat("?").take(count).collect::<Vec<_>>().join(",");
     let mut member_ids = std::collections::HashSet::new();
     let mut member_usernames = std::collections::HashSet::new();
     let mut member_role_ids = std::collections::HashSet::new();
