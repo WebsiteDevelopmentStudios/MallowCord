@@ -59,14 +59,13 @@ jobs:
       - name: Check deployment credentials
         if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.MALLOWBOT_SERVICE_KEY == '' }}
         run: echo "::warning::Staging deploy skipped. Add CLOUDFLARE_API_TOKEN and MALLOWBOT_SERVICE_KEY as repository Actions secrets."
+      - name: Install Wrangler 4
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.MALLOWBOT_SERVICE_KEY != '' }}
+        run: npm install --global wrangler@4
       - name: Deploy Rust D1 staging Worker
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.MALLOWBOT_SERVICE_KEY != '' }}
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: 760bb0ff9afeb64ec51be54c045dd78c
-          command: deploy --config wrangler.rust.jsonc
+        run: wrangler deploy --config wrangler.rust.jsonc
       - name: Set Mallow-Bot service key
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.MALLOWBOT_SERVICE_KEY != '' }}
         shell: bash
-        run: printf '%s' "$MALLOWBOT_SERVICE_KEY" | npx wrangler secret put MALLOWBOT_SERVICE_KEY --config wrangler.rust.jsonc
+        run: printf '%s' "$MALLOWBOT_SERVICE_KEY" | wrangler secret put MALLOWBOT_SERVICE_KEY --config wrangler.rust.jsonc
