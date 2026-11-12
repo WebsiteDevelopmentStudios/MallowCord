@@ -335,7 +335,8 @@ if(discordBridgePath){
   return json({ok:true});
  }
  if(p==="/api/integrations/mallowbot/discord/sync"&&m==="POST"){
-  const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to the configured official Discord server.",403);
+  const b=await body(req);
+  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to the configured official Discord server.",403);
   const channels=Array.isArray(b.channels)?b.channels.slice(0,250):[],roles=Array.isArray(b.roles)?b.roles.slice(0,250):[],members=Array.isArray(b.members)?b.members.slice(0,250):[];
   await getDatabase(env).prepare("UPDATE servers SET icon_url=COALESCE(?,icon_url) WHERE id=?").bind(typeof b.icon_url==="string"?b.icon_url:null,system.id).run();
   const everyone=await getDatabase(env).prepare("SELECT id FROM roles WHERE server_id=? AND name='@everyone'").bind(system.id).first();
@@ -402,10 +403,11 @@ if(discordBridgePath){
 
   let synced=0;
   for(const mem of members){
-   const did=String(mem.id||"");if(!did||mem.bot)continue;
+   const did=String(mem.id||"");if(!did)continue;
    const username="discord_"+did;let user=await getDatabase(env).prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();let userId=user?.id||("discord:"+did);
    if(!user){await getDatabase(env).prepare("INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)").bind(userId,username,username.toLowerCase(),now(),now()).run();user=await getDatabase(env).prepare("SELECT id FROM users WHERE username_key=?").bind(username.toLowerCase()).first();userId=user?.id||userId;}
    await getDatabase(env).prepare("INSERT INTO user_profiles(user_id,display_name,avatar_url,status,discord_username,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,discord_username=excluded.discord_username,updated_at=excluded.updated_at").bind(userId,String(mem.display_name||mem.username||username).slice(0,32),String(mem.avatar_url||"").slice(0,1000)||null,["online","idle","dnd","offline"].includes(mem.status)?mem.status:"offline",String(mem.username||"").slice(0,32),now()).run();
+   await getDatabase(env).prepare("UPDATE user_profiles SET is_bot=? WHERE user_id=?").bind(mem.bot?1:0,userId).run();
    await getDatabase(env).prepare("INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at").bind(did,system.id,userId,now()).run();
    const accountLink=await getDatabase(env).prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(did,system.id).first();const memberUserId=accountLink?.user_id||userId;
    await getDatabase(env).prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(system.id,memberUserId,now()).run();
@@ -415,6 +417,22 @@ if(discordBridgePath){
    synced++;
   }
   return json({ok:true,server_id:system.id,channels:channelMap.length,roles:roleMap.length,members:synced,channel_map:channelMap});
+ }
+ if(p==="/api/integrations/mallowbot/discord/presence/batch"&&m==="POST"){
+  const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
+  const updates=Array.isArray(b.updates)?b.updates.slice(0,100):[];
+  const ids=[...new Set(updates.map(x=>String(x.user_id||"")).filter(x=>/^\d{5,25}$/.test(x)))];
+  if(!ids.length)return json({ok:true,updated:0});
+  const marks=ids.map(()=>"?").join(",");
+  const [accountLinks,userLinks]=await Promise.all([
+   getDatabase(env).prepare("SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ("+marks+")").bind(system.id,...ids).all(),
+   getDatabase(env).prepare("SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ("+marks+")").bind(system.id,...ids).all()
+  ]);
+  const linked=new Map();for(const row of userLinks.results||[])linked.set(row.discord_user_id,row.user_id);for(const row of accountLinks.results||[])linked.set(row.discord_user_id,row.user_id);
+  const statements=[];
+  for(const item of updates){const did=String(item.user_id||""),userId=linked.get(did),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline";if(userId)statements.push(getDatabase(env).prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND COALESCE(status,'offline')<>?").bind(status,now(),userId,status));}
+  if(!statements.length)return json({ok:true,updated:0});
+  const results=await getDatabase(env).batch(statements);return json({ok:true,updated:results.reduce((n,r)=>n+(r.meta?.changes||0),0)});
  }
  if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
@@ -580,7 +598,7 @@ if(x&&m==="GET"){
  const related=await getDatabase(env).prepare("SELECT 1 FROM friendships WHERE user_low_id=? AND user_high_id=? UNION ALL SELECT 1 FROM friend_requests WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?) LIMIT 1").bind(lowProfile,highProfile,u.id,targetId,targetId,u.id).first();
  if(!shared&&!related)return fail("You cannot view this profile.",403);
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
- const profile=await getDatabase(env).prepare("SELECT COALESCE(up.display_name,u.username) AS display_name,COALESCE(up.discord_username,u.username) AS username,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE u.id=? AND u.status='active'").bind(now()-45,targetId).first();
+ const profile=await getDatabase(env).prepare("SELECT COALESCE(up.display_name,u.username) AS display_name,COALESCE(up.discord_username,u.username) AS username,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.user_id=u.id) OR EXISTS(SELECT 1 FROM discord_account_links dal WHERE dal.user_id=u.id) THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE u.id=? AND u.status='active'").bind(now()-45,targetId).first();
  if(!profile)return fail("User not found.",404);
  const serverId=new URL(req.url).searchParams.get("server_id");
  let roles=[];
@@ -602,6 +620,7 @@ async function ensureSocialTables(env){
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS friendships(user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,PRIMARY KEY(user_low_id,user_high_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS dm_conversations(id TEXT PRIMARY KEY,user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(user_low_id,user_high_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS dm_messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS dm_typing(conversation_id TEXT NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,PRIMARY KEY(conversation_id,user_id))").run();
 }
 if(p==="/api/friends"&&m==="GET"){
  await ensureSocialTables(env);
@@ -670,6 +689,20 @@ if(p==="/api/dms/open"&&m==="POST"){
  const conversation=await getDatabase(env).prepare("SELECT id FROM dm_conversations WHERE user_low_id=? AND user_high_id=?").bind(low,high).first();
  return json({conversation:{id:conversation.id,user_id:target}},201);
 }
+const dmTypingRoute=p.match(/^\/api\/dms\/([\w-]+)\/typing$/);
+if(dmTypingRoute&&(m==="GET"||m==="POST")){
+ await ensureSocialTables(env);
+ const cid=dmTypingRoute[1],conversation=await getDatabase(env).prepare("SELECT id FROM dm_conversations WHERE id=? AND (user_low_id=? OR user_high_id=?)").bind(cid,u.id,u.id).first();
+ if(!conversation)return fail("Direct message conversation not found.",404);
+ if(m==="POST"){
+  const b=await body(req);
+  if(b.typing===false){await getDatabase(env).prepare("DELETE FROM dm_typing WHERE conversation_id=? AND user_id=?").bind(cid,u.id).run();return json({ok:true})}
+  await getDatabase(env).prepare("INSERT INTO dm_typing(conversation_id,user_id,expires_at) VALUES(?,?,?) ON CONFLICT(conversation_id,user_id) DO UPDATE SET expires_at=excluded.expires_at").bind(cid,u.id,now()+7).run();
+  return json({ok:true});
+ }
+ const row=await getDatabase(env).prepare("SELECT u.username,COALESCE(up.display_name,u.username) AS display_name FROM dm_typing t JOIN users u ON u.id=t.user_id LEFT JOIN user_profiles up ON up.user_id=u.id WHERE t.conversation_id=? AND t.user_id<>? AND t.expires_at>? ORDER BY t.expires_at DESC LIMIT 1").bind(cid,u.id,now()).first();
+ return json({typing:row||null});
+}
 const dmRoute=p.match(/^\/api\/dms\/([\w-]+)\/messages$/);
 if(dmRoute&&(m==="GET"||m==="POST")){
  await ensureSocialTables(env);
@@ -692,7 +725,7 @@ if(p==="/api/account/profile"&&(m==="GET"||m==="POST")){
  await ensureAccountTables(env);
  if(m==="GET"){
   await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
-  const profile=await getDatabase(env).prepare("SELECT up.display_name,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns,up.email,up.email_verified_at,up.phone,up.phone_verified_at FROM user_profiles up LEFT JOIN user_presence pr ON pr.user_id=up.user_id LEFT JOIN user_preferences pref ON pref.user_id=up.user_id WHERE up.user_id=?").bind(now()-45,u.id).first();
+  const profile=await getDatabase(env).prepare("SELECT up.display_name,up.avatar_url,up.bio,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.user_id=u.id) OR EXISTS(SELECT 1 FROM discord_account_links dal WHERE dal.user_id=u.id) THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS status,up.pronouns,up.email,up.email_verified_at,up.phone,up.phone_verified_at FROM user_profiles up LEFT JOIN user_presence pr ON pr.user_id=up.user_id LEFT JOIN user_preferences pref ON pref.user_id=up.user_id WHERE up.user_id=?").bind(now()-45,u.id).first();
   return json({profile:profile||{display_name:null,avatar_url:null,bio:null,status:'offline',pronouns:null,email:null,email_verified_at:null,phone:null,phone_verified_at:null},username:u.username,account_type:u.account_type});
  }
  const b=await body(req),display=String(b.display_name||"").trim().slice(0,32),avatar=String(b.avatar_url||"").trim();
@@ -802,7 +835,7 @@ if(serverAdminMatch){
   await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
   await ensureAccountTables(env);
   await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
-  const a=await getDatabase(env).prepare("SELECT u.id,COALESCE(up.discord_username,u.username) AS username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles,(SELECT json_group_array(json_object('id',r.id,'name',r.name,'color',COALESCE(r.color,'#99aab5'),'position',r.position)) FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id) AS roles_json FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-45,sid).all();
+  const a=await getDatabase(env).prepare("SELECT u.id,COALESCE(up.discord_username,u.username) AS username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,up.bio,up.pronouns,COALESCE(up.is_bot,0) AS is_bot,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.user_id=u.id) OR EXISTS(SELECT 1 FROM discord_account_links dal WHERE dal.user_id=u.id) THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence,u.account_type,u.status,m.joined_at,COALESCE((SELECT group_concat(r.name, ', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles,(SELECT json_group_array(json_object('id',r.id,'name',r.name,'color',COALESCE(r.color,'#99aab5'),'position',r.position)) FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id) AS roles_json FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE m.server_id=? ORDER BY m.joined_at").bind(now()-45,sid).all();
   return json({members:a.results,can_manage:manager});
  }
  if(section==="roles"&&m==="GET"){
