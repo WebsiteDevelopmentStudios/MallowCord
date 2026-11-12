@@ -33,6 +33,7 @@ Copy `.env.example` and fill in secrets locally. Do not commit the populated fil
 | `MALLOWBOT_SERVICE_KEY` | Discord bridge | Same private service key used by Mallow-Bot and the Worker |
 | `MALLOWCORD_DISCORD_GUILD_ID` | No | Official Discord guild ID; defaults to the current MallowCord guild |
 | `MALLOWBOT_ICON_URL` | No | Public icon for Mallow-Bot command responses |
+| `MALLOWCORD_PUBLIC_API_ORIGIN` | No | Public Worker origin used for data-URL avatar links in the Discord outbox |
 | `IP_HASH_SECRET` | IP-ban enforcement | Must exactly match the Worker secret used to hash client IPs |
 | `MALLOWCORD_OBJECT_STORE_ENDPOINT` | Attachments | S3-compatible object storage endpoint |
 | `MALLOWCORD_OBJECT_STORE_REGION` | Attachments | S3-compatible region; defaults to `auto` |
