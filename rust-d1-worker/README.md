@@ -50,3 +50,15 @@ binding but does not replace `mallowcord-api` or modify production routing.
 Apply `migrations/0001_rust_discord_sync.sql` to the existing database before using
 the sync endpoints. The migration is additive; it never drops or rewrites existing
 application tables or records.
+
+## No-change Discord snapshot behavior
+
+The bridge's preload and change detector live in Mallow-Bot, not in D1. Mallow-Bot reads the already-maintained Discord gateway cache and fingerprints the guild structure, permissions, and stable member batches before it calls this Worker.
+
+- Default recovery scan: every 300 seconds, configurable with `MALLOWCORD_SNAPSHOT_SCAN_SECONDS` on Mallow-Bot (minimum 60 seconds).
+- Unchanged structure, permission, or member batches are skipped inside Mallow-Bot. No HTTP request reaches this Worker, so the scan performs zero D1 reads and zero D1 writes for those unchanged snapshots.
+- Member presence is tracked separately and only changed statuses are sent through the presence batch path.
+- Changed snapshots still reach the existing D1 sync handler. A Mallow-Bot restart clears the process-local fingerprints, so its first scan intentionally re-synchronizes data to recover from missed events.
+
+This keeps the current D1 schema unchanged and avoids a fingerprint-table lookup on every scan. The preload is process-local to one Mallow-Bot instance; it is not a shared cache for browser sessions or multiple bot replicas. Other MallowCord API operations are unaffected and may still access their configured database.
+
