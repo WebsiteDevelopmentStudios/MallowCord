@@ -835,6 +835,7 @@ struct OutboxMessage {
     avatar_url: Option<String>,
     content: String,
     message_id: String,
+    author_id: Option<String>,
 }
 
 async fn outbox(
@@ -846,14 +847,33 @@ async fn outbox(
         Err(response) => return *response,
     };
     match sqlx::query_as::<_, OutboxMessage>(
-        "SELECT id, discord_channel_id, username, avatar_url, content, message_id
-         FROM discord_outbox WHERE processed_at IS NULL
-         ORDER BY created_at LIMIT 30",
+        "SELECT o.id, o.discord_channel_id, o.username, o.avatar_url, o.content,
+                o.message_id, m.author_id
+         FROM discord_outbox o
+         LEFT JOIN messages m ON m.id = o.message_id
+         WHERE o.processed_at IS NULL
+         ORDER BY o.created_at LIMIT 30",
     )
     .fetch_all(&pool)
     .await
     {
-        Ok(events) => Json(json!({"events": events})).into_response(),
+        Ok(mut events) => {
+            let public_origin = state.public_api_origin.trim_end_matches('/');
+            for event in &mut events {
+                if event
+                    .avatar_url
+                    .as_deref()
+                    .is_some_and(|avatar| avatar.starts_with("data:image/"))
+                {
+                    if let Some(author_id) = event.author_id.as_deref() {
+                        event.avatar_url = Some(format!(
+                            "{public_origin}/api/public/avatars/{author_id}"
+                        ));
+                    }
+                }
+            }
+            Json(json!({"events": events})).into_response()
+        },
         Err(error) => {
             tracing::error!(%error, "Discord outbox lookup failed");
             (
