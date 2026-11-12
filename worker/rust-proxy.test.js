@@ -7,6 +7,7 @@ test("proxies API domains already implemented in Rust", () => {
   const cases = [
     ["GET", "/api/auth/me"],
     ["POST", "/api/auth/logout"],
+    ["POST", "/api/auth/exchange"],
     ["POST", "/api/auth/username"],
     ["POST", "/api/account/contact/request"],
     ["POST", "/api/account/contact/confirm"],
