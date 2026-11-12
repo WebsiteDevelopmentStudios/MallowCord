@@ -70,3 +70,12 @@ resolves account and shadow links with two indexed `IN` queries, then batches
 conditional profile updates. Unchanged statuses are not rewritten, reducing
 D1 write consumption. The single-presence endpoint remains available for
 compatibility clients.
+
+### D1-efficient history and member imports
+
+- Message history batches check the Discord-message link index first. If a replayed batch is entirely present, the Worker returns immediately without channel, author, role, profile, or membership lookups.
+- Partially new batches perform follow-up lookups only for new message IDs and their referenced channels/authors; repeated IDs within a single request are deduplicated.
+- Member imports resolve usernames, linked accounts, and role mappings with bounded `IN` queries (80 IDs per query) rather than a SELECT for every member and every role.
+- Profile and Discord-link upserts include change predicates so identical profile/link values do not generate unnecessary D1 writes.
+
+These changes are especially useful when Mallow-Bot restarts and replays its initial history/member sync. The bot still does the Discord fetching and normalization; the Rust Worker batches the persistence work.
