@@ -59,6 +59,7 @@ struct MemberInput {
     #[serde(default)] display_name: Option<String>,
     #[serde(default)] avatar_url: Option<String>,
     #[serde(default)] roles: Vec<String>,
+    #[serde(default)] status: Option<String>,
     #[serde(default)] bot: bool,
 }
 
@@ -66,6 +67,13 @@ struct MemberInput {
 struct MessageBatch {
     guild_id: String,
     messages: Vec<MessageInput>,
+}
+
+#[derive(Deserialize)]
+struct PresenceInput {
+    guild_id: String,
+    user_id: String,
+    status: String,
 }
 
 #[derive(Deserialize)]
@@ -470,6 +478,27 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
         let result = sync_discord(&db,payload).await?;
         if result.get("error").is_some() { return response(&result,400); }
         return response(&result,200);
+    }
+
+    if path == "/api/integrations/mallowbot/discord/presence" && method == Method::Post {
+        let payload: PresenceInput = req.json().await?;
+        if payload.guild_id != EXPECTED_GUILD {
+            return response(&json!({"error":"This bridge is restricted to the configured official Discord server."}),403);
+        }
+        let status = match payload.status.as_str() {
+            "online" | "idle" | "dnd" | "offline" => payload.status.as_str(),
+            _ => "offline",
+        };
+        let server = system_server(&db).await?;
+        let linked = db.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?")
+            .bind(&[text(&payload.user_id),text(&server.id)])?.first::<UserRow>(None).await?
+            .or(db.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?")
+                .bind(&[text(&payload.user_id),text(&server.id)])?.first::<UserRow>(None).await?);
+        if let Some(user) = linked {
+            db.prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=?")
+                .bind(&[text(status),number(now()),text(&user.user_id)])?.run().await?;
+        }
+        return response(&json!({"ok":true,"ignored":linked.is_none()}),200);
     }
 
     if path == "/api/integrations/mallowbot/discord/messages" && method == Method::Post {
