@@ -422,10 +422,11 @@ const accountPageMeta={
  clips:["Clips","Manage game clip preferences."],
  overlay:["Game Overlay","Configure the in-game overlay when supported."],
  apps:["Connected Apps","Review third-party connections to your account."],
+ "d1-usage":["D1 Usage","Monitor Cloudflare D1 account usage without querying MallowCord's database."],
  "error-logs":["Error Logs","Review server-side errors captured by the MallowCord API."]
 };
 async function openAccountSettings(){
- const owner=me?.account_type==="owner";$("#ownerToolsTitle").hidden=!owner;$("#ownerErrorLogs").hidden=!owner;
+ const owner=me?.account_type==="owner";$("#ownerToolsTitle").hidden=!owner;$("#ownerD1Usage").hidden=!owner;$("#ownerErrorLogs").hidden=!owner;
  $("#modal").classList.remove("hidden");
  $("#accountSettingsContent").innerHTML='<div class="settings-loading">Loading account settings…</div>';
  try{
@@ -442,6 +443,37 @@ function settingField(label,key,type="checkbox",options=[]){
 }
 function prefPage(key,fields,note="Changes are saved to your MallowCord account."){
  return '<div class="account-panel"><p class="account-note">'+esc(note)+'</p><div class="account-fields">'+fields.join("")+'</div><button class="primary account-save" id="savePreferences">Save changes</button></div>';
+}
+function d1FormatNumber(value){return Math.max(0,Number(value)||0).toLocaleString("en-US")}
+function d1FormatBytes(value){
+ const n=Math.max(0,Number(value)||0);
+ if(n<1024)return n+" B";
+ if(n<1024*1024)return (n/1024).toFixed(1)+" KB";
+ if(n<1024*1024*1024)return (n/1024/1024).toFixed(2)+" MB";
+ return (n/1024/1024/1024).toFixed(2)+" GB";
+}
+function d1UsageMeter(label,used,limit,unit){
+ const pct=limit>0?Math.min(100,Math.max(0,used/limit*100)):0;
+ return '<section class="d1-usage-card"><div class="d1-usage-heading"><b>'+esc(label)+'</b><strong>'+esc(d1FormatNumber(used))+' <small>/ '+esc(d1FormatNumber(limit))+'</small></strong></div><div class="d1-usage-track" role="progressbar" aria-label="'+esc(label)+'" aria-valuemin="0" aria-valuemax="'+limit+'" aria-valuenow="'+Math.min(limit,used)+'"><span style="width:'+pct.toFixed(2)+'%"></span></div><div class="d1-usage-foot"><span>'+pct.toFixed(2)+'% used</span><span>'+esc(d1FormatNumber(Math.max(0,limit-used)))+' '+esc(unit)+' left</span></div></section>';
+}
+async function loadD1Usage(){
+ const root=$("#accountSettingsContent");
+ root.innerHTML='<div class="account-panel d1-usage-toolbar"><div><h3>Cloudflare D1 usage</h3><p class="account-note">Usage is fetched directly from Cloudflare GraphQL Analytics. This panel does not read or write MallowCord D1 data.</p></div><button type="button" class="secondary" id="refreshD1Usage">Refresh</button></div><div class="account-panel"><div class="settings-loading">Fetching Cloudflare analytics…</div></div>';
+ const refresh=$("#refreshD1Usage");refresh.onclick=loadD1Usage;
+ try{
+  const d=await api("/admin/d1-usage");
+  const read=Number(d.rows_read)||0,written=Number(d.rows_written)||0,storage=Number(d.storage_bytes)||0;
+  const readLimit=Number(d.rows_read_limit)||5000000,writeLimit=Number(d.rows_written_limit)||100000,storageLimit=Number(d.storage_limit_bytes)||5368709120;
+  root.innerHTML='<div class="account-panel d1-usage-toolbar"><div><h3>Cloudflare D1 usage</h3><p class="account-note">Account-wide usage across your D1 databases · UTC day: '+esc(d.date||"—")+'</p></div><button type="button" class="secondary" id="refreshD1Usage">Refresh</button></div><div class="d1-usage-grid">'+
+   d1UsageMeter("Rows read today",read,readLimit,"rows")+
+   d1UsageMeter("Rows written today",written,writeLimit,"rows")+
+   d1UsageMeter("Total database storage",storage,storageLimit,"bytes")+
+   '</div><div class="account-panel d1-usage-source"><p class="account-note">Storage: '+esc(d1FormatBytes(storage))+' of '+esc(d1FormatBytes(storageLimit))+' · Analytics last checked '+esc(new Date(d.fetched_at||Date.now()).toLocaleTimeString())+'.</p><p class="account-note">This panel only refreshes when opened or when you press Refresh. Analytics requests do not count as D1 queries.</p></div>';
+  $("#refreshD1Usage").onclick=loadD1Usage;
+ }catch(e){
+  root.innerHTML='<div class="account-panel d1-usage-toolbar"><div><h3>Cloudflare D1 usage</h3><p class="account-note">Usage is retrieved from Cloudflare Analytics, not from D1.</p></div><button type="button" class="secondary" id="refreshD1Usage">Retry</button></div><div class="account-panel"><h3>Usage unavailable</h3><p class="settings-error">'+esc(e.message)+'</p><p class="account-note">The Worker needs the CF_ANALYTICS_API_TOKEN secret with Account Analytics: Read permission.</p></div>';
+  $("#refreshD1Usage").onclick=loadD1Usage;
+ }
 }
 async function loadErrorLogs(){
  const root=$("#accountSettingsContent");root.innerHTML='<div class="settings-loading">Loading error logs…</div>';
@@ -502,6 +534,9 @@ async function showAccountPage(page){
   root.innerHTML='<div class="account-panel"><h3>Family Center</h3><span class="coming-soon">COMING SOON</span><p class="account-note">Family supervision, guardian links and teen safety controls are not available in MallowCord yet.</p></div>';
  }else if(page==="apps"){
   root.innerHTML='<div class="account-panel"><h3>Connected Apps</h3><p class="account-note">No third-party apps are currently connected to your MallowCord account.</p></div>';
+ }else if(page==="d1-usage"){
+  if(me?.account_type!=="owner"){root.innerHTML='<div class="account-panel"><h3>Access denied</h3><p class="account-note">Owner access is required.</p></div>';return}
+  await loadD1Usage();
  }else if(page==="error-logs"){
   if(me?.account_type!=="owner"){root.innerHTML='<div class="account-panel"><h3>Access denied</h3><p class="account-note">Owner access is required.</p></div>';return}
   await loadErrorLogs();
