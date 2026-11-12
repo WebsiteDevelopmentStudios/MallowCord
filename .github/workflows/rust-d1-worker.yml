@@ -1,0 +1,71 @@
+name: Rust D1 Worker
+
+on:
+  push:
+    branches: [main, "feature/rust-d1-worker"]
+    paths:
+      - "rust-d1-worker/**"
+      - "migrations/**"
+      - "wrangler.rust.jsonc"
+      - ".github/workflows/rust-d1-worker.yml"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "rust-d1-worker/**"
+      - "migrations/**"
+      - "wrangler.rust.jsonc"
+      - ".github/workflows/rust-d1-worker.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-d1-worker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        working-directory: rust-d1-worker
+        run: cargo fmt --all
+      - name: Install worker-build
+        run: cargo install worker-build --locked
+      - name: Build Cloudflare Rust Worker
+        working-directory: rust-d1-worker
+        run: worker-build --release
+
+  deploy-staging:
+    needs: build
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/feature/rust-d1-worker'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALLOWBOT_SERVICE_KEY: ${{ secrets.MALLOWBOT_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install worker-build for Wrangler custom build
+        run: cargo install worker-build --locked
+      - name: Check deployment credentials
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.MALLOWBOT_SERVICE_KEY == '' }}
+        run: echo "::warning::Staging deploy skipped. Add CLOUDFLARE_API_TOKEN and MALLOWBOT_SERVICE_KEY as repository Actions secrets."
+      - name: Install Wrangler 4
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.MALLOWBOT_SERVICE_KEY != '' }}
+        run: npm install --global wrangler@4
+      - name: Deploy Rust D1 staging Worker
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.MALLOWBOT_SERVICE_KEY != '' }}
+        run: wrangler deploy --config wrangler.rust.jsonc
+      - name: Set Mallow-Bot service key
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.MALLOWBOT_SERVICE_KEY != '' }}
+        shell: bash
+        run: printf '%s' "$MALLOWBOT_SERVICE_KEY" | wrangler secret put MALLOWBOT_SERVICE_KEY --config wrangler.rust.jsonc

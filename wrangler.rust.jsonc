@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mallowcord-rust-d1-staging",
+  "account_id": "760bb0ff9afeb64ec51be54c045dd78c",
+  "main": "rust-d1-worker/build/worker/shim.mjs",
+  "compatibility_date": "2026-11-11",
+  "build": {
+    "command": "cd rust-d1-worker && worker-build --release"
+  },
+  "vars": {
+    "EXPECTED_DISCORD_GUILD_ID": "1560367587542433812"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mallowcord",
+      "database_id": "6b781710-a658-480a-9559-ded3cd61422a",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

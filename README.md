@@ -28,6 +28,22 @@ The `feature/rust-api-migration` branch introduces:
 
 This is an incremental migration. The existing Worker remains live and continues serving the frontend while routes and business logic are ported and tested in Rust. The new event endpoint acknowledges durable storage; it does not yet claim that all event handlers have run.
 
+## Rust + D1 rewrite (in progress)
+
+A separate Rust/WASM Worker is being added under `rust-d1-worker/`. It binds to the
+existing Cloudflare D1 database named `mallowcord` (binding `DB`) and contains the
+first D1-native Discord sync and batched message-ingestion routes. Its schema migration
+is additive and preserves existing D1 records.
+
+This staging Worker is intentionally isolated from the live `mallowcord-api` Worker.
+The current production Worker still uses the Neon adapter until the Rust/D1 API has
+route parity and passes regression tests. Do not deploy the staging config as the
+production Worker or remove the existing D1 database.
+
+Build and staging instructions are in `rust-d1-worker/README.md`; apply
+`migrations/0001_rust_discord_sync.sql` to the existing D1 database before testing
+the new sync endpoints.
+
 ## Existing application capabilities
 
 - Google and Discord OAuth sign-in with provider identities stored server-side.
