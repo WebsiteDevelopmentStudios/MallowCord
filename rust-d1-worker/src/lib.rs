@@ -69,6 +69,13 @@ struct MessageBatch {
 }
 
 #[derive(Deserialize)]
+struct SingleMessagePayload {
+    guild_id: String,
+    #[serde(flatten)]
+    message: MessageInput,
+}
+
+#[derive(Deserialize)]
 struct MessageInput {
     message_id: String,
     channel_id: String,
@@ -461,6 +468,16 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
             return response(&json!({"error":"This bridge is restricted to the configured official Discord server."}),403);
         }
         let result = sync_discord(&db,payload).await?;
+        if result.get("error").is_some() { return response(&result,400); }
+        return response(&result,200);
+    }
+
+    if path == "/api/integrations/mallowbot/discord/messages" && method == Method::Post {
+        let payload: SingleMessagePayload = req.json().await?;
+        if payload.guild_id != EXPECTED_GUILD {
+            return response(&json!({"error":"This bridge is restricted to the configured official Discord server."}),403);
+        }
+        let result = sync_messages(&db,MessageBatch { guild_id: payload.guild_id, messages: vec![payload.message] }).await?;
         if result.get("error").is_some() { return response(&result,400); }
         return response(&result,200);
     }
