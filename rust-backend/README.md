@@ -6,14 +6,14 @@ The Rust service is the destination for MallowCord's performance-sensitive API a
 
 - Axum/Tokio HTTP service with graceful shutdown, request tracing, and configurable database readiness.
 - Neon PostgreSQL connection pool and versioned SQLx migrations applied at startup.
-- Existing device-cookie session lookup/logout, account status, profile, preferences, and presence APIs.
+- Existing device-cookie session lookup/logout, account status, profile, preferences, presence, username changes, and email/phone verification APIs.
 - Server list, channel list, member/role views, sections, role assignment, settings, and channel permission APIs.
 - Message history, send/edit/delete, replies, reactions, forwards, attachment metadata, and S3-compatible attachment storage.
 - Friends, friend requests, DMs, notifications, and notification preferences.
 - Authenticated WebSocket delivery for channel and DM events; the browser now consumes live message events and falls back to short polling only while the Rust socket is unavailable.
 - Per-connection, short-lived channel/server visibility caching to avoid a PostgreSQL permission query for every broadcast event, with bounded cache growth.
 - Optimized channel visibility and permission evaluation using batched PostgreSQL queries rather than per-channel query loops, plus additive indexes for sessions, memberships, message history, attachments, sections, and pending Discord outbox rows.
-- Mallow-Bot integration APIs for guild snapshot sync, Discord presence, Discord message ingestion, account linking, command queue/results, and outgoing-message acknowledgements.
+- Mallow-Bot integration APIs for guild snapshot sync, Discord presence, Discord message ingestion, account linking, command queue/results, and outgoing-message acknowledgements; the web Discord-link flow and `-mb` command submission now use Rust too.
 - Mallow-Bot user listing and timeout/ban/unban/delete moderation endpoints.
 - Owner-only audit log and global IP-ban creation/enforcement.
 - Durable `event_inbox` table and `POST /internal/v1/events` for timestamped HMAC-SHA256 events, with body limits and idempotent event IDs.
@@ -35,7 +35,12 @@ Copy `.env.example` and fill in secrets locally. Do not commit the populated fil
 | `MALLOWCORD_DISCORD_GUILD_ID` | No | Official Discord guild ID; defaults to the current MallowCord guild |
 | `MALLOWBOT_ICON_URL` | No | Public icon for Mallow-Bot command responses |
 | `MALLOWCORD_PUBLIC_API_ORIGIN` | No | Public Worker origin used for data-URL avatar links in the Discord outbox |
-| `IP_HASH_SECRET` | IP-ban enforcement | Must exactly match the Worker secret used to hash client IPs |
+| `IP_HASH_SECRET` | IP-ban enforcement and contact verification | Must exactly match the Worker secret used for existing hashes |
+| `RESEND_API_KEY` | Email verification | Resend API key used to send account verification codes |
+| `MALLOWCORD_EMAIL_FROM` | Email verification | Verified Resend sender address |
+| `TWILIO_ACCOUNT_SID` | Phone verification | Twilio account SID |
+| `TWILIO_AUTH_TOKEN` | Phone verification | Twilio API auth token |
+| `TWILIO_FROM_NUMBER` | Phone verification | Twilio sender number in E.164 format |
 | `MALLOWCORD_OBJECT_STORE_ENDPOINT` | Attachments | S3-compatible object storage endpoint |
 | `MALLOWCORD_OBJECT_STORE_REGION` | Attachments | S3-compatible region; defaults to `auto` |
 | `MALLOWCORD_OBJECT_STORE_BUCKET` | Attachments | Object storage bucket |
