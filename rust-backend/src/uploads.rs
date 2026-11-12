@@ -11,7 +11,6 @@ use axum::{
 };
 use bytes::Bytes;
 use object_store::path::Path as ObjectPath;
-use serde::Serialize;
 use serde_json::json;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
@@ -112,17 +111,11 @@ fn allowed_content_type(content_type: &str) -> bool {
     let value = content_type.to_ascii_lowercase();
     !value.starts_with("text/html")
         && !value.starts_with("image/svg+xml")
+        && !value.starts_with("application/xhtml+xml")
+        && !value.starts_with("application/javascript")
+        && !value.starts_with("text/javascript")
         && !value.starts_with("application/x-msdownload")
         && !value.starts_with("application/x-sh")
-}
-
-#[derive(Serialize)]
-struct UploadedAttachment {
-    id: String,
-    filename: String,
-    content_type: String,
-    size: usize,
-    url: String,
 }
 
 async fn upload_attachment(
@@ -212,14 +205,16 @@ async fn upload_attachment(
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "File metadata could not be saved."}))).into_response();
     }
 
-    Json(UploadedAttachment {
-        id: id.clone(),
-        filename,
-        content_type,
-        size: bytes.len(),
-        url: format!("/api/attachments/{id}"),
-    })
-    .into_response()
+    (
+        StatusCode::CREATED,
+        Json(json!({"attachment": {
+            "id": id,
+            "filename": filename,
+            "content_type": content_type,
+            "size": bytes.len()
+        }})),
+    )
+        .into_response()
 }
 
 #[derive(FromRow)]
@@ -289,16 +284,15 @@ async fn get_attachment(
             return (StatusCode::BAD_GATEWAY, Json(json!({"error": "Attachment storage is temporarily unavailable."}))).into_response();
         }
     };
-    let inline = metadata.content_type.starts_with("image/")
-        || metadata.content_type.starts_with("video/")
-        || metadata.content_type.starts_with("audio/");
+    let inline = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        .contains(&metadata.content_type.to_ascii_lowercase().as_str());
     let disposition = if inline { "inline" } else { "attachment" };
     let safe_filename = metadata.filename.replace('"', "");
     let response = Response::builder()
         .status(StatusCode::OK)
-        .header(CONTENT_TYPE, HeaderValue::from_str(&metadata.content_type).unwrap_or(HeaderValue::from_static("application/octet-stream")))
+        .header(CONTENT_TYPE, if inline { HeaderValue::from_str(&metadata.content_type).unwrap_or(HeaderValue::from_static("application/octet-stream")) } else { HeaderValue::from_static("application/octet-stream") })
         .header(CONTENT_DISPOSITION, format!("{disposition}; filename=\"{safe_filename}\""))
-        .header(CACHE_CONTROL, "private, max-age=3600")
+        .header(CACHE_CONTROL, "private, no-store")
         .header("x-content-type-options", "nosniff")
         .body(Body::from(bytes));
     match response {
