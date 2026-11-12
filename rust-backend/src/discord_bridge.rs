@@ -1688,6 +1688,196 @@ async fn sync(
     }
 }
 
+
+#[derive(Serialize, FromRow)]
+struct BotUser {
+    id: String,
+    username: String,
+    account_type: String,
+    status: String,
+    timeout_until: Option<i64>,
+    created_at: i64,
+}
+
+async fn list_bot_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let pool = match require_bot(&state, &headers) {
+        Ok(pool) => pool,
+        Err(response) => return *response,
+    };
+    match sqlx::query_as::<_, BotUser>(
+        "SELECT id, username, account_type, status, timeout_until, created_at
+         FROM users ORDER BY created_at DESC LIMIT 500",
+    )
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(users) => Json(json!({"users": users})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Mallow-Bot user list lookup failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "bot_user_lookup_failed"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct BotModerationInput {
+    seconds: Option<i64>,
+    reason: Option<String>,
+}
+
+async fn moderate_bot_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((target_id, action)): Path<(String, String)>,
+    Json(input): Json<BotModerationInput>,
+) -> Response {
+    let pool = match require_bot(&state, &headers) {
+        Ok(pool) => pool,
+        Err(response) => return *response,
+    };
+    if target_id.is_empty() || target_id.len() > 128 {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid user ID."})))
+            .into_response();
+    }
+    if !["timeout", "ban", "unban", "delete"].contains(&action.as_str()) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "Unknown moderation action."})))
+            .into_response();
+    }
+    let owner_id = match sqlx::query_scalar::<_, String>(
+        "SELECT id FROM users WHERE account_type = 'owner' LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "Owner not initialized."})),
+            )
+                .into_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "Mallow-Bot moderation owner lookup failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "bot_moderation_failed"})),
+            )
+                .into_response();
+        }
+    };
+
+    let timestamp = now();
+    let result = match action.as_str() {
+        "timeout" => {
+            let seconds = input.seconds.unwrap_or(600).clamp(60, 2_592_000);
+            sqlx::query(
+                "UPDATE users SET status = 'timed_out', timeout_until = $1, updated_at = $2
+                 WHERE id = $3",
+            )
+            .bind(timestamp + seconds)
+            .bind(timestamp)
+            .bind(&target_id)
+            .execute(&pool)
+            .await
+        }
+        "ban" => {
+            let update = sqlx::query(
+                "UPDATE users SET status = 'banned', updated_at = $1 WHERE id = $2",
+            )
+            .bind(timestamp)
+            .bind(&target_id)
+            .execute(&pool)
+            .await;
+            if update.is_ok() {
+                sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+                    .bind(&target_id)
+                    .execute(&pool)
+                    .await
+            } else {
+                update
+            }
+        }
+        "unban" => {
+            sqlx::query(
+                "UPDATE users SET status = 'active', timeout_until = NULL, updated_at = $1
+                 WHERE id = $2",
+            )
+            .bind(timestamp)
+            .bind(&target_id)
+            .execute(&pool)
+            .await
+        }
+        "delete" => {
+            let sessions = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+                .bind(&target_id)
+                .execute(&pool)
+                .await;
+            if sessions.is_ok() {
+                sqlx::query("DELETE FROM users WHERE id = $1")
+                    .bind(&target_id)
+                    .execute(&pool)
+                    .await
+            } else {
+                sessions
+            }
+        }
+        _ => unreachable!(),
+    };
+    if let Err(error) = result {
+        tracing::error!(%error, action, "Mallow-Bot moderation update failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "bot_moderation_failed"})),
+        )
+            .into_response();
+    }
+
+    let details = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_owned());
+    if let Err(error) = sqlx::query(
+        "INSERT INTO audit_logs(id, actor_id, target_user_id, action, details, created_at)
+         VALUES($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&owner_id)
+    .bind(&target_id)
+    .bind(format!("mallowbot_{action}"))
+    .bind(details)
+    .bind(timestamp)
+    .execute(&pool)
+    .await
+    {
+        tracing::error!(%error, action, "Mallow-Bot moderation audit insert failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "bot_moderation_audit_failed"})),
+        )
+            .into_response();
+    }
+    Json(json!({"ok": true})).into_response()
+}
+
+async fn deprecated_bot_user_create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = require_bot(&state, &headers) {
+        return *response;
+    }
+    (
+        StatusCode::GONE,
+        Json(json!({"error": "MallowCord accounts must be created through Google or Discord OAuth."})),
+    )
+        .into_response()
+}
+
 fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -1710,5 +1900,10 @@ pub(crate) fn router() -> Router<AppState> {
         .route(
             "/api/integrations/mallowbot/discord/outbox/{outbox_id}/ack",
             post(acknowledge_outbox),
+        )
+        .route("/api/integrations/mallowbot/users", get(list_bot_users).post(deprecated_bot_user_create))
+        .route(
+            "/api/integrations/mallowbot/users/{target_id}/{action}",
+            post(moderate_bot_user),
         )
 }
