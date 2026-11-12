@@ -40,6 +40,7 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/notifications\/(?:read|clear)$/],
   ["GET", /^\/api\/notification-settings$/],
   ["POST", /^\/api\/notification-settings$/],
+  ["POST", /^\/api\/integrations\/mallowbot\/discord\/sync$/],
   ["POST", /^\/api\/integrations\/mallowbot\/discord\/presence$/],
   ["POST", /^\/api\/integrations\/mallowbot\/discord\/messages$/],
   ["POST", /^\/api\/integrations\/mallowbot\/discord\/link\/claim$/],
