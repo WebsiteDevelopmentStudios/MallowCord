@@ -73,6 +73,7 @@ async function ensureRoleColumns(env){return ensureSchemaOnce("role-columns",asy
  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN pingable INTEGER NOT NULL DEFAULT 1").run().catch(()=>{});
 });}
 async function ensureMessageHistoryTables(env){return ensureSchemaOnce("message-history-tables",async()=>{await ensureNotificationTables(env);await getDatabase(env).prepare("SELECT m.id,m.content,u.username,c.server_id FROM messages m JOIN users u ON u.id=m.author_id JOIN channels c ON c.id=m.channel_id WHERE m.id=?").run();await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS bot_messages(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,source_user_id TEXT REFERENCES users(id),username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();});}
+async function ensureChannelSections(env){return ensureSchemaOnce("channel-sections",async()=>{await ensureChannelSections(env);});}
 async function ensureBridgeSystemServer(env){if(!bridgeSystemServerPromise){bridgeSystemServerPromise=(async()=>{
  let server=await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(server){await restoreLegacySystemServer(env,server.id);return server;}
@@ -290,7 +291,7 @@ if(p!=="/api/bootstrap"&&env.DB){const blocked=await getDatabase(env).prepare("S
 if(p==="/api/bootstrap"&&m==="POST")return fail("Password-based bootstrap has been removed. Sign in with the configured owner Google or Discord account.",410);
 
 /* Two-way Discord bridge for the official Mallow Swamp server. */
-async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-bridge-tables",async()=>{ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
+async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-bridge-tables",async()=>{ await ensureDiscordBridgeTables(env);
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
@@ -938,8 +939,8 @@ if(memberRoleRoute&&m==="POST"){
 const sectionPath=p.split("/").filter(Boolean);
 if(sectionPath[0]==="api"&&sectionPath[1]==="servers"&&sectionPath[3]==="sections"){
  const sid=sectionPath[2];
- await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();
- await getDatabase(env).prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});
+ 
+ await ensureChannelSections(env);
  const server=await getDatabase(env).prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
  const member=await getDatabase(env).prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(sid,u.id).first();
  if(!server||!member)return fail("Server not found or access denied.",403);
@@ -1005,13 +1006,13 @@ if(channelRouteParts[0]==="api"&&channelRouteParts[1]==="channels"&&channelRoute
   return json({ok:true});
  }
 }
-x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await getDatabase(env).prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS server_sections(id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,name TEXT NOT NULL,position INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(server_id,name))").run();await getDatabase(env).prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});const a=await getDatabase(env).prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,ss.name AS section_name,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections ss ON ss.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(ss.position,999),COALESCE(d.category_name,ss.name),c.position").bind(x[1]).all();const checks=await Promise.all(a.results.map(ch=>channelPermissionAllowed(env,ch.id,u.id,"view_channel")));const visible=a.results.filter((ch,i)=>checks[i]);return json({channels:visible});}
+x=p.match(/^\/api\/servers\/([\w-]+)\/channels$/);if(x&&m==="GET"){const mem=await getDatabase(env).prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(x[1],u.id).first();if(!mem)return fail("Not a server member.",403);await ensureDiscordBridgeTables(env);await ensureChannelSections(env);const a=await getDatabase(env).prepare("SELECT c.id,c.name,c.kind,c.position,c.section_id,ss.name AS section_name,d.category_name,d.discord_channel_id FROM channels c LEFT JOIN discord_channel_links d ON d.mallow_channel_id=c.id LEFT JOIN server_sections ss ON ss.id=c.section_id WHERE c.server_id=? ORDER BY COALESCE(ss.position,999),COALESCE(d.category_name,ss.name),c.position").bind(x[1]).all();const checks=await Promise.all(a.results.map(ch=>channelPermissionAllowed(env,ch.id,u.id,"view_channel")));const visible=a.results.filter((ch,i)=>checks[i]);return json({channels:visible});}
 
 if(x&&m==="POST"){
  const sid=x[1],sv=await getDatabase(env).prepare("SELECT owner_id FROM servers WHERE id=?").bind(sid).first();
  if(!sv)return fail("Server not found.",404);
  if(!isOwner(u)&&sv.owner_id!==u.id)return fail("Server owner access required.",403);
- await getDatabase(env).prepare("ALTER TABLE channels ADD COLUMN section_id TEXT").run().catch(()=>{});const b=await body(req),name=String(b.name||"").trim().toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50),kind=b.kind==="voice"?"voice":"text",sectionId=String(b.section_id||"")||null;
+ await ensureChannelSections(env);const b=await body(req),name=String(b.name||"").trim().toLowerCase().replace(/[^a-z0-9-]/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,50),kind=b.kind==="voice"?"voice":"text",sectionId=String(b.section_id||"")||null;
  if(name.length<2)return fail("Channel name must be at least 2 characters.");
  const position=Number((await getDatabase(env).prepare("SELECT COALESCE(MAX(position),-1)+1 AS n FROM channels WHERE server_id=?").bind(sid).first()).n),id=uid();
  if(sectionId&&!await getDatabase(env).prepare("SELECT id FROM server_sections WHERE id=? AND server_id=?").bind(sectionId,sid).first())return fail("Section not found.",404);try{await getDatabase(env).prepare("INSERT INTO channels(id,server_id,name,kind,position,section_id) VALUES(?,?,?,?,?,?)").bind(id,sid,name,kind,position,sectionId).run();}catch{return fail("A channel with that name could not be created.",409);}
