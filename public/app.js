@@ -309,11 +309,11 @@ async function loadDmProfile(userId){
  $("#dmProfileRoles").innerHTML=roles.map(r=>'<span class="dm-profile-role" style="--role-color:'+esc(r.color||"#9aa3af")+'">'+esc(r.name)+'</span>').join("");
  panel.classList.remove("hidden");
 }
-let dmTypingPoll=null,dmTypingLastSent=0,dmTypingIdleTimer=null,dmTypingValue="";
+let dmTypingPoll=null,dmTypingLastSent=0,dmTypingIdleTimer=null,dmTypingValue="",dmTypingActive=false;
 async function sendDmTyping(typing){
  if(!activeDmId)return;
  const nowMs=Date.now();if(typing&&nowMs-dmTypingLastSent<3000)return;
- dmTypingLastSent=nowMs;
+ dmTypingLastSent=nowMs;dmTypingActive=typing;
  try{await api("/dms/"+activeDmId+"/typing",{method:"POST",body:JSON.stringify({typing})})}catch(e){console.debug("DM typing:",e.message)}
 }
 async function refreshDmTyping(){
@@ -322,7 +322,7 @@ async function refreshDmTyping(){
 }
 function stopDmTyping(){
  if(dmTypingIdleTimer)clearTimeout(dmTypingIdleTimer);dmTypingIdleTimer=null;
- if(dmTypingValue){dmTypingValue="";sendDmTyping(false)}
+ dmTypingValue="";if(dmTypingActive)sendDmTyping(false);
 }
 async function loadDmMessages(){if(!activeDmId)return;try{const d=await api("/dms/"+activeDmId+"/messages"),box=$("#dmMessages"),bottom=box.scrollHeight-box.scrollTop-box.clientHeight<80;box.innerHTML=(d.messages||[]).map(m=>'<div class="dm-message '+(m.author_id===me.id?"mine":"")+'"><small>'+esc(m.display_name||m.username)+' · '+new Date(m.created_at*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})+'</small>'+renderMarkdown(m.content)+'</div>').join("");if(bottom)box.scrollTop=box.scrollHeight}catch(e){console.warn("DM refresh:",e.message)}}
 $("#friendsBtn").onclick=openSocial;
@@ -330,7 +330,7 @@ $("#dmBackToList").onclick=()=>{stopDmTyping();if(dmTypingPoll)clearInterval(dmT
 $("#closeSocialModal").onclick=()=>{$("#socialModal").classList.add("hidden");$("#dmWindow").classList.remove("dm-conversation-open");$("#app").classList.remove("dm-mode");if(dmPoll)clearInterval(dmPoll);dmPoll=null;activeDmId=null;document.querySelectorAll(".servers .server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===serverId))};
 $("#dmHomeBtn")?.addEventListener("click",openSocial);
 $("#addFriendForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget;try{const d=await api("/friends/request",{method:"POST",body:JSON.stringify({username:form.username.value})});toast(d.message||"Friend request sent.");form.reset();await loadSocial()}catch(x){toast(x.message)}};
-$("#dmForm [name=content]").addEventListener("input",()=>{if(!activeDmId)return;dmTypingValue=$("#dmForm [name=content]").value;sendDmTyping(true);if(dmTypingIdleTimer)clearTimeout(dmTypingIdleTimer);dmTypingIdleTimer=setTimeout(stopDmTyping,5000)});
+$("#dmForm [name=content]").addEventListener("input",()=>{if(!activeDmId)return;dmTypingValue=$("#dmForm [name=content]").value;if(!dmTypingValue.trim()){stopDmTyping();return}sendDmTyping(true);if(dmTypingIdleTimer)clearTimeout(dmTypingIdleTimer);dmTypingIdleTimer=setTimeout(stopDmTyping,5000)});
 $("#dmForm [name=content]").addEventListener("blur",stopDmTyping);
 $("#dmForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,input=form.elements.content,value=input.value.trim();if(!value||!activeDmId)return;const conversation=activeDmId;stopDmTyping();input.value="";const pending=document.createElement("div");pending.className="dm-message mine optimistic-message";pending.innerHTML='<small>'+esc(me?.username||"You")+' · Sending…</small>'+renderMarkdown(value);$("#dmMessages").append(pending);$("#dmMessages").scrollTop=$("#dmMessages").scrollHeight;try{await api("/dms/"+conversation+"/messages",{method:"POST",body:JSON.stringify({content:value})});pending.remove();await loadDmMessages()}catch(x){pending.remove();input.value=value;toast(x.message)}};
 $("#socialModal").addEventListener("click",async e=>{const action=e.target.closest("[data-friend-action]"),dm=e.target.closest("[data-open-dm]"),profile=e.target.closest("[data-social-profile]");try{if(action){await api("/friends/"+encodeURIComponent(action.dataset.userId)+"/"+action.dataset.friendAction,{method:"POST",body:"{}"});toast("Friend list updated.");await loadSocial()}else if(dm)await openDm(dm.dataset.openDm);else if(profile){$("#socialModal").classList.add("hidden");openUserProfile(profile.dataset.socialProfile)}}catch(x){toast(x.message)}});
