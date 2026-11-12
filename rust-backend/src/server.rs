@@ -1134,14 +1134,6 @@ async fn get_channel_permissions(
     }
 }
 
-#[derive(Deserialize)]
-struct PermissionOverwriteInput {
-    target_type: String,
-    target_id: String,
-    allow: Vec<String>,
-    deny: Vec<String>,
-}
-
 async fn save_channel_permissions(
     State(state): State<AppState>,
     headers: HeaderMap,
