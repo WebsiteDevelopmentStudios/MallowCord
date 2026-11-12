@@ -18,6 +18,7 @@ use tracing_subscriber::EnvFilter;
 
 mod account;
 mod auth;
+mod server;
 mod social;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -214,6 +215,7 @@ async fn main() {
         .route("/internal/v1/events", post(ingest_event))
         .merge(auth::router())
         .merge(account::router())
+        .merge(server::router())
         .merge(social::router())
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(256 * 1024))
