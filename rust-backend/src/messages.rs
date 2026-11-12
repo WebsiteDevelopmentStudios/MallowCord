@@ -208,7 +208,7 @@ async fn list_messages(
         sqlx::query_as::<_, AttachmentRow>(
             "SELECT id, message_id, filename, content_type, size
              FROM message_attachments WHERE message_id = ANY($1)
-             ORDER BY created_at",
+             ORDER BY message_id, created_at",
         )
         .bind(&message_ids)
         .fetch_all(&pool)
