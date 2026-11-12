@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -702,8 +702,193 @@ async fn send_dm(
     (StatusCode::CREATED, Json(json!({"message": message}))).into_response()
 }
 
+#[derive(Deserialize)]
+struct UserProfileQuery {
+    server_id: Option<String>,
+}
+
+#[derive(Serialize, FromRow)]
+struct PublicUserProfile {
+    display_name: String,
+    username: String,
+    avatar_url: Option<String>,
+    bio: Option<String>,
+    status: String,
+    pronouns: Option<String>,
+}
+
+#[derive(Serialize, FromRow)]
+struct PublicProfileRole {
+    id: String,
+    name: String,
+    color: String,
+    position: i64,
+}
+
+async fn get_user_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(target_id): Path<String>,
+    Query(query): Query<UserProfileQuery>,
+) -> Response {
+    let (pool, viewer) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    if target_id.is_empty() || target_id.len() > 128 {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "User not found."}))).into_response();
+    }
+    let (low_id, high_id) = if viewer.id < target_id {
+        (viewer.id.as_str(), target_id.as_str())
+    } else {
+        (target_id.as_str(), viewer.id.as_str())
+    };
+    let access = sqlx::query_as::<_, (bool, bool)>(
+        "SELECT
+           EXISTS(
+             SELECT 1 FROM memberships mine
+             JOIN memberships target ON target.server_id = mine.server_id
+             WHERE mine.user_id = $1 AND target.user_id = $2
+           ) AS shared_server,
+           (
+             EXISTS(SELECT 1 FROM friendships WHERE user_low_id = $3 AND user_high_id = $4)
+             OR EXISTS(
+               SELECT 1 FROM friend_requests
+               WHERE (sender_id = $1 AND recipient_id = $2)
+                  OR (sender_id = $2 AND recipient_id = $1)
+             )
+           ) AS related",
+    )
+    .bind(&viewer.id)
+    .bind(&target_id)
+    .bind(low_id)
+    .bind(high_id)
+    .fetch_one(&pool)
+    .await;
+    match access {
+        Ok((true, _)) | Ok((_, true)) => {}
+        Ok(_) => return (StatusCode::FORBIDDEN, Json(json!({"error": "You cannot view this profile."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "public profile access lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "profile_lookup_failed"}))).into_response();
+        }
+    }
+
+    let profile = sqlx::query_as::<_, PublicUserProfile>(
+        "SELECT
+           COALESCE(up.display_name, u.username) AS display_name,
+           COALESCE(up.discord_username, u.username) AS username,
+           up.avatar_url,
+           up.bio,
+           CASE
+             WHEN COALESCE((pref.settings_json::jsonb #>> '{privacy,showOnlineStatus}')::boolean, true) = false THEN 'offline'
+             WHEN COALESCE(pr.last_seen_at, 0) >= $1 THEN COALESCE(up.status, 'online')
+             ELSE 'offline'
+           END AS status,
+           up.pronouns
+         FROM users u
+         LEFT JOIN user_profiles up ON up.user_id = u.id
+         LEFT JOIN user_presence pr ON pr.user_id = u.id
+         LEFT JOIN user_preferences pref ON pref.user_id = u.id
+         WHERE u.id = $2 AND u.status = 'active'",
+    )
+    .bind(now() - 45)
+    .bind(&target_id)
+    .fetch_optional(&pool)
+    .await;
+    let profile = match profile {
+        Ok(Some(profile)) => profile,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "User not found."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "public profile query failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "profile_lookup_failed"}))).into_response();
+        }
+    };
+
+    let mut roles = Vec::new();
+    if let Some(server_id) = query.server_id.as_deref().filter(|value| !value.is_empty()) {
+        let membership = sqlx::query_as::<_, (bool, bool)>(
+            "SELECT
+               EXISTS(SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2),
+               EXISTS(SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $3)",
+        )
+        .bind(server_id)
+        .bind(&target_id)
+        .bind(&viewer.id)
+        .fetch_one(&pool)
+        .await;
+        match membership {
+            Ok((true, true)) => {
+                match sqlx::query_as::<_, PublicProfileRole>(
+                    "SELECT r.id, r.name, r.color, r.position
+                     FROM member_roles mr
+                     JOIN roles r ON r.id = mr.role_id
+                     WHERE mr.server_id = $1 AND mr.user_id = $2
+                     ORDER BY r.position DESC",
+                )
+                .bind(server_id)
+                .bind(&target_id)
+                .fetch_all(&pool)
+                .await
+                {
+                    Ok(items) => roles = items,
+                    Err(error) => {
+                        tracing::error!(%error, "public profile role lookup failed");
+                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "profile_lookup_failed"}))).into_response();
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(%error, "public profile server membership lookup failed");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "profile_lookup_failed"}))).into_response();
+            }
+        }
+    }
+
+    let friendship = sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM friendships WHERE user_low_id = $1 AND user_high_id = $2",
+    )
+    .bind(low_id)
+    .bind(high_id)
+    .fetch_optional(&pool)
+    .await;
+    let friendship = match friendship {
+        Ok(value) => value.is_some(),
+        Err(error) => {
+            tracing::error!(%error, "public profile friendship lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "profile_lookup_failed"}))).into_response();
+        }
+    };
+    let incoming = sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM friend_requests WHERE sender_id = $1 AND recipient_id = $2 AND status = 'pending'",
+    )
+    .bind(&target_id)
+    .bind(&viewer.id)
+    .fetch_optional(&pool)
+    .await;
+    let outgoing = sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM friend_requests WHERE sender_id = $1 AND recipient_id = $2 AND status = 'pending'",
+    )
+    .bind(&viewer.id)
+    .bind(&target_id)
+    .fetch_optional(&pool)
+    .await;
+    let friend_status = match (incoming, outgoing) {
+        (Ok(incoming), Ok(outgoing)) => {
+            if friendship { "friends" } else if incoming.is_some() { "incoming" } else if outgoing.is_some() { "outgoing" } else { "none" }
+        }
+        (Err(error), _) | (_, Err(error)) => {
+            tracing::error!(%error, "public profile friend request lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "profile_lookup_failed"}))).into_response();
+        }
+    };
+    Json(json!({"profile": profile, "roles": roles, "friend_status": friend_status})).into_response()
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/users/{user_id}/profile", get(get_user_profile))
         .route("/api/friends", get(list_friends))
         .route("/api/friends/request", post(create_friend_request))
         .route("/api/friends/{target}/{action}", post(friend_action))
