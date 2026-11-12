@@ -115,7 +115,7 @@ async fn discord_link_start(
     let random = Uuid::new_v4();
     let code: String = random.as_bytes()[..8]
         .iter()
-        .map(|byte| ALPHABET[(byte % 32) as usize] as char)
+        .map(|byte| ALPHABET[(*byte % 32) as usize] as char)
         .collect();
     let code_hash = hex::encode(Sha256::digest(code.as_bytes()));
     let mut tx = match pool.begin().await {
@@ -177,9 +177,11 @@ async fn bot_command(
     if channel_id.is_empty() || content.is_empty() || content.chars().count() > 4000 {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "A channel and command are required."}))).into_response();
     }
-    let command = content.strip_prefix("-mb").or_else(|| content.strip_prefix("-MB"))
-        .or_else(|| content.strip_prefix("/mb")).or_else(|| content.strip_prefix("/MB"));
-    let Some(command) = command else {
+    let command = match content.get(..3) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("-mb") || prefix.eq_ignore_ascii_case("/mb") => &content[3..],
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({"error": "Use -mb help to see the Mallow-Bot command list."}))).into_response(),
+    };
+    let Some(command) = Some(command) else {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "Use -mb help to see the Mallow-Bot command list."}))).into_response();
     };
     let command_name = command.trim_start().split_whitespace().next().unwrap_or_default();
