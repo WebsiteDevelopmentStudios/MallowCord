@@ -231,7 +231,7 @@ async fn list_channels(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if let Err(response) = require_membership(&pool, &user, &server_id).await {
         return *response;
@@ -289,11 +289,11 @@ async fn list_roles(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let (owner_id, manager) = match require_membership(&pool, &user, &server_id).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let _ = owner_id;
     let roles = sqlx::query_as::<_, RoleView>(
@@ -335,11 +335,11 @@ async fn list_members(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let (_, manager) = match require_membership(&pool, &user, &server_id).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     let members = sqlx::query_as::<_, MemberView>(
@@ -408,11 +408,11 @@ async fn get_server_settings(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let (_, manager) = match require_membership(&pool, &user, &server_id).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let server = sqlx::query_as::<_, ServerSettings>(
         "SELECT id, name, icon_url, is_system, owner_id, created_at
@@ -438,7 +438,7 @@ async fn get_server_stats(
 ) -> Response {
     let (pool, user) = match require_user(&state, &headers).await {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if let Err(response) = require_membership(&pool, &user, &server_id).await {
         return *response;
