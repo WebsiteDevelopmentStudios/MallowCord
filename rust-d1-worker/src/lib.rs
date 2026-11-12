@@ -439,29 +439,40 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     }
 
     let mut message_ids = std::collections::HashSet::new();
-    let mut channel_ids = std::collections::HashSet::new();
-    let mut author_ids = std::collections::HashSet::new();
     for message in &valid {
         message_ids.insert(message.message_id.trim().to_owned());
-        channel_ids.insert(message.channel_id.trim().to_owned());
-        author_ids.insert(message.author_id.trim().to_owned());
     }
     let message_ids: Vec<String> = message_ids.into_iter().collect();
-    let channel_ids: Vec<String> = channel_ids.into_iter().collect();
-    let author_ids: Vec<String> = author_ids.into_iter().collect();
     let placeholders = |count: usize| std::iter::repeat("?").take(count).collect::<Vec<_>>().join(",");
 
-    // Read each lookup set once per batch instead of issuing 4-5 SELECTs for
-    // every message. This keeps large history imports inside D1's daily read budget.
-    let mut message_params: Vec<JsValue> = message_ids.iter().map(|id| text(id)).collect();
+    // First check the message-link index. On a bot restart, historical batches
+    // are replayed; if every message already exists, stop here instead of
+    // repeating channel, author, role, profile and membership reads/writes.
+    let message_params: Vec<JsValue> = message_ids.iter().map(|id| text(id)).collect();
     let existing_messages = db.prepare(&format!(
         "SELECT discord_message_id FROM discord_message_links WHERE discord_message_id IN ({})",
         placeholders(message_ids.len())
     )).bind(&message_params)?.all().await?.results::<MessageLinkRow>()?;
-    let mut seen_messages: std::collections::HashSet<String> =
+    let seen_messages: std::collections::HashSet<String> =
         existing_messages.into_iter().map(|row| row.discord_message_id).collect();
-    message_params.clear();
+    let valid: Vec<&MessageInput> = valid.into_iter()
+        .filter(|message| !seen_messages.contains(message.message_id.trim()))
+        .collect();
+    if valid.is_empty() {
+        return Ok(json!({"ok":true,"accepted":0,"duplicates":message_ids.len()}));
+    }
 
+    // Only look up channels and authors referenced by genuinely new messages.
+    let mut channel_ids = std::collections::HashSet::new();
+    let mut author_ids = std::collections::HashSet::new();
+    for message in &valid {
+        channel_ids.insert(message.channel_id.trim().to_owned());
+        author_ids.insert(message.author_id.trim().to_owned());
+    }
+    let channel_ids: Vec<String> = channel_ids.into_iter().collect();
+    let author_ids: Vec<String> = author_ids.into_iter().collect();
+
+    // Read each lookup set once per new-message batch, not once per message.
     let mut channel_params = vec![text(&server.id)];
     channel_params.extend(channel_ids.iter().map(|id| text(id)));
     let channels = db.prepare(&format!(
@@ -520,10 +531,10 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
         let display = sample.and_then(|m|m.display_name.as_deref().or(m.username.as_deref())).unwrap_or(&username);
         let avatar = sample.and_then(|m|m.avatar_url.as_deref()).filter(|v|v.starts_with("https://")).unwrap_or("");
         user_writes.push(db.prepare(
-            "INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at"
+            "INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at WHERE user_profiles.display_name IS NOT excluded.display_name OR user_profiles.avatar_url IS NOT excluded.avatar_url"
         ).bind(&[text(&user_id),text(display),text(avatar),number(timestamp)])?);
         user_writes.push(db.prepare(
-            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at"
+            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at WHERE discord_user_links.server_id IS NOT excluded.server_id OR discord_user_links.user_id IS NOT excluded.user_id"
         ).bind(&[text(author_id),text(&server.id),text(&user_id),number(timestamp)])?);
         user_writes.push(db.prepare(
             "INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)"
@@ -545,7 +556,6 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     let mut accepted = 0usize;
     for message in valid {
         let discord_id = message.message_id.trim();
-        if !seen_messages.insert(discord_id.to_owned()) { continue; }
         let Some(channel_id) = channel_map.get(message.channel_id.trim()) else { continue; };
         let Some(author_id) = author_map.get(message.author_id.trim()) else { continue; };
         let message_id = new_id();
@@ -560,7 +570,7 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     }
     for chunk in message_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
 
-    Ok(json!({"ok":true,"accepted":accepted}))
+    Ok(json!({"ok":true,"accepted":accepted,"duplicates":message_ids.len().saturating_sub(accepted)}))
 }
 
 async fn sync_presence_batch(db: &D1Database, payload: PresenceBatchInput) -> Result<Value> {
