@@ -285,6 +285,7 @@ async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-b
   await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_message_links(discord_message_id TEXT PRIMARY KEY,mallow_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,discord_channel_id TEXT NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
+ await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
 });}
 const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
 if(discordBridgePath){
