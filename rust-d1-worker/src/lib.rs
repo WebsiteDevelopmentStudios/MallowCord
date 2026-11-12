@@ -299,7 +299,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         let discord_id = emoji.id.trim();
         let name: String = emoji.name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(32).collect();
         if discord_id.is_empty() || name.len() < 2 || !emoji.image_url.starts_with("https://") { continue; }
-        let linked = db.prepare("SELECT emoji_id FROM discord_emoji_links WHERE discord_emoji_id=? AND server_id=?")
+        let linked = db.prepare("SELECT emoji_id AS id FROM discord_emoji_links WHERE discord_emoji_id=? AND server_id=?")
             .bind(&[text(discord_id),text(&server.id)])?.first::<IdRow>(None).await?;
         let existing = if linked.is_none() {
             db.prepare("SELECT id FROM server_emojis WHERE server_id=? AND name=?")
