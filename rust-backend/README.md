@@ -7,6 +7,8 @@ The Rust service is the destination for MallowCord's performance-sensitive API a
 - Axum/Tokio HTTP service with graceful shutdown and structured request logs.
 - Liveness endpoint: `GET /health`.
 - Database readiness endpoint: `GET /ready`.
+- Existing device-cookie session lookup and logout compatibility routes.
+- Account status and owner-only audit log APIs.
 - Neon PostgreSQL connection pool using `DATABASE_URL`.
 - Versioned SQLx migrations, applied at startup.
 - Durable `event_inbox` table for authenticated internal events.
