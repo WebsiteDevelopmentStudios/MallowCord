@@ -410,6 +410,88 @@ struct PresenceInput {
     status: String,
 }
 
+#[derive(Deserialize)]
+struct PresenceBatchInput {
+    guild_id: String,
+    #[serde(default)]
+    updates: Vec<PresenceUpdate>,
+}
+
+#[derive(Deserialize)]
+struct PresenceUpdate {
+    user_id: String,
+    status: String,
+}
+
+async fn presence_batch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<PresenceBatchInput>,
+) -> Response {
+    let pool = match require_bot(&state, &headers) {
+        Ok(pool) => pool,
+        Err(response) => return *response,
+    };
+    if !guild_matches(&state, &input.guild_id) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Guild is not linked."})))
+            .into_response();
+    }
+    let server_id = match system_server(&pool).await {
+        Ok(Some((id, _))) => id,
+        Ok(None) => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Mallow Swamp could not be initialized."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Discord presence batch server lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_presence_failed"}))).into_response();
+        }
+    };
+    let mut updated = 0usize;
+    let mut seen = std::collections::HashSet::new();
+    for item in input.updates.into_iter().take(100) {
+        if !valid_discord_id(&item.user_id) || !seen.insert(item.user_id.clone()) {
+            continue;
+        }
+        let status = if ["online", "idle", "dnd", "offline"].contains(&item.status.as_str()) {
+            item.status.as_str()
+        } else {
+            "offline"
+        };
+        let user_id = match linked_user_id(&pool, &server_id, &item.user_id).await {
+            Ok(Some(id)) => id,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::error!(%error, discord_user_id = %item.user_id, "Discord presence batch link lookup failed");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_presence_failed"}))).into_response();
+            }
+        };
+        match sqlx::query(
+            "UPDATE user_profiles SET status = $1, updated_at = $2
+             WHERE user_id = $3 AND COALESCE(status, 'offline') <> $1",
+        )
+        .bind(status)
+        .bind(now())
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        {
+            Ok(result) if result.rows_affected() > 0 => {
+                updated += 1;
+                let _ = state.realtime.send(json!({
+                    "type": "user.presence.updated",
+                    "server_id": server_id,
+                    "user_id": user_id,
+                    "status": status
+                }));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(%error, discord_user_id = %item.user_id, "Discord presence batch update failed");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "discord_presence_failed"}))).into_response();
+            }
+        }
+    }
+    Json(json!({"ok": true, "updated": updated})).into_response()
+}
+
 async fn presence(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2296,6 +2378,7 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/bot/command", post(bot_command))
         .route("/api/integrations/mallowbot/discord/sync", post(sync))
         .route("/api/integrations/mallowbot/discord/presence", post(presence))
+        .route("/api/integrations/mallowbot/discord/presence/batch", post(presence_batch))
         .route("/api/integrations/mallowbot/discord/messages", post(discord_message))
         .route("/api/integrations/mallowbot/discord/link/claim", post(claim_link))
         .route(
