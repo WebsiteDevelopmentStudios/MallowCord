@@ -404,7 +404,7 @@ async fn send_message(
         Err(response) => return *response,
     };
     if let Err(response) = channel_access(&pool, &user, &channel_id, "send_messages").await {
-        return response;
+        return *response;
     }
 
     let content = input.content.unwrap_or_default().trim().to_owned();
