@@ -1,8 +1,9 @@
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    middleware::{from_fn_with_state, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -39,6 +40,7 @@ pub(crate) struct AppState {
     pub(crate) mallowbot_service_key: Option<Arc<Vec<u8>>>,
     pub(crate) discord_guild_id: Arc<String>,
     pub(crate) mallowbot_icon_url: Option<String>,
+    pub(crate) ip_hash_secret: Option<Arc<Vec<u8>>>,
 }
 
 #[derive(Serialize)]
@@ -229,6 +231,10 @@ async fn main() {
             .unwrap_or_else(|_| "1560367587542433812".to_owned()),
     );
     let mallowbot_icon_url = env::var("MALLOWBOT_ICON_URL").ok();
+    let ip_hash_secret = env::var("IP_HASH_SECRET")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(|value| Arc::new(value.into_bytes()));
 
     let object_store = storage::from_env();
     let (realtime, _) = tokio::sync::broadcast::channel(4096);
@@ -240,6 +246,7 @@ async fn main() {
         mallowbot_service_key,
         discord_guild_id,
         mallowbot_icon_url,
+        ip_hash_secret,
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -255,6 +262,7 @@ async fn main() {
         .merge(uploads::router())
         .merge(server::router())
         .merge(social::router())
+        .layer(from_fn_with_state(state.clone(), enforce_global_ip_ban))
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(26 * 1024 * 1024))
         .layer(TraceLayer::new_for_http());
@@ -270,6 +278,63 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("Rust backend server failed");
+}
+
+async fn enforce_global_ip_ban(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path();
+    if path == "/health" || path == "/ready" {
+        return next.run(request).await;
+    }
+    let Some(secret) = state.ip_hash_secret.as_ref() else {
+        return next.run(request).await;
+    };
+    let ip = request
+        .headers()
+        .get("cf-connecting-ip")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .trim();
+    if ip.is_empty() || ip.parse::<std::net::IpAddr>().is_err() {
+        return next.run(request).await;
+    }
+
+    let mut material = ip.as_bytes().to_vec();
+    material.extend_from_slice(secret.as_slice());
+    let ip_hash = hex::encode(Sha256::digest(material));
+    let Some(pool) = state.database.as_ref() else {
+        return next.run(request).await;
+    };
+    match sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+             SELECT 1 FROM bans
+             WHERE ip_hash = $1 AND server_id IS NULL
+               AND (expires_at IS NULL OR expires_at > $2)
+         )",
+    )
+    .bind(ip_hash)
+    .bind(chrono::Utc::now().timestamp())
+    .fetch_one(pool)
+    .await
+    {
+        Ok(true) => (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Access to MallowCord is blocked."})),
+        )
+            .into_response(),
+        Ok(false) => next.run(request).await,
+        Err(error) => {
+            tracing::error!(%error, "global IP ban lookup failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "access_check_unavailable"})),
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn shutdown_signal() {
