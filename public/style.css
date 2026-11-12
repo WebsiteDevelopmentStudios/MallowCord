@@ -1075,3 +1075,12 @@ body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-fil
 .dm-typing-indicator.hidden{display:none}
 
 .social-person button{position:relative}.social-person button>.presence-dot{position:absolute;left:22px;bottom:2px;width:10px;height:10px;border:2px solid #17191f;border-radius:50%;z-index:1}
+
+/* Explicit offline state; never render an offline user with the online green dot. */
+.status-avatar[data-status="offline"]:after,.presence-dot.offline{background:#747f8d!important}
+.dm-profile-status[data-status="offline"]{background:rgba(116,127,141,.16);color:#b4bdc8}
+.dm-profile-status[data-status="idle"]{background:rgba(250,166,26,.15);color:#f5c66a}
+.dm-profile-status[data-status="dnd"]{background:rgba(240,71,71,.15);color:#ff9292}
+.dm-profile-status[data-status="online"]{background:rgba(67,181,129,.14);color:#9de0bf}
+.bot-group-title{color:#b9c8d8!important;background:linear-gradient(90deg,rgba(88,166,255,.13),transparent);border-left:2px solid #6ea8e8;margin:8px 7px 2px;padding:9px 10px!important;border-radius:0 6px 6px 0}
+.bot-group-title span{background:rgba(110,168,232,.18);padding:2px 7px;border-radius:20px;color:#b8d8ff!important}
