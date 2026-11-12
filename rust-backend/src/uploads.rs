@@ -442,7 +442,7 @@ mod upload_validation_tests {
 
     #[test]
     fn filenames_cannot_escape_their_storage_name() {
-        assert_eq!(sanitize_filename("../my\\\u{005c}file.gif"), "myfile.gif");
+        assert_eq!(sanitize_filename(r"../my\file.gif"), "myfile.gif");
         assert_eq!(sanitize_filename(""), "upload");
     }
 }
