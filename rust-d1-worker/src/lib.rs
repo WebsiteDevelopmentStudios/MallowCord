@@ -17,6 +17,7 @@ struct SyncPayload {
     #[serde(default)] channels: Vec<ChannelInput>,
     #[serde(default)] roles: Vec<RoleInput>,
     #[serde(default)] members: Vec<MemberInput>,
+    #[serde(default)] emojis: Vec<EmojiInput>,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +26,22 @@ struct ChannelInput {
     name: String,
     #[serde(default)] position: i32,
     #[serde(default)] category: Option<String>,
+    #[serde(default)] overwrites: Vec<OverwriteInput>,
+}
+
+#[derive(Deserialize)]
+struct OverwriteInput {
+    id: String,
+    #[serde(default)] target_type: String,
+    #[serde(default)] allow: Vec<String>,
+    #[serde(default)] deny: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct EmojiInput {
+    id: String,
+    name: String,
+    image_url: String,
 }
 
 #[derive(Deserialize)]
@@ -151,6 +168,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         .bind(&[text(&server.id)])?.first::<IdRow>(None).await?;
 
     let mut channel_map = Vec::new();
+    let mut channel_ids = std::collections::HashMap::new();
     let mut channel_writes = Vec::new();
     for channel in payload.channels.iter() {
         let discord_id = channel.id.trim();
@@ -173,6 +191,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             text(discord_id), text(&server.id), text(&channel_id),
             text(channel.category.as_deref().unwrap_or("")), number(timestamp)
         ])?);
+        channel_ids.insert(discord_id.to_owned(), channel_id.clone());
         channel_map.push(json!({"discord_id":discord_id,"mallow_id":channel_id,"name":name}));
     }
     for chunk in channel_writes.chunks(400) {
@@ -205,6 +224,69 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         role_map.push(json!({"discord_id":discord_id,"mallow_id":role_id}));
     }
     for chunk in role_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
+
+    let allowed_permissions = ["view_channel","send_messages","read_message_history","attach_files","embed_links","manage_messages"];
+    let mut permission_writes = Vec::new();
+    for channel in payload.channels.iter() {
+        let Some(channel_id) = channel_ids.get(&channel.id) else { continue; };
+        for overwrite in channel.overwrites.iter() {
+            let target_type = if overwrite.target_type == "user" { "user" } else { "role" };
+            let target_id = if target_type == "role" {
+                if overwrite.id == payload.everyone_role_id.as_deref().unwrap_or(&payload.guild_id) {
+                    everyone.as_ref().map(|r| r.id.clone())
+                } else if let Some(mapped) = role_ids.get(&overwrite.id) {
+                    Some(mapped.clone())
+                } else {
+                    db.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
+                        .bind(&[text(&overwrite.id),text(&server.id)])?
+                        .first::<IdRow>(None).await?.map(|r|r.id)
+                }
+            } else {
+                let linked = db.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?")
+                    .bind(&[text(&overwrite.id),text(&server.id)])?.first::<UserRow>(None).await?;
+                if let Some(row) = linked { Some(row.user_id) } else {
+                    db.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?")
+                        .bind(&[text(&overwrite.id),text(&server.id)])?
+                        .first::<UserRow>(None).await?.map(|r|r.user_id)
+                }
+            };
+            let Some(target_id) = target_id else { continue; };
+            let allow: Vec<&str> = overwrite.allow.iter().map(String::as_str).filter(|p| allowed_permissions.contains(p)).collect();
+            let deny: Vec<&str> = overwrite.deny.iter().map(String::as_str).filter(|p| allowed_permissions.contains(p)).collect();
+            permission_writes.push(db.prepare(
+                "INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at"
+            ).bind(&[text(channel_id),text(target_type),text(&target_id),text(&serde_json::to_string(&allow)?),text(&serde_json::to_string(&deny)?),number(timestamp)])?);
+        }
+        if channel.name.eq_ignore_ascii_case("rules") || channel.name.eq_ignore_ascii_case("server-rules") {
+            if let Some(role) = everyone.as_ref() {
+                permission_writes.push(db.prepare(
+                    "INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,'role',?,'[]','[\"send_messages\"]',?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET deny_json='[\"send_messages\"]',updated_at=excluded.updated_at"
+                ).bind(&[text(channel_id),text(&role.id),number(timestamp)])?);
+            }
+        }
+    }
+    for chunk in permission_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
+
+    let mut emoji_writes = Vec::new();
+    for emoji in payload.emojis.iter().take(MAX_SYNC_ITEMS) {
+        let discord_id = emoji.id.trim();
+        let name: String = emoji.name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(32).collect();
+        if discord_id.is_empty() || name.len() < 2 || !emoji.image_url.starts_with("https://") { continue; }
+        let linked = db.prepare("SELECT emoji_id FROM discord_emoji_links WHERE discord_emoji_id=? AND server_id=?")
+            .bind(&[text(discord_id),text(&server.id)])?.first::<IdRow>(None).await?;
+        let existing = if linked.is_none() {
+            db.prepare("SELECT id FROM server_emojis WHERE server_id=? AND name=?")
+                .bind(&[text(&server.id),text(&name)])?.first::<IdRow>(None).await?
+        } else { None };
+        let emoji_id = linked.map(|r|r.id).or_else(||existing.map(|r|r.id)).unwrap_or_else(new_id);
+        emoji_writes.push(db.prepare(
+            "INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,image_url=excluded.image_url"
+        ).bind(&[text(&emoji_id),text(&server.id),text(&name),text(&emoji.image_url),text(&server.owner_id),number(timestamp)])?);
+        emoji_writes.push(db.prepare(
+            "INSERT INTO discord_emoji_links(discord_emoji_id,server_id,emoji_id) VALUES(?,?,?) ON CONFLICT(discord_emoji_id) DO UPDATE SET server_id=excluded.server_id,emoji_id=excluded.emoji_id"
+        ).bind(&[text(discord_id),text(&server.id),text(&emoji_id)])?);
+    }
+    for chunk in emoji_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
 
     let mut member_writes = Vec::new();
     let mut member_count = 0usize;
@@ -359,7 +441,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
 
     let db = env.d1("DB")?;
     if path == "/ready" && method == Method::Get {
-        let check = db.prepare("SELECT 1 AS ok").first::<IdRow>(None).await;
+        let check = db.prepare("SELECT 1 AS present").first::<ExistsRow>(None).await;
         return match check {
             Ok(_) => response(&json!({"status":"ready","database":"connected"}),200),
             Err(_) => response(&json!({"status":"not_ready","database":"unavailable"}),503),
