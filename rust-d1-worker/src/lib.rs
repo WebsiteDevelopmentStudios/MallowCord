@@ -18,6 +18,8 @@ struct SyncPayload {
     #[serde(default)] roles: Vec<RoleInput>,
     #[serde(default)] members: Vec<MemberInput>,
     #[serde(default)] emojis: Vec<EmojiInput>,
+    #[serde(default)] snapshot_key: Option<String>,
+    #[serde(default)] snapshot_hash: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -105,6 +107,9 @@ struct SystemServer {
 struct IdRow { id: String }
 
 #[derive(Deserialize)]
+struct FingerprintRow { snapshot_hash: String }
+
+#[derive(Deserialize)]
 struct LinkRow { mallow_channel_id: String }
 
 #[derive(Deserialize)]
@@ -179,6 +184,19 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
     if payload.channels.len() > MAX_SYNC_ITEMS || payload.roles.len() > MAX_SYNC_ITEMS
         || payload.members.len() > MAX_SYNC_ITEMS {
         return Ok(json!({"error":"A sync batch may contain at most 250 items per collection."}));
+    }
+    if let (Some(key), Some(hash)) = (payload.snapshot_key.as_deref(), payload.snapshot_hash.as_deref()) {
+        if key.is_empty() || key.len() > 120 || hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(json!({"error":"Invalid sync snapshot fingerprint."}));
+        }
+        let previous = db.prepare("SELECT snapshot_hash FROM discord_sync_fingerprints WHERE guild_id=? AND snapshot_key=?")
+            .bind(&[text(&payload.guild_id), text(key)])?
+            .first::<FingerprintRow>(None).await?;
+        if previous.as_ref().is_some_and(|row| row.snapshot_hash == hash) {
+            return Ok(json!({"ok":true,"unchanged":true,"snapshot_key":key}));
+        }
+    } else if payload.snapshot_key.is_some() || payload.snapshot_hash.is_some() {
+        return Ok(json!({"error":"snapshot_key and snapshot_hash must be supplied together."}));
     }
 
     let server = system_server(db).await?;
@@ -376,8 +394,13 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
     }
     if !member_writes.is_empty() { db.batch(member_writes).await?; }
 
+    if let (Some(key), Some(hash)) = (payload.snapshot_key.as_deref(), payload.snapshot_hash.as_deref()) {
+        db.prepare("INSERT INTO discord_sync_fingerprints(guild_id,snapshot_key,snapshot_hash,updated_at) VALUES(?,?,?,?) ON CONFLICT(guild_id,snapshot_key) DO UPDATE SET snapshot_hash=excluded.snapshot_hash,updated_at=excluded.updated_at WHERE discord_sync_fingerprints.snapshot_hash IS NOT excluded.snapshot_hash")
+            .bind(&[text(&payload.guild_id),text(key),text(hash),number(timestamp)])?.run().await?;
+    }
+
     Ok(json!({
-        "ok":true,"server_id":server.id,"channels":channel_map.len(),
+        "ok":true,"unchanged":false,"server_id":server.id,"channels":channel_map.len(),
         "roles":role_map.len(),"members":member_count,"channel_map":channel_map
     }))
 }
