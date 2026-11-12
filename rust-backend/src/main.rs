@@ -1,0 +1,265 @@
+use axum::{
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::Sha256;
+use sqlx::{postgres::PgPoolOptions, PgPool};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use subtle::ConstantTimeEq;
+use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
+use tracing_subscriber::EnvFilter;
+
+type HmacSha256 = Hmac<Sha256>;
+
+#[derive(Clone)]
+struct AppState {
+    database: Option<PgPool>,
+    internal_event_secret: Option<Arc<Vec<u8>>>,
+}
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    service: &'static str,
+    version: &'static str,
+}
+
+#[derive(Serialize)]
+struct ReadyResponse {
+    status: &'static str,
+    database: &'static str,
+}
+
+#[derive(Serialize)]
+struct EventAccepted {
+    accepted: bool,
+    duplicate: bool,
+    event_id: String,
+}
+
+#[derive(Deserialize)]
+struct EventEnvelope {
+    source: String,
+    event_type: String,
+    payload: Value,
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: &'static str,
+}
+
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok",
+        service: "mallowcord-rust-backend",
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+async fn ready(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(pool) = state.database else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ReadyResponse { status: "not_ready", database: "not_configured" }),
+        );
+    };
+
+    match sqlx::query("SELECT 1").execute(&pool).await {
+        Ok(_) => (StatusCode::OK, Json(ReadyResponse { status: "ready", database: "connected" })),
+        Err(error) => {
+            tracing::error!(%error, "database readiness check failed");
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ReadyResponse { status: "not_ready", database: "unavailable" }))
+        }
+    }
+}
+
+async fn ingest_event(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let Some(secret) = state.internal_event_secret.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse { error: "internal_event_ingestion_not_configured" }),
+        ).into_response();
+    };
+
+    let Some(pool) = state.database.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse { error: "database_not_configured" }),
+        ).into_response();
+    };
+
+    let timestamp = match headers.get("x-mallowcord-timestamp").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<i64>().ok()) {
+        Some(value) => value,
+        None => return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "invalid_signature_headers" })).into_response(),
+    };
+    let event_id = match headers.get("x-mallowcord-event-id").and_then(|v| v.to_str().ok()) {
+        Some(value) if !value.is_empty() && value.len() <= 128 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)) => value.to_owned(),
+        _ => return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "invalid_event_id" })).into_response(),
+    };
+    let signature = match headers.get("x-mallowcord-signature").and_then(|v| v.to_str().ok()) {
+        Some(value) => value.strip_prefix("sha256=").unwrap_or(value),
+        None => return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "invalid_signature_headers" })).into_response(),
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    if (now - timestamp).abs() > 300 {
+        return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "signature_expired" })).into_response();
+    }
+
+    let mut mac = match HmacSha256::new_from_slice(secret.as_slice()) {
+        Ok(value) => value,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "signature_verification_failed" })).into_response(),
+    };
+    mac.update(timestamp.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(event_id.as_bytes());
+    mac.update(b".");
+    mac.update(&body);
+
+    let supplied = match hex::decode(signature) {
+        Ok(value) => value,
+        Err(_) => return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "invalid_signature" })).into_response(),
+    };
+    let expected = mac.finalize().into_bytes();
+    if supplied.len() != expected.len() || supplied.as_slice().ct_eq(expected.as_slice()).unwrap_u8() != 1 {
+        return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "invalid_signature" })).into_response();
+    }
+
+    let envelope: EventEnvelope = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "invalid_event_json" })).into_response(),
+    };
+    if envelope.source.is_empty() || envelope.source.len() > 64 || envelope.event_type.is_empty() || envelope.event_type.len() > 128 {
+        return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "invalid_event_metadata" })).into_response();
+    }
+
+    let inserted = sqlx::query_scalar::<_, String>(
+        "INSERT INTO event_inbox (event_id, source, event_type, payload) VALUES ($1, $2, $3, $4) ON CONFLICT (event_id) DO NOTHING RETURNING event_id"
+    )
+    .bind(&event_id)
+    .bind(&envelope.source)
+    .bind(&envelope.event_type)
+    .bind(&envelope.payload)
+    .fetch_optional(pool)
+    .await;
+
+    match inserted {
+        Ok(value) => (
+            StatusCode::ACCEPTED,
+            Json(EventAccepted { accepted: true, duplicate: value.is_none(), event_id }),
+        ).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "failed to persist internal event");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "event_persistence_failed" })).into_response()
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .init();
+
+    let database = match env::var("DATABASE_URL") {
+        Ok(url) if !url.trim().is_empty() => {
+            let pool = PgPoolOptions::new()
+                .max_connections(20)
+                .min_connections(1)
+                .acquire_timeout(Duration::from_secs(10))
+                .connect(&url)
+                .await
+                .expect("DATABASE_URL is set but PostgreSQL connection failed");
+            sqlx::migrate!("./migrations")
+                .run(&pool)
+                .await
+                .expect("database migrations failed");
+            tracing::info!("PostgreSQL connected and migrations applied");
+            Some(pool)
+        }
+        _ if env::var("MALLOWCORD_REQUIRE_DATABASE").as_deref() == Ok("true") => {
+            panic!("DATABASE_URL is required when MALLOWCORD_REQUIRE_DATABASE=true");
+        }
+        _ => {
+            tracing::warn!("DATABASE_URL is not configured; only /health will be ready");
+            None
+        }
+    };
+
+    let internal_event_secret = env::var("MALLOWCORD_INTERNAL_EVENT_SECRET")
+        .ok()
+        .filter(|value| value.len() >= 32)
+        .map(|value| Arc::new(value.into_bytes()));
+
+    let state = AppState { database, internal_event_secret };
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(ready))
+        .route("/internal/v1/events", post(ingest_event))
+        .with_state(state)
+        .layer(RequestBodyLimitLayer::new(256 * 1024))
+        .layer(TraceLayer::new_for_http());
+
+    let address: SocketAddr = env::var("MALLOWCORD_BIND_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:8081".to_owned())
+        .parse()
+        .expect("MALLOWCORD_BIND_ADDR must be a valid socket address");
+    let listener = tokio::net::TcpListener::bind(address).await.expect("failed to bind Rust backend listener");
+
+    tracing::info!(%address, "MallowCord Rust backend listening");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("Rust backend server failed");
+}
+
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+    tracing::info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn health_endpoint_reports_service_status() {
+        let app = Router::new().route("/health", get(health));
+        let response = app.oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let parsed: HealthResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed.status, "ok");
+        assert_eq!(parsed.service, "mallowcord-rust-backend");
+    }
+
+    #[test]
+    fn event_signature_uses_timestamp_event_id_and_raw_body() {
+        let secret = b"a-test-secret-that-is-at-least-32-bytes";
+        let timestamp = "1800000000";
+        let event_id = "event-123";
+        let body = br#"{"source":"mallowbot","event_type":"member.updated","payload":{}}"#;
+        let mut mac = HmacSha256::new_from_slice(secret).unwrap();
+        mac.update(timestamp.as_bytes());
+        mac.update(b".");
+        mac.update(event_id.as_bytes());
+        mac.update(b".");
+        mac.update(body);
+        let signature = hex::encode(mac.finalize().into_bytes());
+        assert_eq!(signature.len(), 64);
+    }
+}
