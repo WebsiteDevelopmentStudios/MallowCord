@@ -82,7 +82,7 @@ async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts
  try{me=(await api("/auth/me")).user;await enterApp()}catch{}
 })();
 
-let realtimeSocket=null,realtimeReconnectTimer=null,realtimeRetry=1000,memberRefreshTimer=null;
+let realtimeSocket=null,realtimeReconnectTimer=null,realtimeConnectTimer=null,realtimeRetry=1000,memberRefreshTimer=null;
 function realtimeConnected(){return typeof WebSocket!=="undefined"&&realtimeSocket?.readyState===WebSocket.OPEN}
 function startRealtimeFallback(){
  if(channelId&&!poll)poll=setInterval(()=>{if(document.visibilityState==="visible")loadMessages()},20000);
@@ -103,7 +103,7 @@ function connectRealtime(){
  try{
   const endpoint=new URL(API_BASE+"/realtime");endpoint.protocol=endpoint.protocol==="https:"?"wss:":"ws:";
   const socket=new WebSocket(endpoint.toString());realtimeSocket=socket;
-  socket.onopen=()=>{if(socket!==realtimeSocket)return;realtimeRetry=1000;stopRealtimeFallback();preloadCheck("Realtime connection","ok","WebSocket connected")};
+  socket.onopen=()=>{if(socket!==realtimeSocket)return;if(realtimeConnectTimer)clearTimeout(realtimeConnectTimer);realtimeConnectTimer=null;realtimeRetry=1000;stopRealtimeFallback();preloadCheck("Realtime connection","ok","WebSocket handshake completed")};
   socket.onmessage=event=>{
    let message;try{message=JSON.parse(event.data)}catch{return}
    if(message.type==="resync.required"){if(channelId)loadMessages();if(activeDmId)loadDmMessages();if(serverId)loadMemberList();loadNotifications();return}
@@ -113,8 +113,9 @@ function connectRealtime(){
    if(message.type==="user.presence.updated"&&message.server_id===serverId)scheduleMemberRefresh();
    if(message.type==="server.sync.updated"&&message.server_id===serverId){loadChannels();scheduleMemberRefresh()}
   };
-  socket.onerror=()=>{try{socket.close()}catch{}};
-  socket.onclose=()=>{if(socket!==realtimeSocket)return;preloadCheck("Realtime connection","pending","Socket disconnected; reconnecting or using polling fallback");realtimeSocket=null;startRealtimeFallback();if(!me)return;if(realtimeReconnectTimer)clearTimeout(realtimeReconnectTimer);realtimeReconnectTimer=setTimeout(connectRealtime,realtimeRetry);realtimeRetry=Math.min(realtimeRetry*2,30000)};
+  socket.onerror=()=>{if(socket!==realtimeSocket)return;preloadCheck("Realtime connection","pending","WebSocket transport error; waiting for the close code");try{socket.close()}catch{}};
+  realtimeConnectTimer=setTimeout(()=>{if(socket!==realtimeSocket||socket.readyState!==WebSocket.CONNECTING)return;preloadCheck("Realtime connection","pending","WebSocket handshake timed out after 10 seconds; reconnecting with polling fallback");try{socket.close()}catch{}},10000);
+  socket.onclose=event=>{if(socket!==realtimeSocket)return;if(realtimeConnectTimer)clearTimeout(realtimeConnectTimer);realtimeConnectTimer=null;const reason=event.reason?": "+event.reason:"";const detail="WebSocket closed (code "+event.code+(event.wasClean?", clean":", abnormal")+")"+reason+"; reconnecting with polling fallback";preloadCheck("Realtime connection","pending",detail);realtimeSocket=null;startRealtimeFallback();if(!me)return;if(realtimeReconnectTimer)clearTimeout(realtimeReconnectTimer);realtimeReconnectTimer=setTimeout(connectRealtime,realtimeRetry);realtimeRetry=Math.min(realtimeRetry*2,30000)};
  }catch(error){console.warn("MallowCord realtime connection:",error.message);startRealtimeFallback()}
 }
 let presenceHeartbeatTimer=null;
