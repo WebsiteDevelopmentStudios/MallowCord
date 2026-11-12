@@ -23,6 +23,7 @@ use crate::{
 };
 
 const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
+const MAX_MULTIPART_OVERHEAD_BYTES: usize = 256 * 1024;
 
 fn now() -> i64 {
     chrono::Utc::now().timestamp()
@@ -414,7 +415,7 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/public/avatars/{user_id}", get(public_avatar))
         .route("/api/channels/{channel_id}/attachments", post(upload_attachment))
         .route("/api/attachments/{attachment_id}", get(get_attachment).delete(delete_attachment))
-        .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BYTES + MAX_MULTIPART_OVERHEAD_BYTES))
 }
 
 
