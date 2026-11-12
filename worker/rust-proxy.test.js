@@ -80,6 +80,7 @@ test("Rust proxy forwards the existing cookie, body, and query string", async ()
         headers: {
           cookie: "mallowcord_device=test-session",
           "cf-connecting-ip": "203.0.113.10",
+          "x-mallowcord-client-ip": "198.51.100.2",
           "content-type": "application/json",
         },
         body,
