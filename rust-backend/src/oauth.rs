@@ -526,6 +526,7 @@ async fn callback(
     };
 
     let client = reqwest::Client::new();
+    let callback_uri = redirect_uri(config);
     let token_response = client
         .post(config.token_url)
         .form(&[
@@ -533,7 +534,7 @@ async fn callback(
             ("client_secret", client_secret.as_str()),
             ("grant_type", "authorization_code"),
             ("code", code.as_str()),
-            ("redirect_uri", redirect_uri(config).as_str()),
+            ("redirect_uri", callback_uri.as_str()),
         ])
         .send()
         .await;
