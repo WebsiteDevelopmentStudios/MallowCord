@@ -458,7 +458,7 @@ if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to 
   for(const row of accountLinks.results||[]){if(!linked.has(row.discord_user_id))linked.set(row.discord_user_id,new Set());linked.get(row.discord_user_id).add(row.user_id);}
   for(const row of oauthLinks.results||[]){if(!linked.has(row.discord_user_id))linked.set(row.discord_user_id,new Set());linked.get(row.discord_user_id).add(row.user_id);}
   const statements=[];
-  for(const item of updates){const did=String(item.user_id||""),userIds=linked.get(did)||new Set(),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline";for(const userId of userIds)statements.push(getDatabase(env).prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND COALESCE(status,'offline')<>?").bind(status,now(),userId,status));}
+  for(const item of updates){const did=String(item.user_id||""),userIds=linked.get(did)||new Set(),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline";for(const userId of userIds)statements.push(getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(userId,status,now()));}
   if(!statements.length)return json({ok:true,updated:0});
   const results=await getDatabase(env).batch(statements);return json({ok:true,updated:results.reduce((n,r)=>n+(r.meta?.changes||0),0)});
  }
@@ -467,7 +467,7 @@ if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to 
   const presence=["online","idle","dnd","offline"].includes(b.status)?b.status:"offline";
   const discordId=String(b.user_id||""),linked=await getDatabase(env).prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM oauth_accounts WHERE provider='discord' AND provider_user_id=?").bind(discordId).first();
   if(!linked)return json({ok:true,ignored:true});
-  await getDatabase(env).prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=?").bind(presence,now(),linked.user_id).run();return json({ok:true});
+  await getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(linked.user_id,presence,now()).run();return json({ok:true});
  }
  if(p==="/api/integrations/mallowbot/discord/messages"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
