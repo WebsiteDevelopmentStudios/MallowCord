@@ -86,7 +86,7 @@ async fn require_membership(
     .await
     .map_err(|error| {
         tracing::error!(%error, "server membership lookup failed");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "server_lookup_failed"}))).into_response()
+        Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "server_lookup_failed"}))).into_response())
     })?;
     if member.is_none() {
         return Err(Box::new((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response()));
@@ -441,7 +441,7 @@ async fn get_server_stats(
         Err(response) => return response,
     };
     if let Err(response) = require_membership(&pool, &user, &server_id).await {
-        return response;
+        return *response;
     }
 
     let stats = sqlx::query_as::<_, (i64, i64, i64, i64, i64)>(
