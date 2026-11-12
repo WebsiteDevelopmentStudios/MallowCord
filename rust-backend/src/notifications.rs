@@ -56,7 +56,7 @@ async fn require_user(
     }
 }
 
-#[derive(FromRow)]
+#[derive(FromRow, serde::Serialize)]
 struct UnreadGroup {
     server_id: String,
     channel_id: String,
