@@ -665,7 +665,7 @@ async fn confirm_contact_verification(
     .bind(channel)
     .fetch_optional(&pool)
     .await;
-    let (id, stored_hash, expires_at) = match row {
+    let (id, stored_hash, _expires_at) = match row {
         Ok(Some(value)) if value.2 >= now() => value,
         Ok(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "That verification code is invalid or expired."}))).into_response(),
         Err(error) => {
