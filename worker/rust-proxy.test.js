@@ -16,6 +16,7 @@ test("proxies API domains already implemented in Rust", () => {
     ["POST", "/api/messages/message-1/reactions"],
     ["GET", "/api/dms/conversation-1/messages"],
     ["POST", "/api/channels/channel-1/attachments"],
+    ["GET", "/api/realtime"],
     ["GET", "/api/notifications"],
     ["GET", "/api/admin/audit"],
   ];
