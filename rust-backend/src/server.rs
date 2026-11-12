@@ -94,7 +94,7 @@ async fn require_membership(
     Ok((owner_id.clone(), can_manage(user, &owner_id)))
 }
 
-async fn channel_permission_allowed(
+pub(crate) async fn channel_permission_allowed(
     pool: &PgPool,
     user_id: &str,
     channel_id: &str,
