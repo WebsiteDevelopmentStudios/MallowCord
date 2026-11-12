@@ -514,12 +514,27 @@ async fn request_contact_verification(
         ));
         let created_at = now();
         let expires_at = created_at + 600;
-        let insert = sqlx::query(
+        let mut verification_tx = match pool.begin().await {
+            Ok(tx) => tx,
+            Err(error) => {
+                tracing::error!(%error, "contact verification transaction failed to start");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "contact_verification_failed"}))).into_response();
+            }
+        };
+        if let Err(error) = sqlx::query(
+            "DELETE FROM contact_verifications WHERE user_id = $1 AND channel = $2",
+        )
+        .bind(&user.id)
+        .bind(channel)
+        .execute(&mut *verification_tx)
+        .await
+        {
+            tracing::error!(%error, "old contact verification cleanup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "contact_verification_failed"}))).into_response();
+        }
+        if let Err(error) = sqlx::query(
             "INSERT INTO contact_verifications(id, user_id, channel, target, code_hash, expires_at, created_at)
-             VALUES($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT(user_id, channel) DO UPDATE SET
-                 id = EXCLUDED.id, target = EXCLUDED.target, code_hash = EXCLUDED.code_hash,
-                 expires_at = EXCLUDED.expires_at, created_at = EXCLUDED.created_at",
+             VALUES($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
         .bind(&user.id)
@@ -528,10 +543,14 @@ async fn request_contact_verification(
         .bind(&code_hash)
         .bind(expires_at)
         .bind(created_at)
-        .execute(&pool)
-        .await;
-        if let Err(error) = insert {
+        .execute(&mut *verification_tx)
+        .await
+        {
             tracing::error!(%error, "contact verification code insert failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "contact_verification_failed"}))).into_response();
+        }
+        if let Err(error) = verification_tx.commit().await {
+            tracing::error!(%error, "contact verification transaction commit failed");
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "contact_verification_failed"}))).into_response();
         }
 
