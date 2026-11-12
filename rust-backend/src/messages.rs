@@ -667,19 +667,20 @@ async fn send_message(
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_send_failed"}))).into_response();
     }
 
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "message": {
-                "id": message_id,
-                "content": content,
-                "created_at": created_at,
-                "username": user.username,
-                "author_id": user.id
-            }
-        })),
-    )
-        .into_response()
+    let message = json!({
+        "id": message_id,
+        "content": content,
+        "created_at": created_at,
+        "username": user.username,
+        "author_id": user.id
+    });
+    let _ = state.realtime.send(json!({
+        "type": "message.created",
+        "server_id": server_id,
+        "channel_id": channel_id,
+        "message": message.clone()
+    }));
+    (StatusCode::CREATED, Json(json!({"message": message}))).into_response()
 }
 
 #[derive(Deserialize)]
