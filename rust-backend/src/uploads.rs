@@ -2,7 +2,7 @@ use axum::{
     body::Body,
     extract::{Multipart, Path, State},
     http::{
-        header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE},
+        header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE},
         HeaderMap, HeaderValue, StatusCode,
     },
     response::{IntoResponse, Response},
@@ -137,7 +137,7 @@ async fn upload_attachment(
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Object storage is not configured yet."}))).into_response();
     };
 
-    let mut uploaded: Option<(String, String, Vec<u8>)> = None;
+    let mut uploaded: Option<(String, String, Bytes)> = None;
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(field)) => field,
@@ -168,7 +168,7 @@ async fn upload_attachment(
         if bytes.is_empty() || bytes.len() > MAX_UPLOAD_BYTES {
             return (StatusCode::PAYLOAD_TOO_LARGE, Json(json!({"error": "Files must be between 1 byte and 25 MB."}))).into_response();
         }
-        uploaded = Some((filename, content_type, bytes.to_vec()));
+        uploaded = Some((filename, content_type, bytes));
     }
 
     let Some((filename, content_type, bytes)) = uploaded else {
@@ -178,7 +178,7 @@ async fn upload_attachment(
     let id = Uuid::new_v4().to_string();
     let object_key = format!("mallowcord/{server_id}/{channel_id}/{id}");
     let object_path = ObjectPath::from(object_key.as_str());
-    let payload = Bytes::from(bytes.clone()).into();
+    let payload = bytes.clone().into();
     if let Err(error) = store.put(&object_path, payload).await {
         tracing::error!(%error, "object storage upload failed");
         return (StatusCode::BAD_GATEWAY, Json(json!({"error": "File storage is temporarily unavailable."}))).into_response();
@@ -277,13 +277,8 @@ async fn get_attachment(
             return (StatusCode::NOT_FOUND, Json(json!({"error": "Attachment file not found."}))).into_response();
         }
     };
-    let bytes = match object.bytes().await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::error!(%error, "attachment object read failed");
-            return (StatusCode::BAD_GATEWAY, Json(json!({"error": "Attachment storage is temporarily unavailable."}))).into_response();
-        }
-    };
+    let content_length = object.meta.size;
+    let stream = object.into_stream();
     let inline = ["image/png", "image/jpeg", "image/gif", "image/webp"]
         .contains(&metadata.content_type.to_ascii_lowercase().as_str());
     let disposition = if inline { "inline" } else { "attachment" };
@@ -291,10 +286,11 @@ async fn get_attachment(
     let response = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, if inline { HeaderValue::from_str(&metadata.content_type).unwrap_or(HeaderValue::from_static("application/octet-stream")) } else { HeaderValue::from_static("application/octet-stream") })
+        .header(CONTENT_LENGTH, content_length.to_string())
         .header(CONTENT_DISPOSITION, format!("{disposition}; filename=\"{safe_filename}\""))
         .header(CACHE_CONTROL, "private, no-store")
         .header("x-content-type-options", "nosniff")
-        .body(Body::from(bytes));
+        .body(Body::from_stream(stream));
     match response {
         Ok(response) => response,
         Err(error) => {
@@ -419,4 +415,34 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/channels/{channel_id}/attachments", post(upload_attachment))
         .route("/api/attachments/{attachment_id}", get(get_attachment).delete(delete_attachment))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
+}
+
+
+#[cfg(test)]
+mod upload_validation_tests {
+    use super::{allowed_content_type, sanitize_filename};
+
+    #[test]
+    fn allows_common_images_and_regular_files() {
+        assert!(allowed_content_type("image/png"));
+        assert!(allowed_content_type("image/jpeg"));
+        assert!(allowed_content_type("image/gif"));
+        assert!(allowed_content_type("image/webp"));
+        assert!(allowed_content_type("application/pdf"));
+        assert!(allowed_content_type("application/octet-stream"));
+    }
+
+    #[test]
+    fn rejects_active_content_types() {
+        assert!(!allowed_content_type("text/html"));
+        assert!(!allowed_content_type("image/svg+xml"));
+        assert!(!allowed_content_type("application/xhtml+xml"));
+        assert!(!allowed_content_type("application/javascript"));
+    }
+
+    #[test]
+    fn filenames_cannot_escape_their_storage_name() {
+        assert_eq!(sanitize_filename("../my\\\u{005c}file.gif"), "myfile.gif");
+        assert_eq!(sanitize_filename(""), "upload");
+    }
 }
