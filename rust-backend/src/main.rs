@@ -22,6 +22,7 @@ mod messages;
 mod notifications;
 mod realtime;
 mod auth;
+mod discord_bridge;
 mod server;
 mod social;
 mod storage;
@@ -35,6 +36,9 @@ pub(crate) struct AppState {
     pub(crate) object_store: Option<Arc<dyn object_store::ObjectStore>>,
     pub(crate) realtime: tokio::sync::broadcast::Sender<Value>,
     internal_event_secret: Option<Arc<Vec<u8>>>,
+    pub(crate) mallowbot_service_key: Option<Arc<Vec<u8>>>,
+    pub(crate) discord_guild_id: Arc<String>,
+    pub(crate) mallowbot_icon_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -216,9 +220,27 @@ async fn main() {
         .filter(|value| value.len() >= 32)
         .map(|value| Arc::new(value.into_bytes()));
 
+    let mallowbot_service_key = env::var("MALLOWBOT_SERVICE_KEY")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(|value| Arc::new(value.into_bytes()));
+    let discord_guild_id = Arc::new(
+        env::var("MALLOWCORD_DISCORD_GUILD_ID")
+            .unwrap_or_else(|_| "1560367587542433812".to_owned()),
+    );
+    let mallowbot_icon_url = env::var("MALLOWBOT_ICON_URL").ok();
+
     let object_store = storage::from_env();
     let (realtime, _) = tokio::sync::broadcast::channel(4096);
-    let state = AppState { database, object_store, realtime, internal_event_secret };
+    let state = AppState {
+        database,
+        object_store,
+        realtime,
+        internal_event_secret,
+        mallowbot_service_key,
+        discord_guild_id,
+        mallowbot_icon_url,
+    };
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -226,6 +248,7 @@ async fn main() {
         .merge(auth::router())
         .merge(account::router())
         .merge(admin::router())
+        .merge(discord_bridge::router())
         .merge(messages::router())
         .merge(notifications::router())
         .merge(realtime::router())
