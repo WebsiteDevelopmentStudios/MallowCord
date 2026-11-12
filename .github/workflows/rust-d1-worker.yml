@@ -2,7 +2,7 @@ name: Rust D1 Worker
 
 on:
   push:
-    branches: [main, "feature/rust-d1-worker"]
+    branches: [main, "feature/rust-d1-worker", "feature/rust-d1-full-api"]
     paths:
       - "rust-d1-worker/**"
       - "migrations/**"

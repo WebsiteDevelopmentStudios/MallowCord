@@ -18,6 +18,8 @@ struct SyncPayload {
     #[serde(default)] roles: Vec<RoleInput>,
     #[serde(default)] members: Vec<MemberInput>,
     #[serde(default)] emojis: Vec<EmojiInput>,
+    #[serde(default)] snapshot_key: Option<String>,
+    #[serde(default)] snapshot_hash: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +79,18 @@ struct PresenceInput {
 }
 
 #[derive(Deserialize)]
+struct PresenceUpdate {
+    user_id: String,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct PresenceBatchInput {
+    guild_id: String,
+    updates: Vec<PresenceUpdate>,
+}
+
+#[derive(Deserialize)]
 struct SingleMessagePayload {
     guild_id: String,
     #[serde(flatten)]
@@ -105,6 +119,9 @@ struct SystemServer {
 struct IdRow { id: String }
 
 #[derive(Deserialize)]
+struct FingerprintRow { snapshot_hash: String }
+
+#[derive(Deserialize)]
 struct LinkRow { mallow_channel_id: String }
 
 #[derive(Deserialize)]
@@ -121,6 +138,9 @@ struct DiscordUserRow { discord_user_id: String, user_id: String }
 
 #[derive(Deserialize)]
 struct UserNameRow { id: String, username_key: String }
+
+#[derive(Deserialize)]
+struct RoleLinkRow { discord_role_id: String, role_id: String }
 
 #[derive(Deserialize)]
 struct UserRow { user_id: String }
@@ -180,6 +200,19 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         || payload.members.len() > MAX_SYNC_ITEMS {
         return Ok(json!({"error":"A sync batch may contain at most 250 items per collection."}));
     }
+    if let (Some(key), Some(hash)) = (payload.snapshot_key.as_deref(), payload.snapshot_hash.as_deref()) {
+        if key.is_empty() || key.len() > 120 || hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(json!({"error":"Invalid sync snapshot fingerprint."}));
+        }
+        let previous = db.prepare("SELECT snapshot_hash FROM discord_sync_fingerprints WHERE guild_id=? AND snapshot_key=?")
+            .bind(&[text(&payload.guild_id), text(key)])?
+            .first::<FingerprintRow>(None).await?;
+        if previous.as_ref().is_some_and(|row| row.snapshot_hash == hash) {
+            return Ok(json!({"ok":true,"unchanged":true,"snapshot_key":key}));
+        }
+    } else if payload.snapshot_key.is_some() || payload.snapshot_hash.is_some() {
+        return Ok(json!({"error":"snapshot_key and snapshot_hash must be supplied together."}));
+    }
 
     let server = system_server(db).await?;
     let timestamp = now();
@@ -210,10 +243,10 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         let channel_id = linked.map(|r| r.mallow_channel_id)
             .or_else(|| existing.map(|r| r.id)).unwrap_or_else(new_id);
         channel_writes.push(db.prepare(
-            "INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position"
+            "INSERT INTO channels(id,server_id,name,kind,position) VALUES(?,?,?,'text',?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position WHERE channels.name IS NOT excluded.name OR channels.position IS NOT excluded.position"
         ).bind(&[text(&channel_id), text(&server.id), text(name), number(channel.position as i64)])?);
         channel_writes.push(db.prepare(
-            "INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at)              VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET              server_id=excluded.server_id,mallow_channel_id=excluded.mallow_channel_id,             category_name=excluded.category_name,updated_at=excluded.updated_at"
+            "INSERT INTO discord_channel_links(discord_channel_id,server_id,mallow_channel_id,category_name,updated_at)              VALUES(?,?,?,?,?) ON CONFLICT(discord_channel_id) DO UPDATE SET              server_id=excluded.server_id,mallow_channel_id=excluded.mallow_channel_id,             category_name=excluded.category_name,updated_at=excluded.updated_at WHERE discord_channel_links.server_id IS NOT excluded.server_id OR discord_channel_links.mallow_channel_id IS NOT excluded.mallow_channel_id OR discord_channel_links.category_name IS NOT excluded.category_name"
         ).bind(&[
             text(discord_id), text(&server.id), text(&channel_id),
             text(channel.category.as_deref().unwrap_or("")), number(timestamp)
@@ -242,15 +275,66 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         let color = role.color.as_deref().filter(|v| v.len()==7 && v.starts_with('#')
             && v[1..].bytes().all(|b| b.is_ascii_hexdigit())).unwrap_or("#99aab5");
         role_writes.push(db.prepare(
-            "INSERT INTO roles(id,server_id,name,is_system,position,color) VALUES(?,?,?,0,?,?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position,color=excluded.color"
+            "INSERT INTO roles(id,server_id,name,is_system,position,color) VALUES(?,?,?,0,?,?)              ON CONFLICT(id) DO UPDATE SET name=excluded.name,position=excluded.position,color=excluded.color WHERE roles.name IS NOT excluded.name OR roles.position IS NOT excluded.position OR roles.color IS NOT excluded.color"
         ).bind(&[text(&role_id),text(&server.id),text(name),number(role.position as i64),text(color)])?);
         role_writes.push(db.prepare(
-            "INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?)              ON CONFLICT(discord_role_id) DO UPDATE SET server_id=excluded.server_id,role_id=excluded.role_id"
+            "INSERT INTO discord_role_links(discord_role_id,server_id,role_id) VALUES(?,?,?)              ON CONFLICT(discord_role_id) DO UPDATE SET server_id=excluded.server_id,role_id=excluded.role_id WHERE discord_role_links.server_id IS NOT excluded.server_id OR discord_role_links.role_id IS NOT excluded.role_id"
         ).bind(&[text(discord_id),text(&server.id),text(&role_id)])?);
         role_ids.insert(discord_id.to_owned(), role_id.clone());
         role_map.push(json!({"discord_id":discord_id,"mallow_id":role_id}));
     }
     for chunk in role_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
+
+    let placeholders = |count: usize| std::iter::repeat("?").take(count).collect::<Vec<_>>().join(",");
+    // Preload all permission targets once per bounded batch. Channel overwrites
+    // can reference many users; resolving each target separately was another
+    // avoidable N+1 D1 read pattern.
+    let mut permission_user_ids = std::collections::HashSet::new();
+    let mut permission_role_ids = std::collections::HashSet::new();
+    for channel in payload.channels.iter() {
+        for overwrite in channel.overwrites.iter() {
+            if overwrite.target_type == "user" {
+                permission_user_ids.insert(overwrite.id.clone());
+            } else if overwrite.id != payload.everyone_role_id.as_deref().unwrap_or(&payload.guild_id)
+                && !role_ids.contains_key(&overwrite.id) {
+                permission_role_ids.insert(overwrite.id.clone());
+            }
+        }
+    }
+    let permission_user_ids: Vec<String> = permission_user_ids.into_iter().collect();
+    let permission_role_ids: Vec<String> = permission_role_ids.into_iter().collect();
+    let mut permission_users = std::collections::HashMap::<String, String>::new();
+    for chunk in permission_user_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+        for row in rows { permission_users.insert(row.discord_user_id, row.user_id); }
+    }
+    for chunk in permission_user_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+        for row in rows { permission_users.entry(row.discord_user_id).or_insert(row.user_id); }
+    }
+    let mut permission_roles = std::collections::HashMap::<String, String>::new();
+    for chunk in permission_role_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_role_id,role_id FROM discord_role_links WHERE server_id=? AND discord_role_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<RoleLinkRow>()?;
+        for row in rows { permission_roles.insert(row.discord_role_id, row.role_id); }
+    }
 
     let allowed_permissions = ["view_channel","send_messages","read_message_history","attach_files","embed_links","manage_messages"];
     let mut permission_writes = Vec::new();
@@ -261,27 +345,17 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             let target_id = if target_type == "role" {
                 if overwrite.id == payload.everyone_role_id.as_deref().unwrap_or(&payload.guild_id) {
                     everyone.as_ref().map(|r| r.id.clone())
-                } else if let Some(mapped) = role_ids.get(&overwrite.id) {
-                    Some(mapped.clone())
                 } else {
-                    db.prepare("SELECT role_id AS id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
-                        .bind(&[text(&overwrite.id),text(&server.id)])?
-                        .first::<IdRow>(None).await?.map(|r|r.id)
+                    role_ids.get(&overwrite.id).or_else(|| permission_roles.get(&overwrite.id)).cloned()
                 }
             } else {
-                let linked = db.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?")
-                    .bind(&[text(&overwrite.id),text(&server.id)])?.first::<UserRow>(None).await?;
-                if let Some(row) = linked { Some(row.user_id) } else {
-                    db.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?")
-                        .bind(&[text(&overwrite.id),text(&server.id)])?
-                        .first::<UserRow>(None).await?.map(|r|r.user_id)
-                }
+                permission_users.get(&overwrite.id).cloned()
             };
             let Some(target_id) = target_id else { continue; };
             let allow: Vec<&str> = overwrite.allow.iter().map(String::as_str).filter(|p| allowed_permissions.contains(p)).collect();
             let deny: Vec<&str> = overwrite.deny.iter().map(String::as_str).filter(|p| allowed_permissions.contains(p)).collect();
             permission_writes.push(db.prepare(
-                "INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at"
+                "INSERT INTO channel_permissions(channel_id,target_type,target_id,allow_json,deny_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_id,target_type,target_id) DO UPDATE SET allow_json=excluded.allow_json,deny_json=excluded.deny_json,updated_at=excluded.updated_at WHERE channel_permissions.allow_json IS NOT excluded.allow_json OR channel_permissions.deny_json IS NOT excluded.deny_json"
             ).bind(&[text(channel_id),text(target_type),text(&target_id),text(&serde_json::to_string(&allow)?),text(&serde_json::to_string(&deny)?),number(timestamp)])?);
         }
         if channel.name.eq_ignore_ascii_case("rules") || channel.name.eq_ignore_ascii_case("server-rules") {
@@ -307,13 +381,64 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         } else { None };
         let emoji_id = linked.map(|r|r.id).or_else(||existing.map(|r|r.id)).unwrap_or_else(new_id);
         emoji_writes.push(db.prepare(
-            "INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,image_url=excluded.image_url"
+            "INSERT INTO server_emojis(id,server_id,name,image_url,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,image_url=excluded.image_url WHERE server_emojis.name IS NOT excluded.name OR server_emojis.image_url IS NOT excluded.image_url"
         ).bind(&[text(&emoji_id),text(&server.id),text(&name),text(&emoji.image_url),text(&server.owner_id),number(timestamp)])?);
         emoji_writes.push(db.prepare(
-            "INSERT INTO discord_emoji_links(discord_emoji_id,server_id,emoji_id) VALUES(?,?,?) ON CONFLICT(discord_emoji_id) DO UPDATE SET server_id=excluded.server_id,emoji_id=excluded.emoji_id"
+            "INSERT INTO discord_emoji_links(discord_emoji_id,server_id,emoji_id) VALUES(?,?,?) ON CONFLICT(discord_emoji_id) DO UPDATE SET server_id=excluded.server_id,emoji_id=excluded.emoji_id WHERE discord_emoji_links.server_id IS NOT excluded.server_id OR discord_emoji_links.emoji_id IS NOT excluded.emoji_id"
         ).bind(&[text(discord_id),text(&server.id),text(&emoji_id)])?);
     }
     for chunk in emoji_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
+
+    // Resolve member identities and persisted role links in bounded batches.
+    // The previous per-member/per-role SELECT pattern could issue hundreds of
+    // D1 reads for a single 100-member import batch.
+    let mut member_ids = std::collections::HashSet::new();
+    let mut member_usernames = std::collections::HashSet::new();
+    let mut member_role_ids = std::collections::HashSet::new();
+    for member in payload.members.iter().filter(|m| !m.bot) {
+        let id = member.id.trim();
+        if id.is_empty() { continue; }
+        member_ids.insert(id.to_owned());
+        member_usernames.insert(format!("discord_{}", id).to_lowercase());
+        for role_id in &member.roles {
+            if !role_ids.contains_key(role_id) { member_role_ids.insert(role_id.clone()); }
+        }
+    }
+    let member_ids: Vec<String> = member_ids.into_iter().collect();
+    let member_usernames: Vec<String> = member_usernames.into_iter().collect();
+    let member_role_ids: Vec<String> = member_role_ids.into_iter().collect();
+    let mut username_map = std::collections::HashMap::<String, String>::new();
+    for chunk in member_usernames.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let params: Vec<JsValue> = chunk.iter().map(|v| text(v)).collect();
+        let rows = db.prepare(&format!(
+            "SELECT id,username_key FROM users WHERE username_key IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<UserNameRow>()?;
+        for row in rows { username_map.insert(row.username_key, row.id); }
+    }
+    let mut account_map = std::collections::HashMap::<String, String>::new();
+    for chunk in member_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+        for row in rows { account_map.insert(row.discord_user_id, row.user_id); }
+    }
+    let mut persisted_role_map = std::collections::HashMap::<String, String>::new();
+    for chunk in member_role_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_role_id,role_id FROM discord_role_links WHERE server_id=? AND discord_role_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<RoleLinkRow>()?;
+        for row in rows { persisted_role_map.insert(row.discord_role_id, row.role_id); }
+    }
 
     let mut member_writes = Vec::new();
     let mut member_count = 0usize;
@@ -321,26 +446,23 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         let discord_id = member.id.trim();
         if discord_id.is_empty() { continue; }
         let username = format!("discord_{}", discord_id);
-        let user_id = db.prepare("SELECT id FROM users WHERE username_key=?")
-            .bind(&[text(&username.to_lowercase())])?.first::<IdRow>(None).await?
-            .map(|row| row.id).unwrap_or_else(|| format!("discord:{}", discord_id));
+        let user_id = username_map.get(&username.to_lowercase()).cloned()
+            .unwrap_or_else(|| format!("discord:{}", discord_id));
         let display = member.display_name.as_deref().unwrap_or(&member.username);
         let avatar = member.avatar_url.as_deref().filter(|v| v.starts_with("https://")).unwrap_or("");
-        let account = db.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?")
-            .bind(&[text(discord_id),text(&server.id)])?.first::<UserRow>(None).await?;
-        let membership_user = account.map(|r| r.user_id).unwrap_or_else(|| user_id.clone());
+        let membership_user = account_map.get(discord_id).cloned().unwrap_or_else(|| user_id.clone());
         member_writes.push(db.prepare(
             "INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at)              VALUES(?,?,?,'basic','active',?,?)"
         ).bind(&[text(&user_id),text(&username),text(&username.to_lowercase()),number(timestamp),number(timestamp)])?);
         member_writes.push(db.prepare(
-            "INSERT INTO user_profiles(user_id,display_name,avatar_url,status,discord_username,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,discord_username=excluded.discord_username,updated_at=excluded.updated_at"
+            "INSERT INTO user_profiles(user_id,display_name,avatar_url,status,discord_username,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,status=excluded.status,discord_username=excluded.discord_username,updated_at=excluded.updated_at WHERE user_profiles.display_name IS NOT excluded.display_name OR user_profiles.avatar_url IS NOT excluded.avatar_url OR user_profiles.status IS NOT excluded.status OR user_profiles.discord_username IS NOT excluded.discord_username"
         ).bind(&[
             text(&user_id), text(display), text(avatar),
             text(match member.status.as_deref() { Some("online") => "online", Some("idle") => "idle", Some("dnd") => "dnd", _ => "offline" }),
             text(&member.username), number(timestamp)
         ])?);
         member_writes.push(db.prepare(
-            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?)              ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at"
+            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?)              ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at WHERE discord_user_links.server_id IS NOT excluded.server_id OR discord_user_links.user_id IS NOT excluded.user_id"
         ).bind(&[text(discord_id),text(&server.id),text(&user_id),number(timestamp)])?);
         member_writes.push(db.prepare(
             "INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)"
@@ -356,13 +478,9 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             ).bind(&[text(&server.id),text(&membership_user),text(&role.id)])?);
         }
         for discord_role in member.roles.iter() {
-            let mapped = if let Some(value) = role_ids.get(discord_role) {
-                Some(value.clone())
-            } else {
-                db.prepare("SELECT role_id AS id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
-                    .bind(&[text(discord_role),text(&server.id)])?
-                    .first::<IdRow>(None).await?.map(|row| row.id)
-            };
+            let mapped = role_ids.get(discord_role)
+                .or_else(|| persisted_role_map.get(discord_role))
+                .cloned();
             if let Some(mapped) = mapped {
                 member_writes.push(db.prepare(
                     "INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)"
@@ -376,8 +494,13 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
     }
     if !member_writes.is_empty() { db.batch(member_writes).await?; }
 
+    if let (Some(key), Some(hash)) = (payload.snapshot_key.as_deref(), payload.snapshot_hash.as_deref()) {
+        db.prepare("INSERT INTO discord_sync_fingerprints(guild_id,snapshot_key,snapshot_hash,updated_at) VALUES(?,?,?,?) ON CONFLICT(guild_id,snapshot_key) DO UPDATE SET snapshot_hash=excluded.snapshot_hash,updated_at=excluded.updated_at WHERE discord_sync_fingerprints.snapshot_hash IS NOT excluded.snapshot_hash")
+            .bind(&[text(&payload.guild_id),text(key),text(hash),number(timestamp)])?.run().await?;
+    }
+
     Ok(json!({
-        "ok":true,"server_id":server.id,"channels":channel_map.len(),
+        "ok":true,"unchanged":false,"server_id":server.id,"channels":channel_map.len(),
         "roles":role_map.len(),"members":member_count,"channel_map":channel_map
     }))
 }
@@ -404,29 +527,44 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     }
 
     let mut message_ids = std::collections::HashSet::new();
-    let mut channel_ids = std::collections::HashSet::new();
-    let mut author_ids = std::collections::HashSet::new();
     for message in &valid {
         message_ids.insert(message.message_id.trim().to_owned());
-        channel_ids.insert(message.channel_id.trim().to_owned());
-        author_ids.insert(message.author_id.trim().to_owned());
     }
     let message_ids: Vec<String> = message_ids.into_iter().collect();
-    let channel_ids: Vec<String> = channel_ids.into_iter().collect();
-    let author_ids: Vec<String> = author_ids.into_iter().collect();
     let placeholders = |count: usize| std::iter::repeat("?").take(count).collect::<Vec<_>>().join(",");
 
-    // Read each lookup set once per batch instead of issuing 4-5 SELECTs for
-    // every message. This keeps large history imports inside D1's daily read budget.
-    let mut message_params: Vec<JsValue> = message_ids.iter().map(|id| text(id)).collect();
+    // First check the message-link index. On a bot restart, historical batches
+    // are replayed; if every message already exists, stop here instead of
+    // repeating channel, author, role, profile and membership reads/writes.
+    let message_params: Vec<JsValue> = message_ids.iter().map(|id| text(id)).collect();
     let existing_messages = db.prepare(&format!(
         "SELECT discord_message_id FROM discord_message_links WHERE discord_message_id IN ({})",
         placeholders(message_ids.len())
     )).bind(&message_params)?.all().await?.results::<MessageLinkRow>()?;
-    let mut seen_messages: std::collections::HashSet<String> =
+    let seen_messages: std::collections::HashSet<String> =
         existing_messages.into_iter().map(|row| row.discord_message_id).collect();
-    message_params.clear();
+    let mut batch_seen = std::collections::HashSet::new();
+    let valid: Vec<&MessageInput> = valid.into_iter()
+        .filter(|message| {
+            let id = message.message_id.trim();
+            !seen_messages.contains(id) && batch_seen.insert(id.to_owned())
+        })
+        .collect();
+    if valid.is_empty() {
+        return Ok(json!({"ok":true,"accepted":0,"duplicates":message_ids.len()}));
+    }
 
+    // Only look up channels and authors referenced by genuinely new messages.
+    let mut channel_ids = std::collections::HashSet::new();
+    let mut author_ids = std::collections::HashSet::new();
+    for message in &valid {
+        channel_ids.insert(message.channel_id.trim().to_owned());
+        author_ids.insert(message.author_id.trim().to_owned());
+    }
+    let channel_ids: Vec<String> = channel_ids.into_iter().collect();
+    let author_ids: Vec<String> = author_ids.into_iter().collect();
+
+    // Read each lookup set once per new-message batch, not once per message.
     let mut channel_params = vec![text(&server.id)];
     channel_params.extend(channel_ids.iter().map(|id| text(id)));
     let channels = db.prepare(&format!(
@@ -485,10 +623,10 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
         let display = sample.and_then(|m|m.display_name.as_deref().or(m.username.as_deref())).unwrap_or(&username);
         let avatar = sample.and_then(|m|m.avatar_url.as_deref()).filter(|v|v.starts_with("https://")).unwrap_or("");
         user_writes.push(db.prepare(
-            "INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at"
+            "INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at WHERE user_profiles.display_name IS NOT excluded.display_name OR user_profiles.avatar_url IS NOT excluded.avatar_url"
         ).bind(&[text(&user_id),text(display),text(avatar),number(timestamp)])?);
         user_writes.push(db.prepare(
-            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at"
+            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at WHERE discord_user_links.server_id IS NOT excluded.server_id OR discord_user_links.user_id IS NOT excluded.user_id"
         ).bind(&[text(author_id),text(&server.id),text(&user_id),number(timestamp)])?);
         user_writes.push(db.prepare(
             "INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)"
@@ -510,7 +648,6 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     let mut accepted = 0usize;
     for message in valid {
         let discord_id = message.message_id.trim();
-        if !seen_messages.insert(discord_id.to_owned()) { continue; }
         let Some(channel_id) = channel_map.get(message.channel_id.trim()) else { continue; };
         let Some(author_id) = author_map.get(message.author_id.trim()) else { continue; };
         let message_id = new_id();
@@ -525,7 +662,68 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     }
     for chunk in message_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
 
-    Ok(json!({"ok":true,"accepted":accepted}))
+    Ok(json!({"ok":true,"accepted":accepted,"duplicates":message_ids.len().saturating_sub(accepted)}))
+}
+
+async fn sync_presence_batch(db: &D1Database, payload: PresenceBatchInput) -> Result<Value> {
+    if payload.guild_id != EXPECTED_GUILD {
+        return Ok(json!({"error":"This bridge is restricted to the configured official Discord server."}));
+    }
+    if payload.updates.len() > 100 {
+        return Ok(json!({"error":"A presence batch may contain at most 100 updates."}));
+    }
+    let mut latest = std::collections::HashMap::<String, String>::new();
+    for update in payload.updates {
+        let user_id = update.user_id.trim();
+        if user_id.is_empty() || user_id.len() > 32 { continue; }
+        let status = match update.status.as_str() {
+            "online" | "idle" | "dnd" | "offline" => update.status,
+            _ => "offline".to_string(),
+        };
+        latest.insert(user_id.to_owned(), status);
+    }
+    if latest.is_empty() {
+        return Ok(json!({"ok":true,"received":0,"updated":0,"ignored":0}));
+    }
+
+    let server = system_server(db).await?;
+    let ids: Vec<String> = latest.keys().cloned().collect();
+    let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
+    let mut params = vec![text(&server.id)];
+    params.extend(ids.iter().map(|id| text(id)));
+
+    // Resolve every linked account in two bounded indexed reads, rather than
+    // two D1 lookups for each individual Discord presence event.
+    let account_rows = db.prepare(&format!(
+        "SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({})",
+        placeholders
+    )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+    let mut users = std::collections::HashMap::<String, String>::new();
+    for row in account_rows {
+        users.insert(row.discord_user_id, row.user_id);
+    }
+    let shadow_rows = db.prepare(&format!(
+        "SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ({})",
+        placeholders
+    )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+    for row in shadow_rows {
+        users.entry(row.discord_user_id).or_insert(row.user_id);
+    }
+
+    let ignored = ids.iter().filter(|id| !users.contains_key(*id)).count();
+    let mut writes = Vec::new();
+    for (discord_id, user_id) in users.iter() {
+        let Some(status) = latest.get(discord_id) else { continue; };
+        writes.push(db.prepare(
+            "UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND (status IS NULL OR status != ?)"
+        ).bind(&[text(status), number(now()), text(user_id), text(status)])?);
+    }
+    let mut changed = 0usize;
+    for chunk in writes.chunks(100) {
+        let results = db.batch(chunk.to_vec()).await?;
+        changed += results.iter().filter(|result| result.meta().ok().flatten().is_some_and(|meta| meta.changes > 0)).count();
+    }
+    Ok(json!({"ok":true,"received":ids.len(),"updated":changed,"ignored":ignored}))
 }
 
 #[event(fetch)]
@@ -574,6 +772,19 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
         return response(&result,200);
     }
 
+    if path == "/api/integrations/mallowbot/discord/presence/batch" && method == Method::Post {
+        let payload: PresenceBatchInput = req.json().await?;
+        if payload.guild_id != EXPECTED_GUILD {
+            return response(&json!({"error":"This bridge is restricted to the configured official Discord server."}),403);
+        }
+        let result = match sync_presence_batch(&db, payload).await {
+            Ok(value) => value,
+            Err(error) => return response(&json!({"error":"Presence batch failed","detail":error.to_string()}),500),
+        };
+        if result.get("error").is_some() { return response(&result,400); }
+        return response(&result,200);
+    }
+
     if path == "/api/integrations/mallowbot/discord/presence" && method == Method::Post {
         let payload: PresenceInput = req.json().await?;
         if payload.guild_id != EXPECTED_GUILD {
@@ -590,8 +801,8 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 .bind(&[text(&payload.user_id),text(&server.id)])?.first::<UserRow>(None).await?);
         let ignored = linked.is_none();
         if let Some(user) = linked.as_ref() {
-            db.prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=?")
-                .bind(&[text(status),number(now()),text(&user.user_id)])?.run().await?;
+            db.prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND (status IS NULL OR status != ?)")
+                .bind(&[text(status),number(now()),text(&user.user_id),text(status)])?.run().await?;
         }
         return response(&json!({"ok":true,"ignored":ignored}),200);
     }
