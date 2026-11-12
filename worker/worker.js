@@ -475,6 +475,51 @@ if(p==="/api/auth/logout"&&m==="POST"){const u=await userFor(req,env);if(u){awai
 const u=await userFor(req,env);
 if(p==="/api/auth/me"&&m==="GET")return u?json({user:{id:u.id,username:u.username,account_type:u.account_type}}):fail("Not signed in.",401);
 if(!u)return fail("Sign in required.",401);
+if(p==="/api/admin/d1-usage"&&m==="GET"){
+ if(!isOwner(u))return fail("Owner access required.",403);
+ const analyticsToken=String(env.CF_ANALYTICS_API_TOKEN||"").trim();
+ const accountTag=String(env.CF_ANALYTICS_ACCOUNT_ID||"760bb0ff9afeb64ec51be54c045dd78c").trim();
+ if(!analyticsToken)return fail("Cloudflare analytics is not configured. Add the CF_ANALYTICS_API_TOKEN Worker secret with Account Analytics: Read permission.",503);
+ const today=new Date().toISOString().slice(0,10);
+ const storageStart=new Date(Date.now()-6*86400000).toISOString().slice(0,10);
+ const query=`query D1Usage($accountTag:String!,$today:Date!,$storageStart:Date!){
+  viewer{accounts(filter:{accountTag:$accountTag}){
+   daily:d1AnalyticsAdaptiveGroups(limit:10000,filter:{date_geq:$today,date_leq:$today},orderBy:[date_DESC]){
+    sum{rowsRead rowsWritten}
+    dimensions{date databaseId}
+   }
+   storage:d1StorageAdaptiveGroups(limit:10000,filter:{date_geq:$storageStart,date_leq:$today},orderBy:[date_DESC]){
+    max{databaseSizeBytes}
+    dimensions{date databaseId}
+   }
+  }}
+ }`;
+ try{
+  const response=await fetch("https://api.cloudflare.com/client/v4/graphql",{
+   method:"POST",
+   headers:{"Authorization":"Bearer "+analyticsToken,"Content-Type":"application/json"},
+   body:JSON.stringify({query,variables:{accountTag,today,storageStart}})
+  });
+  if(!response.ok)return fail("Cloudflare Analytics request failed ("+response.status+").",502);
+  const result=await response.json();
+  if(result.errors?.length)return fail("Cloudflare Analytics could not return D1 usage. Check the token's Account Analytics: Read permission.",502);
+  const account=result.data?.viewer?.accounts?.[0];
+  if(!account)return fail("Cloudflare did not return D1 account analytics.",502);
+  const daily=account.daily||[];
+  const rowsRead=daily.reduce((sum,row)=>sum+(Number(row.sum?.rowsRead)||0),0);
+  const rowsWritten=daily.reduce((sum,row)=>sum+(Number(row.sum?.rowsWritten)||0),0);
+  const latestByDatabase=new Map();
+  for(const row of account.storage||[]){
+   const id=String(row.dimensions?.databaseId||"");
+   if(!id)continue;
+   const date=String(row.dimensions?.date||"");
+   const old=latestByDatabase.get(id);
+   if(!old||date>old.date)latestByDatabase.set(id,{date,bytes:Number(row.max?.databaseSizeBytes)||0});
+  }
+  const storageBytes=[...latestByDatabase.values()].reduce((sum,row)=>sum+row.bytes,0);
+  return json({date:today,rows_read:rowsRead,rows_written:rowsWritten,storage_bytes:storageBytes,rows_read_limit:5000000,rows_written_limit:100000,storage_limit_bytes:5368709120,fetched_at:Date.now(),source:"cloudflare-graphql"});
+ }catch(error){return fail("Could not contact Cloudflare Analytics.",502);}
+}
 const banned=await getDatabase(env).prepare("SELECT id FROM bans WHERE ip_hash=? AND server_id IS NULL AND (expires_at IS NULL OR expires_at>?) LIMIT 1").bind(await ipDigest(req,env),now()).first();if(banned)return fail("Access to MallowCord is blocked.",403);
 if(u.timed_out&&p.startsWith("/api/")&&!["/api/auth/me","/api/auth/logout"].includes(p))return fail("Your account is timed out.",403);
 if(p==="/api/presence/heartbeat"&&m==="POST"){
