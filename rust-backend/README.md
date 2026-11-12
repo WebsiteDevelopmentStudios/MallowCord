@@ -156,3 +156,13 @@ The Worker continues to capture its own request exceptions into the shared Neon 
 - `DELETE /api/admin/errors` clears the stored records and returns the number deleted.
 
 Migration `0012_worker_error_logs.sql` creates the compatible table and a descending timestamp index. The Worker proxy forwards these routes only when `RUST_API_ORIGIN` is configured; otherwise the existing Worker handlers remain active.
+
+
+## Server onboarding
+
+Rust now owns the existing onboarding API:
+
+- `GET /api/servers/{server_id}/onboarding` returns the current welcome/rules configuration, whether the signed-in member completed onboarding, and whether they can manage it.
+- `POST /api/servers/{server_id}/onboarding` lets a server owner update the enabled flag and text, or lets a member mark their own onboarding as complete.
+
+The defaults and response shape match the current Worker implementation. Migration `0013_server_onboarding.sql` creates the configuration and completion tables. Server creation remains disabled; this migration does not add server creation or invites.
