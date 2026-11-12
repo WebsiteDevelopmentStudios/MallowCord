@@ -73,7 +73,7 @@ async function sendPresenceHeartbeat(){
 function startPresenceHeartbeat(){
  if(presenceHeartbeatTimer)clearInterval(presenceHeartbeatTimer);
  sendPresenceHeartbeat();
- presenceHeartbeatTimer=setInterval(sendPresenceHeartbeat,20000);
+ presenceHeartbeatTimer=setInterval(sendPresenceHeartbeat,60000);
 }
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){sendPresenceHeartbeat();connectRealtime();if(channelId)loadMessages();if(activeDmId)loadDmMessages();if(serverId)loadMemberList();loadNotifications()}});
 
