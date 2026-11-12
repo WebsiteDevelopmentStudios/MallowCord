@@ -57,3 +57,16 @@ Apply the additive migrations in order before deploying this branch:
 
 They create only the Discord bridge tables and sync-fingerprint table. They never drop
 or rewrite existing application tables or records.
+
+
+### Batched Discord presence
+
+The authenticated bridge can send presence changes to
+`POST /api/integrations/mallowbot/discord/presence/batch` using
+`{ "guild_id": "...", "updates": [{ "user_id": "...", "status": "online" }] }`.
+A batch accepts up to 100 updates. Mallow-Bot coalesces events for approximately
+four seconds and keeps only the latest status per Discord user. The Worker
+resolves account and shadow links with two indexed `IN` queries, then batches
+conditional profile updates. Unchanged statuses are not rewritten, reducing
+D1 write consumption. The single-presence endpoint remains available for
+compatibility clients.
