@@ -56,7 +56,7 @@ async fn require_user(
     }
 }
 
-async fn can_manage(pool: &PgPool, user: &AuthUser, owner_id: &str) -> bool {
+fn can_manage(user: &AuthUser, owner_id: &str) -> bool {
     user.account_type == "owner" || user.id == owner_id
 }
 
@@ -91,7 +91,7 @@ async fn require_membership(
     if member.is_none() {
         return Err((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response());
     }
-    Ok((owner_id.clone(), can_manage(pool, user, &owner_id).await))
+    Ok((owner_id.clone(), can_manage(user, &owner_id)))
 }
 
 async fn channel_permission_allowed(
@@ -176,7 +176,7 @@ struct ServerView {
     id: String,
     name: String,
     icon_url: Option<String>,
-    is_system: i32,
+    is_system: i64,
     joined_at: i64,
 }
 
@@ -278,7 +278,7 @@ struct RoleView {
     name: String,
     is_system: i32,
     position: i64,
-    pingable: i32,
+    pingable: i64,
     color: String,
 }
 
