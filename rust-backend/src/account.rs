@@ -535,7 +535,17 @@ async fn request_contact_verification(
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "contact_verification_failed"}))).into_response();
         }
 
-        let client = reqwest::Client::new();
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(12))
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::error!(%error, "contact verification HTTP client initialization failed");
+                delete_contact_code(&pool, &id).await;
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Contact verification is temporarily unavailable."}))).into_response();
+            }
+        };
         let sent = if channel == "email" {
             let api_key = std::env::var("RESEND_API_KEY").ok().filter(|value| !value.is_empty());
             let from = std::env::var("MALLOWCORD_EMAIL_FROM").ok().filter(|value| !value.is_empty());
