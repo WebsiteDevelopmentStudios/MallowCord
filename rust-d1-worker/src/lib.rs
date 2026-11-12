@@ -76,6 +76,9 @@ struct IdRow { id: String }
 struct LinkRow { mallow_channel_id: String }
 
 #[derive(Deserialize)]
+struct ExistsRow { present: i32 }
+
+#[derive(Deserialize)]
 struct UserRow { user_id: String }
 
 #[derive(Serialize)]
@@ -240,10 +243,17 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             ).bind(&[text(&server.id),text(&membership_user),text(&role.id)])?);
         }
         for discord_role in member.roles.iter() {
-            if let Some(mapped) = role_ids.get(discord_role) {
+            let mapped = if let Some(value) = role_ids.get(discord_role) {
+                Some(value.clone())
+            } else {
+                db.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
+                    .bind(&[text(discord_role),text(&server.id)])?
+                    .first::<IdRow>(None).await?.map(|row| row.id)
+            };
+            if let Some(mapped) = mapped {
                 member_writes.push(db.prepare(
                     "INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)"
-                ).bind(&[text(&server.id),text(&membership_user),text(mapped)])?);
+                ).bind(&[text(&server.id),text(&membership_user),text(&mapped)])?);
             }
         }
         member_count += 1;
@@ -280,7 +290,7 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
             || content.is_empty() || content.len() > 4000 { continue; }
 
         let duplicate = db.prepare("SELECT 1 AS present FROM discord_message_links WHERE discord_message_id=?")
-            .bind(&[text(did)])?.first::<IdRow>(None).await?;
+            .bind(&[text(did)])?.first::<ExistsRow>(None).await?;
         if duplicate.is_some() { continue; }
 
         let channel = db.prepare(
@@ -341,7 +351,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
     let method = req.method();
 
     if method == Method::Options {
-        return Response::empty()?.with_status(204).with_headers(Headers::new());
+        return Response::empty()?.with_status(204);
     }
     if path == "/health" && method == Method::Get {
         return response(&Health { status:"ok", service:"mallowcord-rust-d1", database:"bound" }, 200);
