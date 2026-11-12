@@ -739,3 +739,25 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/account/preferences", get(get_preferences).post(update_preferences))
         .route("/api/presence/heartbeat", post(presence_heartbeat))
 }
+
+
+#[cfg(test)]
+mod contact_validation_tests {
+    use super::valid_contact_target;
+
+    #[test]
+    fn accepts_valid_contact_targets() {
+        assert!(valid_contact_target("email", "mallow@example.com"));
+        assert!(valid_contact_target("phone", "+12065550123"));
+    }
+
+    #[test]
+    fn rejects_malformed_contact_targets() {
+        assert!(!valid_contact_target("email", "not-an-email"));
+        assert!(!valid_contact_target("email", "mallow @example.com"));
+        assert!(!valid_contact_target("phone", "12065550123"));
+        assert!(!valid_contact_target("phone", "+02065550123"));
+        assert!(!valid_contact_target("phone", "+12abc"));
+        assert!(!valid_contact_target("fax", "+12065550123"));
+    }
+}
