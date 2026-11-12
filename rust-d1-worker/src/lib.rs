@@ -140,6 +140,9 @@ struct DiscordUserRow { discord_user_id: String, user_id: String }
 struct UserNameRow { id: String, username_key: String }
 
 #[derive(Deserialize)]
+struct RoleLinkRow { discord_role_id: String, role_id: String }
+
+#[derive(Deserialize)]
 struct UserRow { user_id: String }
 
 #[derive(Serialize)]
@@ -345,20 +348,69 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
     }
     for chunk in emoji_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
 
+    // Resolve member identities and persisted role links in bounded batches.
+    // The previous per-member/per-role SELECT pattern could issue hundreds of
+    // D1 reads for a single 100-member import batch.
+    let placeholders = |count: usize| std::iter::repeat("?").take(count).collect::<Vec<_>>().join(",");
+    let mut member_ids = std::collections::HashSet::new();
+    let mut member_usernames = std::collections::HashSet::new();
+    let mut member_role_ids = std::collections::HashSet::new();
+    for member in payload.members.iter().filter(|m| !m.bot) {
+        let id = member.id.trim();
+        if id.is_empty() { continue; }
+        member_ids.insert(id.to_owned());
+        member_usernames.insert(format!("discord_{}", id).to_lowercase());
+        for role_id in &member.roles {
+            if !role_ids.contains_key(role_id) { member_role_ids.insert(role_id.clone()); }
+        }
+    }
+    let member_ids: Vec<String> = member_ids.into_iter().collect();
+    let member_usernames: Vec<String> = member_usernames.into_iter().collect();
+    let member_role_ids: Vec<String> = member_role_ids.into_iter().collect();
+    let mut username_map = std::collections::HashMap::<String, String>::new();
+    for chunk in member_usernames.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let params: Vec<JsValue> = chunk.iter().map(|v| text(v)).collect();
+        let rows = db.prepare(&format!(
+            "SELECT id,username_key FROM users WHERE username_key IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<UserNameRow>()?;
+        for row in rows { username_map.insert(row.username_key, row.id); }
+    }
+    let mut account_map = std::collections::HashMap::<String, String>::new();
+    for chunk in member_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+        for row in rows { account_map.insert(row.discord_user_id, row.user_id); }
+    }
+    let mut persisted_role_map = std::collections::HashMap::<String, String>::new();
+    for chunk in member_role_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_role_id,role_id FROM discord_role_links WHERE server_id=? AND discord_role_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<RoleLinkRow>()?;
+        for row in rows { persisted_role_map.insert(row.discord_role_id, row.role_id); }
+    }
+
     let mut member_writes = Vec::new();
     let mut member_count = 0usize;
     for member in payload.members.iter().filter(|m| !m.bot) {
         let discord_id = member.id.trim();
         if discord_id.is_empty() { continue; }
         let username = format!("discord_{}", discord_id);
-        let user_id = db.prepare("SELECT id FROM users WHERE username_key=?")
-            .bind(&[text(&username.to_lowercase())])?.first::<IdRow>(None).await?
-            .map(|row| row.id).unwrap_or_else(|| format!("discord:{}", discord_id));
+        let user_id = username_map.get(&username.to_lowercase()).cloned()
+            .unwrap_or_else(|| format!("discord:{}", discord_id));
         let display = member.display_name.as_deref().unwrap_or(&member.username);
         let avatar = member.avatar_url.as_deref().filter(|v| v.starts_with("https://")).unwrap_or("");
-        let account = db.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?")
-            .bind(&[text(discord_id),text(&server.id)])?.first::<UserRow>(None).await?;
-        let membership_user = account.map(|r| r.user_id).unwrap_or_else(|| user_id.clone());
+        let membership_user = account_map.get(discord_id).cloned().unwrap_or_else(|| user_id.clone());
         member_writes.push(db.prepare(
             "INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at)              VALUES(?,?,?,'basic','active',?,?)"
         ).bind(&[text(&user_id),text(&username),text(&username.to_lowercase()),number(timestamp),number(timestamp)])?);
@@ -386,13 +438,9 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             ).bind(&[text(&server.id),text(&membership_user),text(&role.id)])?);
         }
         for discord_role in member.roles.iter() {
-            let mapped = if let Some(value) = role_ids.get(discord_role) {
-                Some(value.clone())
-            } else {
-                db.prepare("SELECT role_id AS id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
-                    .bind(&[text(discord_role),text(&server.id)])?
-                    .first::<IdRow>(None).await?.map(|row| row.id)
-            };
+            let mapped = role_ids.get(discord_role)
+                .or_else(|| persisted_role_map.get(discord_role))
+                .cloned();
             if let Some(mapped) = mapped {
                 member_writes.push(db.prepare(
                     "INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)"
