@@ -111,6 +111,18 @@ struct LinkRow { mallow_channel_id: String }
 struct ExistsRow { present: i32 }
 
 #[derive(Deserialize)]
+struct MessageLinkRow { discord_message_id: String }
+
+#[derive(Deserialize)]
+struct ChannelLinkRow { discord_channel_id: String, mallow_channel_id: String }
+
+#[derive(Deserialize)]
+struct DiscordUserRow { discord_user_id: String, user_id: String }
+
+#[derive(Deserialize)]
+struct UserNameRow { id: String, username_key: String }
+
+#[derive(Deserialize)]
 struct UserRow { user_id: String }
 
 #[derive(Serialize)]
@@ -377,71 +389,141 @@ async fn sync_messages(db: &D1Database, payload: MessageBatch) -> Result<Value> 
     if payload.messages.len() > MAX_MESSAGE_BATCH {
         return Ok(json!({"error":"A message batch may contain at most 100 messages."}));
     }
+
     let server = system_server(db).await?;
-    let mut writes = Vec::new();
-    let mut accepted = 0usize;
     let timestamp = now();
+    let valid: Vec<&MessageInput> = payload.messages.iter().filter(|message| {
+        !message.message_id.trim().is_empty()
+            && !message.channel_id.trim().is_empty()
+            && !message.author_id.trim().is_empty()
+            && !message.content.trim().is_empty()
+            && message.content.trim().len() <= 4000
+    }).collect();
+    if valid.is_empty() {
+        return Ok(json!({"ok":true,"accepted":0}));
+    }
 
-    for message in payload.messages.iter() {
-        let did = message.message_id.trim();
-        let discord_channel = message.channel_id.trim();
-        let discord_author = message.author_id.trim();
-        let content = message.content.trim();
-        if did.is_empty() || discord_channel.is_empty() || discord_author.is_empty()
-            || content.is_empty() || content.len() > 4000 { continue; }
+    let mut message_ids = std::collections::HashSet::new();
+    let mut channel_ids = std::collections::HashSet::new();
+    let mut author_ids = std::collections::HashSet::new();
+    for message in &valid {
+        message_ids.insert(message.message_id.trim().to_owned());
+        channel_ids.insert(message.channel_id.trim().to_owned());
+        author_ids.insert(message.author_id.trim().to_owned());
+    }
+    let message_ids: Vec<String> = message_ids.into_iter().collect();
+    let channel_ids: Vec<String> = channel_ids.into_iter().collect();
+    let author_ids: Vec<String> = author_ids.into_iter().collect();
+    let placeholders = |count: usize| std::iter::repeat("?").take(count).collect::<Vec<_>>().join(",");
 
-        let duplicate = db.prepare("SELECT 1 AS present FROM discord_message_links WHERE discord_message_id=?")
-            .bind(&[text(did)])?.first::<ExistsRow>(None).await?;
-        if duplicate.is_some() { continue; }
+    // Read each lookup set once per batch instead of issuing 4-5 SELECTs for
+    // every message. This keeps large history imports inside D1's daily read budget.
+    let mut message_params: Vec<JsValue> = message_ids.iter().map(|id| text(id)).collect();
+    let existing_messages = db.prepare(&format!(
+        "SELECT discord_message_id FROM discord_message_links WHERE discord_message_id IN ({})",
+        placeholders(message_ids.len())
+    )).bind(&message_params)?.all().await?.results::<MessageLinkRow>()?;
+    let mut seen_messages: std::collections::HashSet<String> =
+        existing_messages.into_iter().map(|row| row.discord_message_id).collect();
+    message_params.clear();
 
-        let channel = db.prepare(
-            "SELECT mallow_channel_id FROM discord_channel_links WHERE discord_channel_id=? AND server_id=?"
-        ).bind(&[text(discord_channel),text(&server.id)])?.first::<LinkRow>(None).await?;
-        let Some(channel) = channel else { continue; };
+    let mut channel_params = vec![text(&server.id)];
+    channel_params.extend(channel_ids.iter().map(|id| text(id)));
+    let channels = db.prepare(&format!(
+        "SELECT discord_channel_id,mallow_channel_id FROM discord_channel_links WHERE server_id=? AND discord_channel_id IN ({})",
+        placeholders(channel_ids.len())
+    )).bind(&channel_params)?.all().await?.results::<ChannelLinkRow>()?;
+    let channel_map: std::collections::HashMap<String,String> =
+        channels.into_iter().map(|row|(row.discord_channel_id,row.mallow_channel_id)).collect();
 
-        let linked = db.prepare(
-            "SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?"
-        ).bind(&[text(discord_author),text(&server.id)])?.first::<UserRow>(None).await?
-        .or(db.prepare(
-            "SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?"
-        ).bind(&[text(discord_author),text(&server.id)])?.first::<UserRow>(None).await?);
+    let mut author_params = vec![text(&server.id)];
+    author_params.extend(author_ids.iter().map(|id| text(id)));
+    let account_links = db.prepare(&format!(
+        "SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({})",
+        placeholders(author_ids.len())
+    )).bind(&author_params)?.all().await?.results::<DiscordUserRow>()?;
+    let mut user_map: std::collections::HashMap<String,String> =
+        account_links.into_iter().map(|row|(row.discord_user_id,row.user_id)).collect();
 
-        let username = format!("discord_{}", discord_author);
-        let user_id = if let Some(row) = linked { row.user_id } else {
-            db.prepare("SELECT id FROM users WHERE username_key=?")
-                .bind(&[text(&username.to_lowercase())])?.first::<IdRow>(None).await?
-                .map(|r|r.id).unwrap_or_else(||format!("discord:{}",discord_author))
-        };
-        let display = message.display_name.as_deref().or(message.username.as_deref()).unwrap_or(&username);
-        let avatar = message.avatar_url.as_deref().filter(|v|v.starts_with("https://")).unwrap_or("");
-        let created = message.timestamp.unwrap_or(timestamp);
-        let message_id = new_id();
+    let mut shadow_params = vec![text(&server.id)];
+    shadow_params.extend(author_ids.iter().map(|id| text(id)));
+    let shadow_links = db.prepare(&format!(
+        "SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ({})",
+        placeholders(author_ids.len())
+    )).bind(&shadow_params)?.all().await?.results::<DiscordUserRow>()?;
+    for row in shadow_links {
+        user_map.entry(row.discord_user_id).or_insert(row.user_id);
+    }
 
-        writes.push(db.prepare(
-            "INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at)              VALUES(?,?,?,'basic','active',?,?)"
+    let usernames: Vec<String> = author_ids.iter().map(|id|format!("discord_{}",id).to_lowercase()).collect();
+    let username_params: Vec<JsValue> = usernames.iter().map(|name|text(name)).collect();
+    let existing_users = db.prepare(&format!(
+        "SELECT id,username_key FROM users WHERE username_key IN ({})",
+        placeholders(usernames.len())
+    )).bind(&username_params)?.all().await?.results::<UserNameRow>()?;
+    let mut username_map: std::collections::HashMap<String,String> =
+        existing_users.into_iter().map(|row|(row.username_key,row.id)).collect();
+
+    let everyone = db.prepare("SELECT id FROM roles WHERE server_id=? AND name='@everyone'")
+        .bind(&[text(&server.id)])?.first::<IdRow>(None).await?;
+    let member_role = db.prepare("SELECT id FROM roles WHERE server_id=? AND name='@Member'")
+        .bind(&[text(&server.id)])?.first::<IdRow>(None).await?;
+
+    let mut author_map = std::collections::HashMap::new();
+    let mut user_writes = Vec::new();
+    for author_id in author_ids.iter() {
+        let username = format!("discord_{}",author_id);
+        let user_id = user_map.get(author_id).cloned().or_else(||username_map.get(&username.to_lowercase()).cloned())
+            .unwrap_or_else(||format!("discord:{}",author_id));
+        user_map.insert(author_id.clone(),user_id.clone());
+        author_map.insert(author_id.clone(),user_id.clone());
+        user_writes.push(db.prepare(
+            "INSERT OR IGNORE INTO users(id,username,username_key,account_type,status,created_at,updated_at) VALUES(?,?,?,'basic','active',?,?)"
         ).bind(&[text(&user_id),text(&username),text(&username.to_lowercase()),number(timestamp),number(timestamp)])?);
-        writes.push(db.prepare(
-            "INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?)              ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at"
+
+        let sample = valid.iter().find(|message|message.author_id.trim()==author_id.as_str()).copied();
+        let display = sample.and_then(|m|m.display_name.as_deref().or(m.username.as_deref())).unwrap_or(&username);
+        let avatar = sample.and_then(|m|m.avatar_url.as_deref()).filter(|v|v.starts_with("https://")).unwrap_or("");
+        user_writes.push(db.prepare(
+            "INSERT INTO user_profiles(user_id,display_name,avatar_url,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,avatar_url=excluded.avatar_url,updated_at=excluded.updated_at"
         ).bind(&[text(&user_id),text(display),text(avatar),number(timestamp)])?);
-        writes.push(db.prepare(
-            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?)              ON CONFLICT(discord_user_id) DO UPDATE SET user_id=excluded.user_id,updated_at=excluded.updated_at"
-        ).bind(&[text(discord_author),text(&server.id),text(&user_id),number(timestamp)])?);
-        writes.push(db.prepare(
+        user_writes.push(db.prepare(
+            "INSERT INTO discord_user_links(discord_user_id,server_id,user_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(discord_user_id) DO UPDATE SET server_id=excluded.server_id,user_id=excluded.user_id,updated_at=excluded.updated_at"
+        ).bind(&[text(author_id),text(&server.id),text(&user_id),number(timestamp)])?);
+        user_writes.push(db.prepare(
             "INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)"
         ).bind(&[text(&server.id),text(&user_id),number(timestamp)])?);
-        writes.push(db.prepare(
-            "INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)"
-        ).bind(&[text(&message_id),text(&channel.mallow_channel_id),text(&user_id),text(content),number(created)])?);
-        writes.push(db.prepare(
-            "INSERT OR IGNORE INTO discord_message_links(discord_message_id,mallow_message_id,discord_channel_id) VALUES(?,?,?)"
-        ).bind(&[text(did),text(&message_id),text(discord_channel)])?);
-        accepted += 1;
-
-        if writes.len() >= 480 {
-            db.batch(std::mem::take(&mut writes)).await?;
+        if let Some(role) = everyone.as_ref() {
+            user_writes.push(db.prepare(
+                "INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)"
+            ).bind(&[text(&server.id),text(&user_id),text(&role.id)])?);
+        }
+        if let Some(role) = member_role.as_ref() {
+            user_writes.push(db.prepare(
+                "INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)"
+            ).bind(&[text(&server.id),text(&user_id),text(&role.id)])?);
         }
     }
-    if !writes.is_empty() { db.batch(writes).await?; }
+    for chunk in user_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
+
+    let mut message_writes = Vec::new();
+    let mut accepted = 0usize;
+    for message in valid {
+        let discord_id = message.message_id.trim();
+        if !seen_messages.insert(discord_id.to_owned()) { continue; }
+        let Some(channel_id) = channel_map.get(message.channel_id.trim()) else { continue; };
+        let Some(author_id) = author_map.get(message.author_id.trim()) else { continue; };
+        let message_id = new_id();
+        let created = message.timestamp.unwrap_or(timestamp);
+        message_writes.push(db.prepare(
+            "INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)"
+        ).bind(&[text(&message_id),text(channel_id),text(author_id),text(message.content.trim()),number(created)])?);
+        message_writes.push(db.prepare(
+            "INSERT OR IGNORE INTO discord_message_links(discord_message_id,mallow_message_id,discord_channel_id) VALUES(?,?,?)"
+        ).bind(&[text(discord_id),text(&message_id),text(message.channel_id.trim())])?);
+        accepted += 1;
+    }
+    for chunk in message_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
 
     Ok(json!({"ok":true,"accepted":accepted}))
 }
