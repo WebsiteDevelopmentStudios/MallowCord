@@ -18,7 +18,6 @@ pub(crate) struct AuthUser {
     pub account_type: String,
     pub status: String,
     pub timeout_until: Option<i64>,
-    pub session_id: String,
 }
 
 pub(crate) async fn current_user(
@@ -43,7 +42,7 @@ pub(crate) async fn current_user(
     let now = chrono::Utc::now().timestamp();
 
     let user = sqlx::query_as::<_, AuthUser>(
-        "SELECT u.id, u.username, u.account_type, u.status, u.timeout_until, s.id AS session_id
+        "SELECT u.id, u.username, u.account_type, u.status, u.timeout_until
          FROM sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > $2
