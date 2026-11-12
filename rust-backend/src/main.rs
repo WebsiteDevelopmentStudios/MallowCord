@@ -28,7 +28,7 @@ mod discord_bridge;
 mod server;
 mod social;
 mod storage;
-mod uploads;
+mod uploads;\nmod event_consumer;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -278,7 +278,7 @@ async fn main() {
         ip_hash_secret,
         public_api_origin,
     };
-    let app = Router::new()
+    tokio::spawn(event_consumer::run(state.clone()));\n\n    let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/internal/v1/events", post(ingest_event).layer(DefaultBodyLimit::max(256 * 1024)))
