@@ -125,3 +125,24 @@ docker run --rm -p 8081:8081 \
 - Google/Discord OAuth provider redirects and callbacks and Worker error-log utilities remain on the Worker; OAuth login-code exchange and device-session creation now run in Rust.
 - Do not set `RUST_API_ORIGIN` until the Rust host is deployed, migrations are applied, secrets are configured, and route-level testing is complete.
 - Do not remove the Worker or D1 rollback binding until all routes and data paths have been verified.
+
+
+## Google and Discord OAuth
+
+The Rust service now implements both provider start and callback handlers:
+
+- `GET /api/auth/google` and `GET /api/auth/discord` create one-time, hashed OAuth state records and redirect to the provider.
+- `GET /api/auth/google/callback` and `GET /api/auth/discord/callback` consume state once, exchange the provider code, fetch the verified profile, provision/link the MallowCord account, and issue the short-lived login code used by `/api/auth/exchange`.
+- Google owner matching requires Google's `email_verified=true`; Discord owner matching uses the configured Discord user ID.
+- The browser continues to receive the existing `oauth_code` redirect and device-cookie exchange flow.
+
+The default callback URLs intentionally remain on the current Worker API domain. The Worker forwards those callback requests to Rust when the opt-in proxy is enabled, so the existing Google and Discord developer-console redirect URI registrations do not need to change for this staged cutover. If you later move callbacks directly to the Rust host, update both provider registrations and set `GOOGLE_REDIRECT_URI` and `DISCORD_REDIRECT_URI` accordingly.
+
+Before enabling OAuth proxy routes, configure these server-side variables on the Rust host:
+
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+- `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`
+- `OWNER_GOOGLE_EMAIL` and `OWNER_DISCORD_ID`
+- `FRONTEND_ORIGIN`
+
+The OAuth state and account tables are shared with the existing Neon database. Migration `0011_oauth_diagnostics.sql` adds explicit diagnostic storage and expiry indexes. No OAuth credentials belong in the frontend, Git history, or the MallowCord repository.
