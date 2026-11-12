@@ -20,7 +20,7 @@ The `feature/rust-api-migration` branch introduces:
 - Liveness and database-readiness endpoints.
 - Authenticated, timestamped HMAC event ingestion from trusted services.
 - Durable, idempotent event inbox for Discord and backend events.
-- Compatibility API routes for existing device-cookie session lookup, profile edits, preferences, presence, friends, friend requests, DMs, and DM messages.
+- Compatibility API routes for existing device-cookie session lookup/logout, account status, profile edits, preferences, presence, owner audit logs, friends, friend requests, DMs, and DM messages.
 - Server, channel, role, member, permission-overwrite, section-management, message, reaction, reply, forwarding, notification, attachment, and Discord outbox routes.
 - Authenticated WebSocket realtime gateway for channel and DM events, ready to replace the current polling after the API proxy is switched.
 - Python event sender for Mallow-Bot integration.
