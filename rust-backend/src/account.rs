@@ -446,7 +446,7 @@ fn valid_contact_target(channel: &str, value: &str) -> bool {
         "phone" => {
             let digits = value.strip_prefix('+').unwrap_or_default();
             (8..=15).contains(&digits.len())
-                && digits.starts_with(|character: char| character.is_ascii_digit() && character != '0')
+                && digits.chars().next().is_some_and(|character| character.is_ascii_digit() && character != '0')
                 && digits.bytes().all(|byte| byte.is_ascii_digit())
         }
         _ => false,
