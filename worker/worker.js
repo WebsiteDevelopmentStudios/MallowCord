@@ -1113,7 +1113,7 @@ if(p==="/api/admin/d1-usage"&&m==="GET"){
  if(!isOwner(u))return fail("Owner access required.",403);
  if(!env.CF_ANALYTICS_API_TOKEN)return fail("D1 analytics token is not configured on the Worker.",503);
  const date=new Date().toISOString().slice(0,10),accountId=env.CF_ACCOUNT_ID||"760bb0ff9afeb64ec51be54c045dd78c",mallowcordDbId="6b781710-a658-480a-9559-ded3cd61422a";
- const query=`query($accountTag:String!,$start:Date!,$end:Date!){
+ const query=`query($accountTag:string!,$start:Date,$end:Date){
   viewer{accounts(filter:{accountTag:$accountTag}){
    d1AnalyticsAdaptiveGroups(limit:100,filter:{date_geq:$start,date_leq:$end}){sum{rowsRead rowsWritten} dimensions{date databaseId}}
    d1StorageAdaptiveGroups(limit:100,filter:{date_geq:$start,date_leq:$end}){max{databaseSizeBytes} dimensions{date databaseId}}
