@@ -1,6 +1,5 @@
 const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const $=s=>document.querySelector(s);
-let resolveAppReady;const appReady=new Promise(resolve=>{resolveAppReady=resolve;});
 
 // Bind the settings launcher before the rest of the app initializes. Delegation
 // keeps the button functional even if a later startup listener fails.
@@ -101,7 +100,7 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 function toast(s){const t=$("#toast");t.textContent=s;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600)}
 function status(s){$("#authStatus").textContent=s}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-async function enterApp(){await appReady;try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");startPresenceHeartbeat();connectRealtime();$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";try{const p=await api("/account/profile");accountProfile=p?.profile&&typeof p.profile==="object"?p.profile:{};applyProfile()}catch(e){console.warn("Account profile:",e.message)}try{const s=await api("/account/preferences");accountPreferences=normalizePreferences(s?.settings);applyPreferences()}catch(e){console.warn("Account preferences:",e.message)}await loadServers()}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
+async function enterApp(){try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");startPresenceHeartbeat();connectRealtime();$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";try{const p=await api("/account/profile");accountProfile=p?.profile&&typeof p.profile==="object"?p.profile:{};applyProfile()}catch(e){console.warn("Account profile:",e.message)}try{const s=await api("/account/preferences");accountPreferences=normalizePreferences(s?.settings);applyPreferences()}catch(e){console.warn("Account preferences:",e.message)}await loadServers()}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
 async function loadNotificationSettings(){try{const d=await api("/notification-settings");notificationSettings.channels=new Set((d.settings||[]).filter(x=>x.scope_type==="channel"&&x.muted).map(x=>x.scope_id));notificationSettings.servers=new Set((d.settings||[]).filter(x=>x.scope_type==="server"&&x.muted).map(x=>x.scope_id));}catch(e){console.warn("Notification settings:",e.message)}}
 async function setNotificationMuted(scope,id,muted){await api("/notification-settings",{method:"POST",body:JSON.stringify({scope_type:scope,scope_id:id,muted})});const set=scope==="channel"?notificationSettings.channels:notificationSettings.servers;if(muted)set.add(id);else set.delete(id);await loadNotifications();toast((scope==="channel"?"Channel":"Server")+(muted?" muted.":" unmuted."))}
 async function clearItemNotifications(scope,id){await api("/notifications/clear",{method:"POST",body:JSON.stringify({scope_type:scope,scope_id:id})});await loadNotifications();toast("Message pings cleared.")}
@@ -792,5 +791,3 @@ $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});locatio
  window.addEventListener("resize",()=>{if(!mobile())closeDrawers()});
 })();
 
-// Signal that declarations and event handlers are ready before OAuth startup enters the app.
-resolveAppReady();
