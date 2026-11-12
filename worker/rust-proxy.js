@@ -38,6 +38,7 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/messages\/[^/]+\/reactions$/],
   ["POST", /^\/api\/messages\/[^/]+\/forward$/],
   ["DELETE", /^\/api\/messages\/[^/]+$/],
+  ["GET", /^\/api\/users\/[^/]+\/profile$/],
   ["GET", /^\/api\/friends$/],
   ["POST", /^\/api\/friends\/request$/],
   ["POST", /^\/api\/friends\/[^/]+\/[^/]+$/],
