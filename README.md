@@ -9,7 +9,7 @@ Discord-inspired community chat for Mallow Swamp.
 - Neon PostgreSQL is the primary application database, accessed by the Worker through Cloudflare Hyperdrive.
 - Cloudflare D1 remains bound temporarily as a rollback resource; it is not the current primary database.
 - Mallow-Bot remains the Discord Gateway bot and retains its Discord bot token.
-- The Rust/Axum service is being built as the long-term application backend. It connects directly to the same Neon database and is designed to run on an Oracle VM or another portable Linux host.
+- The Rust/Axum service is being built as the long-term application backend. It connects directly to the same Neon database and is designed to run on an Oracle VM or another portable Linux host. The Worker has an opt-in route allowlist for gradual API forwarding; it remains disabled until `RUST_API_ORIGIN` is configured.
 
 ## Rust migration status
 
@@ -23,6 +23,7 @@ The `feature/rust-api-migration` branch introduces:
 - Compatibility API routes for existing device-cookie session lookup/logout, account status, profile edits, preferences, presence, owner audit logs, friends, friend requests, DMs, and DM messages.
 - Server, channel, role, member, permission-overwrite, section-management, message, reaction, reply, forwarding, notification, attachment, and Discord outbox routes.
 - Authenticated WebSocket realtime gateway for channel and DM events, ready to replace the current polling after the API proxy is switched.
+- Optional Cloudflare Worker-to-Rust proxy with method-specific route allowlisting and tests; disabled by default.
 - Python event sender for Mallow-Bot integration.
 
 This is an incremental migration. The existing Worker remains live and continues serving the frontend while routes and business logic are ported and tested in Rust. The new event endpoint acknowledges durable storage; it does not yet claim that all event handlers have run.
@@ -40,7 +41,7 @@ This is an incremental migration. The existing Worker remains live and continues
 
 1. Move Discord member, presence, channel, role, and permission synchronization into Rust-backed durable processing.
 2. Port core account, profile, server, channel, membership, role, permission, message, reaction, reply, friend, and DM API domains while preserving existing IDs and Neon data.
-3. Replace five-second message polling with authenticated WebSocket real-time delivery.
+3. Switch only completed API routes through the opt-in Worker proxy, then replace five-second message polling with authenticated WebSocket real-time delivery.
 4. Port attachment metadata, upload validation, image processing, and GIF-safe delivery without tying object storage to Oracle.
 5. Add background jobs, retries, rate limits, metrics, tracing, and backup/restore verification.
 6. Switch the frontend API only after route parity and regression tests pass.
