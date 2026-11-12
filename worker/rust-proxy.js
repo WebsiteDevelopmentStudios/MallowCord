@@ -2,6 +2,7 @@ const RUST_ROUTES = [
   ["GET", /^\/api\/auth\/me$/],
   ["POST", /^\/api\/auth\/logout$/],
   ["POST", /^\/api\/auth\/username$/],
+  ["POST", /^\/api\/account\/contact\/(?:request|confirm)$/],
   ["GET", /^\/api\/discord\/link\/status$/],
   ["POST", /^\/api\/discord\/link\/start$/],
   ["POST", /^\/api\/bot\/command$/],
