@@ -1686,9 +1686,25 @@ async fn update_onboarding(
     }
 }
 
+
+async fn create_server_disabled(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let (_pool, _user) = match require_user(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"error": "Server creation is temporarily disabled. Server invitations are coming soon."})),
+    )
+        .into_response()
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/servers", get(list_servers))
+        .route("/api/servers", get(list_servers).post(create_server_disabled))
         .route("/api/servers/{server_id}/channels", get(list_channels).post(create_channel))
         .route("/api/servers/{server_id}/emojis", get(list_emojis).post(create_emoji))
         .route("/api/servers/{server_id}/emojis/{emoji_id}", axum::routing::delete(delete_emoji))
