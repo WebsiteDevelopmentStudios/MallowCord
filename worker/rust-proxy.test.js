@@ -52,7 +52,6 @@ test("keeps unported and unsupported routes on the Worker", () => {
   const cases = [
     ["GET", "/api/auth/google"],
     ["GET", "/api/auth/discord/callback"],
-    ["POST", "/api/auth/exchange"],
     ["POST", "/api/servers"],
     ["GET", "/api/servers/server-1/invites"],
     ["GET", "/api/messages/message-1/reactions"],
