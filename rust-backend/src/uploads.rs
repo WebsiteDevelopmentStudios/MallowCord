@@ -219,7 +219,6 @@ async fn upload_attachment(
 
 #[derive(FromRow)]
 struct AttachmentAccess {
-    id: String,
     channel_id: String,
     uploader_id: String,
     message_id: Option<String>,
@@ -233,7 +232,7 @@ async fn attachment_metadata(
     id: &str,
 ) -> Result<Option<AttachmentAccess>, sqlx::Error> {
     sqlx::query_as::<_, AttachmentAccess>(
-        "SELECT id, channel_id, uploader_id, message_id, filename, content_type, object_key
+        "SELECT channel_id, uploader_id, message_id, filename, content_type, object_key
          FROM message_attachments WHERE id = $1",
     )
     .bind(id)
