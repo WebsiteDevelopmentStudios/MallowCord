@@ -2,6 +2,33 @@ const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const $=s=>document.querySelector(s);
 let selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
 async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
+let realtimeSocket=null,realtimeReconnectTimer=null,realtimeRetry=1000;
+function realtimeConnected(){return typeof WebSocket!=="undefined"&&realtimeSocket?.readyState===WebSocket.OPEN}
+function startRealtimeFallback(){
+ if(channelId&&!poll)poll=setInterval(()=>{if(document.visibilityState==="visible")loadMessages()},8000);
+ if(activeDmId&&!dmPoll)dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},8000);
+}
+function stopRealtimeFallback(){
+ if(poll)clearInterval(poll);poll=null;
+ if(dmPoll)clearInterval(dmPoll);dmPoll=null;
+}
+function connectRealtime(){
+ if(!me||typeof WebSocket==="undefined"){startRealtimeFallback();return}
+ if(realtimeSocket&&(realtimeSocket.readyState===WebSocket.OPEN||realtimeSocket.readyState===WebSocket.CONNECTING))return;
+ try{
+  const endpoint=new URL(API_BASE+"/realtime");endpoint.protocol=endpoint.protocol==="https:"?"wss:":"ws:";
+  const socket=new WebSocket(endpoint.toString());realtimeSocket=socket;
+  socket.onopen=()=>{if(socket!==realtimeSocket)return;realtimeRetry=1000;stopRealtimeFallback()};
+  socket.onmessage=event=>{
+   let message;try{message=JSON.parse(event.data)}catch{return}
+   if(message.type==="resync.required"){if(channelId)loadMessages();if(activeDmId)loadDmMessages();loadMemberList();loadNotifications();return}
+   if(message.type?.startsWith("message.")&&message.channel_id===channelId)loadMessages();
+   if(message.type==="dm.message.created"&&message.conversation_id===activeDmId)loadDmMessages();
+  };
+  socket.onerror=()=>{try{socket.close()}catch{}};
+  socket.onclose=()=>{if(socket!==realtimeSocket)return;realtimeSocket=null;startRealtimeFallback();if(!me)return;if(realtimeReconnectTimer)clearTimeout(realtimeReconnectTimer);realtimeReconnectTimer=setTimeout(connectRealtime,realtimeRetry);realtimeRetry=Math.min(realtimeRetry*2,30000)};
+ }catch(error){console.warn("MallowCord realtime connection:",error.message);startRealtimeFallback()}
+}
 let presenceHeartbeatTimer=null;
 async function sendPresenceHeartbeat(){
  if(!me||document.visibilityState!=="visible")return;
@@ -12,12 +39,12 @@ function startPresenceHeartbeat(){
  sendPresenceHeartbeat();
  presenceHeartbeatTimer=setInterval(sendPresenceHeartbeat,60000);
 }
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){sendPresenceHeartbeat();if(channelId)loadMessages();if(activeDmId)loadDmMessages();loadNotifications()}});
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){sendPresenceHeartbeat();connectRealtime();if(channelId)loadMessages();if(activeDmId)loadDmMessages();loadNotifications()}});
 
 function toast(s){const t=$("#toast");t.textContent=s;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600)}
 function status(s){$("#authStatus").textContent=s}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-async function enterApp(){try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");startPresenceHeartbeat();$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";$("#addServer").style.display="none";await loadServers();try{const p=await api("/account/profile"),s=await api("/account/preferences");accountProfile=p.profile||{};accountPreferences={...preferenceDefaults,...s.settings};for(const k of Object.keys(preferenceDefaults))accountPreferences[k]={...preferenceDefaults[k],...(s.settings?.[k]||{})};applyProfile();applyPreferences()}catch(e){console.warn("Account preferences:",e.message)}}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
+async function enterApp(){try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");startPresenceHeartbeat();connectRealtime();$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";$("#addServer").style.display="none";await loadServers();try{const p=await api("/account/profile"),s=await api("/account/preferences");accountProfile=p.profile||{};accountPreferences={...preferenceDefaults,...s.settings};for(const k of Object.keys(preferenceDefaults))accountPreferences[k]={...preferenceDefaults[k],...(s.settings?.[k]||{})};applyProfile();applyPreferences()}catch(e){console.warn("Account preferences:",e.message)}}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
 async function loadNotificationSettings(){try{const d=await api("/notification-settings");notificationSettings.channels=new Set((d.settings||[]).filter(x=>x.scope_type==="channel"&&x.muted).map(x=>x.scope_id));notificationSettings.servers=new Set((d.settings||[]).filter(x=>x.scope_type==="server"&&x.muted).map(x=>x.scope_id));}catch(e){console.warn("Notification settings:",e.message)}}
 async function setNotificationMuted(scope,id,muted){await api("/notification-settings",{method:"POST",body:JSON.stringify({scope_type:scope,scope_id:id,muted})});const set=scope==="channel"?notificationSettings.channels:notificationSettings.servers;if(muted)set.add(id);else set.delete(id);await loadNotifications();toast((scope==="channel"?"Channel":"Server")+(muted?" muted.":" unmuted."))}
 async function clearItemNotifications(scope,id){await api("/notifications/clear",{method:"POST",body:JSON.stringify({scope_type:scope,scope_id:id})});await loadNotifications();toast("Message pings cleared.")}
@@ -103,7 +130,7 @@ async function loadChannels(){
  });
  mentionDirectory.channels=d.channels||[];if(d.channels[0])selectChannel(d.channels[0]);
 }
-function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").innerHTML=renderChannelLabel(c.name);document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}loadMessages();lastMessagesSignature="";poll=setInterval(()=>{if(document.visibilityState==="visible")loadMessages()},8000)}
+function selectChannel(c){channelId=c.id;currentChannel=c;lastMessagesSignature="";$("#channelTitle").innerHTML=renderChannelLabel(c.name);document.querySelectorAll(".channel").forEach(x=>x.classList.toggle("active",x.dataset.id===c.id));const voice=c.kind==="voice";$("#messages").classList.toggle("hidden",voice);$("#messageForm").classList.toggle("hidden",voice);$("#welcome").classList.toggle("hidden",voice);let notice=$("#voiceRoomNotice");if(!notice){notice=document.createElement("div");notice.id="voiceRoomNotice";notice.className="voice-room-notice";notice.innerHTML='<div class="voice-room-symbol">◖))</div><h2>Voice room</h2><p>This voice room is ready. Live voice calling is not connected yet.</p>';$(".chat").append(notice)}notice.classList.toggle("hidden",!voice);if(poll)clearInterval(poll);messagesLoading=false;if(voice){channelId=null;$("#messages").innerHTML="";return}lastMessagesSignature="";loadMessages();if(!realtimeConnected())poll=setInterval(()=>{if(document.visibilityState==="visible")loadMessages()},8000)}
 function normalizedEmojiName(value){return String(value||"").toLowerCase().replace(/[^a-z0-9]/g,"")}
 function customEmojiImage(name,fallbackUrl){
  const key=normalizedEmojiName(name),item=serverEmojis.find(x=>normalizedEmojiName(x.name)===key);
@@ -229,7 +256,7 @@ async function loadSocial(){
  $("#dmList").innerHTML=(d.conversations||[]).map(x=>'<button type="button" data-open-dm="'+esc(x.user_id)+'"><img class="social-user-avatar" src="'+esc(x.avatar_url||"")+'" alt=""><span>'+esc(x.display_name||x.username||"User")+'<small>'+esc(x.last_message||"No messages yet")+'</small></span></button>').join("")||'<p class="settings-note">No conversations yet.</p>';
 }
 async function openSocial(){try{$("#socialModal").classList.remove("hidden");await loadSocial()}catch(e){toast(e.message)}}
-async function openDm(userId){try{const d=await api("/dms/open",{method:"POST",body:JSON.stringify({user_id:userId})});activeDmId=d.conversation.id;activeDmUser=userId;$("#dmEmpty").classList.add("hidden");$("#dmMessages").classList.remove("hidden");$("#dmForm").classList.remove("hidden");await loadDmMessages();if(dmPoll)clearInterval(dmPoll);dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},8000);$("#dmForm [name=content]").focus()}catch(e){toast(e.message)}}
+async function openDm(userId){try{const d=await api("/dms/open",{method:"POST",body:JSON.stringify({user_id:userId})});activeDmId=d.conversation.id;activeDmUser=userId;$("#dmEmpty").classList.add("hidden");$("#dmMessages").classList.remove("hidden");$("#dmForm").classList.remove("hidden");await loadDmMessages();if(dmPoll)clearInterval(dmPoll);dmPoll=null;if(!realtimeConnected())dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},8000);$("#dmForm [name=content]").focus()}catch(e){toast(e.message)}}
 async function loadDmMessages(){if(!activeDmId)return;try{const d=await api("/dms/"+activeDmId+"/messages"),box=$("#dmMessages"),bottom=box.scrollHeight-box.scrollTop-box.clientHeight<80;box.innerHTML=(d.messages||[]).map(m=>'<div class="dm-message '+(m.author_id===me.id?"mine":"")+'"><small>'+esc(m.display_name||m.username)+' · '+new Date(m.created_at*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})+'</small>'+renderMarkdown(m.content)+'</div>').join("");if(bottom)box.scrollTop=box.scrollHeight}catch(e){console.warn("DM refresh:",e.message)}}
 $("#friendsBtn").onclick=openSocial;
 $("#closeSocialModal").onclick=()=>{$("#socialModal").classList.add("hidden");if(dmPoll)clearInterval(dmPoll);dmPoll=null;activeDmId=null};
