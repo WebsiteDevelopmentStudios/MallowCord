@@ -1,5 +1,20 @@
 const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const $=s=>document.querySelector(s);
+
+// Bind the settings launcher before the rest of the app initializes. Delegation
+// keeps the button functional even if a later startup listener fails.
+document.addEventListener("click",event=>{
+ const button=event.target.closest("#settingsBtn");
+ if(!button)return;
+ event.preventDefault();
+ if(typeof openAccountSettings==="function")openAccountSettings().catch(error=>{
+  console.error("Could not open account settings:",error);
+  const modal=document.querySelector("#modal");
+  const content=document.querySelector("#accountSettingsContent");
+  if(modal)modal.classList.remove("hidden");
+  if(content)content.innerHTML='<div class="settings-error">'+String(error?.message||"Could not open settings.")+'</div>';
+ });
+});
 let socialPeople=[],selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
 async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
 
@@ -717,7 +732,7 @@ function applyCustomCss(source){
 function applyBackgroundPreferences(){const a=accountPreferences.appearance||{};const enabled=!!a.backgroundEnabled;const url=String(a.backgroundImage||"");document.documentElement.style.setProperty("--mallow-custom-background",enabled&&url?"url("+JSON.stringify(url)+")":"none");document.documentElement.style.setProperty("--mallow-background-dim",String(Math.max(0,Math.min(85,Number(a.backgroundDim??62)))/100));document.documentElement.style.setProperty("--mallow-background-blur",String(Math.max(0,Math.min(20,Number(a.backgroundBlur??0)))+"px"));document.body.classList.toggle("custom-background-enabled",enabled&&!!url)}
 function applyPreferences(){const theme=accountPreferences.appearance?.theme||"dark";applyBackgroundPreferences();document.body.dataset.theme=theme;document.body.classList.toggle("reduced-motion",!!accountPreferences.accessibility?.reducedMotion);document.body.classList.toggle("high-contrast",!!accountPreferences.accessibility?.highContrast);document.documentElement.style.setProperty("--account-font-scale",accountPreferences.appearance?.fontScale||"100%");try{applyCustomCss(accountPreferences.appearance?.customCss||"")}catch(e){console.warn("Custom CSS:",e.message)}}
 document.querySelectorAll(".account-nav").forEach(b=>b.onclick=()=>showAccountPage(b.dataset.page));
-$("#settingsBtn").onclick=openAccountSettings;
+// Settings button is handled by the early delegated listener above.
 
 $("#closeModal").onclick=()=>$("#modal").classList.add("hidden");
 $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};
