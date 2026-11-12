@@ -285,6 +285,56 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
     }
     for chunk in role_writes.chunks(400) { db.batch(chunk.to_vec()).await?; }
 
+    // Preload all permission targets once per bounded batch. Channel overwrites
+    // can reference many users; resolving each target separately was another
+    // avoidable N+1 D1 read pattern.
+    let mut permission_user_ids = std::collections::HashSet::new();
+    let mut permission_role_ids = std::collections::HashSet::new();
+    for channel in payload.channels.iter() {
+        for overwrite in channel.overwrites.iter() {
+            if overwrite.target_type == "user" {
+                permission_user_ids.insert(overwrite.id.clone());
+            } else if overwrite.id != payload.everyone_role_id.as_deref().unwrap_or(&payload.guild_id)
+                && !role_ids.contains_key(&overwrite.id) {
+                permission_role_ids.insert(overwrite.id.clone());
+            }
+        }
+    }
+    let permission_user_ids: Vec<String> = permission_user_ids.into_iter().collect();
+    let permission_role_ids: Vec<String> = permission_role_ids.into_iter().collect();
+    let mut permission_users = std::collections::HashMap::<String, String>::new();
+    for chunk in permission_user_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+        for row in rows { permission_users.insert(row.discord_user_id, row.user_id); }
+    }
+    for chunk in permission_user_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<DiscordUserRow>()?;
+        for row in rows { permission_users.entry(row.discord_user_id).or_insert(row.user_id); }
+    }
+    let mut permission_roles = std::collections::HashMap::<String, String>::new();
+    for chunk in permission_role_ids.chunks(80) {
+        if chunk.is_empty() { continue; }
+        let mut params = vec![text(&server.id)];
+        params.extend(chunk.iter().map(|v| text(v)));
+        let rows = db.prepare(&format!(
+            "SELECT discord_role_id,role_id FROM discord_role_links WHERE server_id=? AND discord_role_id IN ({})",
+            placeholders(chunk.len())
+        )).bind(&params)?.all().await?.results::<RoleLinkRow>()?;
+        for row in rows { permission_roles.insert(row.discord_role_id, row.role_id); }
+    }
+
     let allowed_permissions = ["view_channel","send_messages","read_message_history","attach_files","embed_links","manage_messages"];
     let mut permission_writes = Vec::new();
     for channel in payload.channels.iter() {
@@ -294,21 +344,11 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             let target_id = if target_type == "role" {
                 if overwrite.id == payload.everyone_role_id.as_deref().unwrap_or(&payload.guild_id) {
                     everyone.as_ref().map(|r| r.id.clone())
-                } else if let Some(mapped) = role_ids.get(&overwrite.id) {
-                    Some(mapped.clone())
                 } else {
-                    db.prepare("SELECT role_id AS id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
-                        .bind(&[text(&overwrite.id),text(&server.id)])?
-                        .first::<IdRow>(None).await?.map(|r|r.id)
+                    role_ids.get(&overwrite.id).or_else(|| permission_roles.get(&overwrite.id)).cloned()
                 }
             } else {
-                let linked = db.prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?")
-                    .bind(&[text(&overwrite.id),text(&server.id)])?.first::<UserRow>(None).await?;
-                if let Some(row) = linked { Some(row.user_id) } else {
-                    db.prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?")
-                        .bind(&[text(&overwrite.id),text(&server.id)])?
-                        .first::<UserRow>(None).await?.map(|r|r.user_id)
-                }
+                permission_users.get(&overwrite.id).cloned()
             };
             let Some(target_id) = target_id else { continue; };
             let allow: Vec<&str> = overwrite.allow.iter().map(String::as_str).filter(|p| allowed_permissions.contains(p)).collect();
