@@ -1016,3 +1016,12 @@ body:before{background:rgba(0,0,0,var(--mallow-background-dim,.62));backdrop-fil
 #modal .close:hover{color:#fff}
 @media(max-width:760px){.dm-window{grid-template-columns:260px minmax(0,1fr)}#modal .account-settings-layout{grid-template-columns:190px minmax(0,1fr)}#modal .account-settings-content{padding:28px 20px 50px}}
 @media(max-width:560px){.dm-window{grid-template-columns:1fr}.dm-sidebar{display:none}.dm-main .dm-messages{padding:16px}.dm-main .dm-compose{padding:10px}.dm-main .dm-compose .primary{padding:0 12px}#modal .account-settings-layout{grid-template-columns:1fr}#modal .account-settings-nav{max-height:34vh;border-right:0;border-bottom:1px solid var(--line)}#modal .account-settings-content{padding:24px 18px 40px}#modal .account-field{grid-template-columns:1fr;gap:8px}}
+
+.dm-sidebar .social-person{display:flex;align-items:center;gap:6px;padding:4px 5px;border-radius:7px}
+.dm-sidebar .social-person:hover{background:rgba(255,255,255,.055)}
+.dm-sidebar .social-person>button:first-child{display:flex;align-items:center;gap:9px;min-width:0;flex:1;padding:4px;border:0;background:transparent;color:#d7dbe2;text-align:left}
+.dm-sidebar .social-person>button:first-child span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dm-sidebar .social-actions{display:flex;gap:3px;flex-wrap:wrap}
+.dm-sidebar .social-actions button{padding:5px 7px;border:0;border-radius:5px;background:rgba(255,255,255,.07);color:#c8ccd3;font-size:11px}
+.dm-sidebar .social-actions button:hover{background:rgba(255,255,255,.13);color:#fff}
+@media(min-width:900px){.app{grid-template-columns:var(--server-listing-width) 280px minmax(320px,1fr) 260px}}
