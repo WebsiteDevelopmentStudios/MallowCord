@@ -193,8 +193,78 @@ async fn create_ip_ban(
     Json(json!({"ok": true})).into_response()
 }
 
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+struct WorkerErrorLog {
+    id: String,
+    method: String,
+    path: String,
+    message: String,
+    stack: Option<String>,
+    origin: Option<String>,
+    created_at: i64,
+}
+
+async fn list_worker_errors(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let (pool, _) = match require_owner(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+
+    match sqlx::query_as::<_, WorkerErrorLog>(
+        "SELECT id, method, path, message, stack, origin, created_at
+         FROM worker_error_logs ORDER BY created_at DESC LIMIT 200",
+    )
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(errors) => Json(json!({"errors": errors})).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Worker error log lookup failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "worker_error_log_lookup_failed"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn clear_worker_errors(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let (pool, _) = match require_owner(&state, &headers).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+
+    match sqlx::query("DELETE FROM worker_error_logs")
+        .execute(&pool)
+        .await
+    {
+        Ok(result) => Json(json!({
+            "ok": true,
+            "deleted": result.rows_affected()
+        }))
+        .into_response(),
+        Err(error) => {
+            tracing::error!(%error, "Worker error log clear failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "worker_error_log_clear_failed"})),
+            )
+                .into_response()
+        }
+    }
+}
+
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/admin/audit", get(audit_events))
+        .route("/api/admin/errors", get(list_worker_errors).delete(clear_worker_errors))
         .route("/api/admin/ip-ban", axum::routing::post(create_ip_ban))
 }
