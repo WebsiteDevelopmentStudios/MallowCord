@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldProxyRustApi } from "./rust-proxy.js";
+import { proxyToRust, shouldProxyRustApi } from "./rust-proxy.js";
 
 test("proxies API domains already implemented in Rust", () => {
   const cases = [
@@ -42,5 +42,45 @@ test("keeps unported and unsupported routes on the Worker", () => {
 
   for (const [method, path] of cases) {
     assert.equal(shouldProxyRustApi(path, method), false, `${method} ${path}`);
+  }
+});
+
+
+test("Rust proxy stays disabled until an origin is configured", async () => {
+  const request = new Request("https://api.example.com/api/auth/me");
+  assert.equal(await proxyToRust(request, {}), null);
+});
+
+test("Rust proxy forwards the existing cookie, body, and query string", async () => {
+  const originalFetch = globalThis.fetch;
+  let forwarded;
+  globalThis.fetch = async (request) => {
+    forwarded = request;
+    return new Response("proxied", { status: 200 });
+  };
+
+  try {
+    const body = JSON.stringify({ display_name: "Mallow" });
+    const request = new Request(
+      "https://api.example.com/api/account/profile?from=web",
+      {
+        method: "POST",
+        headers: {
+          cookie: "mallowcord_device=test-session",
+          "content-type": "application/json",
+        },
+        body,
+      },
+    );
+    const response = await proxyToRust(request, {
+      RUST_API_ORIGIN: "https://rust.example.com",
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.url, "https://rust.example.com/api/account/profile?from=web");
+    assert.equal(forwarded.headers.get("cookie"), "mallowcord_device=test-session");
+    assert.equal(await forwarded.text(), body);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
