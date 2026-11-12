@@ -15,7 +15,7 @@ The Rust service is the destination for MallowCord's performance-sensitive API a
 - Optimized channel visibility and permission evaluation using batched PostgreSQL queries rather than per-channel query loops, plus additive indexes for sessions, memberships, message history, attachments, sections, and pending Discord outbox rows.
 - Mallow-Bot integration APIs for guild snapshot sync, Discord presence, Discord message ingestion, account linking, command queue/results, and outgoing-message acknowledgements; the web Discord-link flow and `-mb` command submission now use Rust too. PostgreSQL migrations include the bridge channel-link/outbox schema and additional indexes for channel lookups and pending outgoing-message delivery.
 - Mallow-Bot user listing and timeout/ban/unban/delete moderation endpoints.
-- Owner-only audit log and global IP-ban creation/enforcement.
+- Owner-only audit log, global IP-ban creation/enforcement, and Worker error-log listing/clearing.
 - Durable `event_inbox` table and `POST /internal/v1/events` for timestamped HMAC-SHA256 events, with body limits and idempotent event IDs.
 - Optional Cloudflare Worker proxy with a method-specific route allowlist. It remains disabled until the Worker variable `RUST_API_ORIGIN` is configured.
 - Container build and CI tests, including a syntax check for the browser application JavaScript.
@@ -146,3 +146,13 @@ Before enabling OAuth proxy routes, configure these server-side variables on the
 - `FRONTEND_ORIGIN`
 
 The OAuth state and account tables are shared with the existing Neon database. Migration `0011_oauth_diagnostics.sql` adds explicit diagnostic storage and expiry indexes. No OAuth credentials belong in the frontend, Git history, or the MallowCord repository.
+
+
+## Worker error-log administration
+
+The Worker continues to capture its own request exceptions into the shared Neon table. Rust now owns the owner-only admin endpoints:
+
+- `GET /api/admin/errors` returns the latest 200 Worker error records.
+- `DELETE /api/admin/errors` clears the stored records and returns the number deleted.
+
+Migration `0012_worker_error_logs.sql` creates the compatible table and a descending timestamp index. The Worker proxy forwards these routes only when `RUST_API_ORIGIN` is configured; otherwise the existing Worker handlers remain active.
