@@ -3,6 +3,9 @@ import { proxyToRust } from "./rust-proxy.js";
 import { LEGACY_MALLOW_SWAMP } from "./legacy-blueprint.js";
 const COOKIE="mallowcord_device",DAYS=30;
 let dmTypingTableReady=false;
+const schemaInitialization=new Map();
+function ensureSchemaOnce(key,initialize){let pending=schemaInitialization.get(key);if(!pending){pending=Promise.resolve().then(initialize);schemaInitialization.set(key,pending);pending.catch(()=>{if(schemaInitialization.get(key)===pending)schemaInitialization.delete(key)});}return pending;}
+let bridgeSystemServerPromise=null;
 const now=()=>Math.floor(Date.now()/1000),uid=()=>crypto.randomUUID();
 const json=(d,s=200,h={})=>new Response(JSON.stringify(d),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const fail=(e,s=400)=>json({error:e},s),hex=b=>Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
@@ -22,9 +25,10 @@ async function recovery(env,userId){const chars="ABCDEFGHJKLMNPQRSTUVWXYZ2345678
 async function joinSwamp(env,userId){const s=await getDatabase(env).prepare("SELECT id FROM servers WHERE is_system=1 LIMIT 1").first();if(!s)return;await getDatabase(env).prepare("INSERT OR IGNORE INTO memberships(server_id,user_id,joined_at) VALUES(?,?,?)").bind(s.id,userId,now()).run();const rs=await getDatabase(env).prepare("SELECT id FROM roles WHERE server_id=? AND name IN ('@everyone','@Member')").bind(s.id).all();for(const r of rs.results)await getDatabase(env).prepare("INSERT OR IGNORE INTO member_roles(server_id,user_id,role_id) VALUES(?,?,?)").bind(s.id,userId,r.id).run();}
 async function audit(env,actor,target,action,details){await getDatabase(env, "audit_logs").prepare("INSERT INTO audit_logs(id,actor_id,target_user_id,action,details,created_at) VALUES(?,?,?,?,?,?)").bind(uid(),actor||null,target||null,action,details||"",now()).run();}
 
-async function ensureChannelPermissionTable(env){
+async function ensureChannelPermissionTable(env){return ensureSchemaOnce("channel-permissions",async()=>{
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS channel_permissions(channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,target_type TEXT NOT NULL CHECK(target_type IN ('role','user')),target_id TEXT NOT NULL,allow_json TEXT NOT NULL DEFAULT '[]',deny_json TEXT NOT NULL DEFAULT '[]',updated_at INTEGER NOT NULL,PRIMARY KEY(channel_id,target_type,target_id))").run();
-}
+
+});}
 async function channelPermissionAllowed(env,channelId,userId,permission){
  await ensureChannelPermissionTable(env);
  const channel=await getDatabase(env).prepare("SELECT server_id FROM channels WHERE id=?").bind(channelId).first();
@@ -50,7 +54,7 @@ const OAUTH_REDIRECTS={
  google:"https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/google/callback",
  discord:"https://mallowcord-api.wowgrayhaha.workers.dev/api/auth/discord/callback"
 };
-async function ensureAccountTables(env){
+async function ensureAccountTables(env){return ensureSchemaOnce("account-tables",async()=>{return ensureSchemaOnce("account-tables",async()=>{
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_profiles(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,display_name TEXT,avatar_url TEXT,email TEXT,email_verified_at INTEGER,phone TEXT,phone_verified_at INTEGER,updated_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,settings_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS contact_verifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,channel TEXT NOT NULL,target TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
@@ -59,13 +63,16 @@ async function ensureAccountTables(env){
  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN pronouns TEXT").run().catch(()=>{});
  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN discord_username TEXT").run().catch(()=>{});
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
-}
-async function ensureOAuthTables(env){
+
+});
+});}
+async function ensureOAuthTables(env){return ensureSchemaOnce("oauth-tables",async()=>{
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS oauth_states(state_hash TEXT PRIMARY KEY,provider TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS oauth_accounts(provider TEXT NOT NULL,provider_user_id TEXT NOT NULL,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,email TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(provider,provider_user_id),UNIQUE(provider,user_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS oauth_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
-}
-async function ensureBridgeSystemServer(env){
+
+});}
+async function ensureBridgeSystemServer(env){if(!bridgeSystemServerPromise){bridgeSystemServerPromise=(async()=>{
  let server=await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
  if(server){await restoreLegacySystemServer(env,server.id);return server;}
  let owner=await getDatabase(env).prepare("SELECT id FROM users WHERE account_type='owner' ORDER BY created_at LIMIT 1").first();
@@ -81,7 +88,7 @@ async function ensureBridgeSystemServer(env){
  }
  await ensureOAuthSystemServer(env,owner.id);
  return await getDatabase(env).prepare("SELECT id,owner_id FROM servers WHERE is_system=1 LIMIT 1").first();
-}
+})();bridgeSystemServerPromise.catch(()=>{bridgeSystemServerPromise=null;});}return bridgeSystemServerPromise;}
 async function restoreLegacySystemServer(env,serverId){
  const db=getDatabase(env),cfg=LEGACY_MALLOW_SWAMP,t=now();
  await db.prepare("CREATE TABLE IF NOT EXISTS system_config_migrations(server_id TEXT NOT NULL,migration_key TEXT NOT NULL,applied_at INTEGER NOT NULL,PRIMARY KEY(server_id,migration_key))").run();
@@ -282,22 +289,24 @@ if(p!=="/api/bootstrap"&&env.DB){const blocked=await getDatabase(env).prepare("S
 if(p==="/api/bootstrap"&&m==="POST")return fail("Password-based bootstrap has been removed. Sign in with the configured owner Google or Discord account.",410);
 
 /* Two-way Discord bridge for the official Mallow Swamp server. */
-const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
-if(discordBridgePath){
- if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
- const expectedGuild="1560367587542433812";
- await ensureAccountTables(env);const system=await ensureBridgeSystemServer(env);
- if(!system)return fail("Mallow Swamp could not be initialized.",503);
- await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
+async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-bridge-tables",async()=>{ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_channel_links(discord_channel_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,mallow_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,category_name TEXT,updated_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_user_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_role_links(discord_role_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE)").run();
   await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_message_links(discord_message_id TEXT PRIMARY KEY,mallow_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,discord_channel_id TEXT NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
+});}
+const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
+if(discordBridgePath){
+ if(!env.MALLOWBOT_SERVICE_KEY||req.headers.get("X-MallowBot-Key")!==env.MALLOWBOT_SERVICE_KEY)return fail("Integration authentication failed.",401);
+ const expectedGuild="1560367587542433812";
+ await ensureAccountTables(env);const system=await ensureBridgeSystemServer(env);
+ if(!system)return fail("Mallow Swamp could not be initialized.",503);
+ await ensureDiscordBridgeTables(env);
 
  if(p==="/api/integrations/mallowbot/discord/link/claim"&&m==="POST"){
-  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_account_links(discord_user_id TEXT PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,updated_at INTEGER NOT NULL,UNIQUE(server_id,user_id))").run();
+
   const b=await body(req),code=String(b.code||"").replace(/[^A-Za-z0-9]/g,"").toUpperCase(),discordId=String(b.discord_user_id||"");
   if(!/^[A-Z0-9]{8}$/.test(code)||!/^[0-9]{15,22}$/.test(discordId))return fail("Invalid link code.");
   const hash=await sha(code),row=await getDatabase(env).prepare("SELECT user_id,expires_at FROM discord_link_codes WHERE code_hash=?").bind(hash).first();
@@ -337,7 +346,7 @@ if(discordBridgePath){
  }
  if(p==="/api/integrations/mallowbot/discord/sync"&&m==="POST"){
   const b=await body(req);
-  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to the configured official Discord server.",403);
+if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to the configured official Discord server.",403);
   const channels=Array.isArray(b.channels)?b.channels.slice(0,250):[],roles=Array.isArray(b.roles)?b.roles.slice(0,250):[],members=Array.isArray(b.members)?b.members.slice(0,250):[];
   await getDatabase(env).prepare("UPDATE servers SET icon_url=COALESCE(?,icon_url) WHERE id=?").bind(typeof b.icon_url==="string"?b.icon_url:null,system.id).run();
   const everyone=await getDatabase(env).prepare("SELECT id FROM roles WHERE server_id=? AND name='@everyone'").bind(system.id).first();
@@ -619,13 +628,14 @@ if(x&&m==="GET"){
  const outgoing=await getDatabase(env).prepare("SELECT 1 FROM friend_requests WHERE sender_id=? AND recipient_id=? AND status='pending'").bind(u.id,targetId).first();
  return json({profile,roles,friend_status:friendship?"friends":incoming?"incoming":outgoing?"outgoing":"none"});
 }
-async function ensureSocialTables(env){
+async function ensureSocialTables(env){return ensureSchemaOnce("social-tables",async()=>{
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS friend_requests(id TEXT PRIMARY KEY,sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(sender_id,recipient_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS friendships(user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,PRIMARY KEY(user_low_id,user_high_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS dm_conversations(id TEXT PRIMARY KEY,user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(user_low_id,user_high_id))").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS dm_messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,content TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
 
-}
+
+});}
 if(p==="/api/friends"&&m==="GET"){
  await ensureSocialTables(env);
  const friends=await getDatabase(env).prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.user_id=u.id) OR EXISTS(SELECT 1 FROM discord_account_links dal WHERE dal.user_id=u.id) THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_low_id=? THEN f.user_high_id ELSE f.user_low_id END LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE f.user_low_id=? OR f.user_high_id=? ORDER BY COALESCE(up.display_name,u.username)").bind(now()-90,u.id,u.id,u.id).all();
@@ -1014,10 +1024,11 @@ if(x&&m==="POST"){
 const forwardRoute=p.match(/^\/api\/messages\/([\w-]+)\/forward$/);
 if(forwardRoute&&m==="POST"){const source=await getDatabase(env).prepare("SELECT m.id,m.content,u.username,c.server_id FROM messages m JOIN users u ON u.id=m.author_id JOIN channels c ON c.id=m.channel_id WHERE m.id=?").bind(forwardRoute[1]).first();if(!source)return fail("Message not found.",404);const sourceMember=await getDatabase(env).prepare("SELECT 1 FROM memberships WHERE server_id=? AND user_id=?").bind(source.server_id,u.id).first();if(!sourceMember)return fail("You cannot access this message.",403);const b=await body(req),target=String(b.target_channel_id||"");const targetChannel=await getDatabase(env).prepare("SELECT c.id,c.server_id FROM channels c JOIN memberships m ON m.server_id=c.server_id WHERE c.id=? AND m.user_id=? AND c.kind='text'").bind(target,u.id).first();if(!targetChannel)return fail("Choose a text channel you belong to.",403);const id=uid(),t=now();await getDatabase(env).prepare("INSERT INTO messages(id,channel_id,author_id,content,created_at) VALUES(?,?,?,?,?)").bind(id,target,u.id,source.content,t).run();await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS message_forwards(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,source_message_id TEXT,source_username TEXT NOT NULL,created_at INTEGER NOT NULL)").run();await getDatabase(env).prepare("INSERT INTO message_forwards(message_id,source_message_id,source_username,created_at) VALUES(?,?,?,?)").bind(id,source.id,source.username,t).run();return json({ok:true,message:{id,content:source.content,created_at:t}},201);}
 
-async function ensureMessageExtras(env){
+async function ensureMessageExtras(env){return ensureSchemaOnce("message-extras",async()=>{
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS message_replies(message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,reply_to_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS message_reactions(message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,emoji TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(message_id,user_id,emoji))").run();
-}
+
+});}
 const messageAction=p.match(/^\/api\/messages\/([\w-]+)(?:\/(edit|reactions))?$/);
 if(messageAction){
  const mid=messageAction[1],action=messageAction[2]||"";
@@ -1082,9 +1093,10 @@ if(p==="/api/bot/command"&&m==="POST"){
  return json({ok:true,accepted:true,queued:true});
 }
 
-async function ensureAttachmentTable(env){
+async function ensureAttachmentTable(env){return ensureSchemaOnce("attachment-table",async()=>{
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS message_attachments(id TEXT PRIMARY KEY,channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,uploader_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,filename TEXT NOT NULL,content_type TEXT NOT NULL,size INTEGER NOT NULL,object_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)").run();
-}
+
+});}
 function attachmentBase64(bytes){
  let binary="";for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));
  return btoa(binary);
