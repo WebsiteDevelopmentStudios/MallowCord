@@ -94,7 +94,7 @@ async function loadMemberList(){
  try{
   const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[];
   const discord=members.filter(m=>String(m.id).startsWith("discord:")),discordBots=discord.filter(m=>m.is_bot),discordHumans=discord.filter(m=>!m.is_bot),native=members.filter(m=>!String(m.id).startsWith("discord:"));
-  $("#memberCountLabel").textContent="MEMBERS — "+(members.length+1);
+  $("#memberCountLabel").textContent="MEMBERS — "+(members.length+(discordBots.some(m=>/mallow.?bot/i.test((m.username||"")+" "+(m.display_name||"")))?0:1));
   const online=m=>["online","idle","dnd"].includes(m.presence),
    roleData=m=>{try{return JSON.parse(m.roles_json||"[]")}catch{return []}},
    button=m=>{const label=m.display_name||m.username||"User",avatar=m.avatar_url?'<img src="'+esc(m.avatar_url)+'" alt="">':esc(label[0].toUpperCase()),state=m.presence||"offline",highest=roleData(m).sort((x,y)=>(y.position||0)-(x.position||0))[0],nameColor=highest?.color&&/^#[0-9a-f]{6}$/i.test(highest.color)?highest.color:"";return '<button type="button" class="member member-profile-trigger" data-user-id="'+esc(m.id)+'"><span class="avatar status-avatar" data-status="'+esc(state)+'">'+avatar+'</span><span class="member-copy"><b'+(nameColor?' style="color:'+esc(nameColor)+'"':"")+'>'+esc(label)+'</b><small class="member-username">'+esc(m.username||"")+'</small></span></button>'},
