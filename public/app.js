@@ -1,12 +1,15 @@
 const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const $=s=>document.querySelector(s);
+let resolveAppReady;const appReady=new Promise(resolve=>{resolveAppReady=resolve;});
 
 // Bind the settings launcher before the rest of the app initializes. Delegation
 // keeps the button functional even if a later startup listener fails.
 document.addEventListener("click",event=>{
- const nav=event.target.closest(".account-nav");
+ const target=event.target instanceof Element?event.target:null;if(!target)return;
+ if(target.closest("#closeModal")){event.preventDefault();document.querySelector("#modal")?.classList.add("hidden");return}
+ const nav=target.closest(".account-nav");
  if(nav){event.preventDefault();showAccountPage(nav.dataset.page).catch(error=>{console.error("Settings page failed:",error);const root=document.querySelector("#accountSettingsContent");if(root)root.innerHTML='<div class="settings-error">'+String(error?.message||"Could not load this settings page.")+'</div>'});return}
- const button=event.target.closest("#settingsBtn");
+ const button=target.closest("#settingsBtn");
  if(!button)return;
  event.preventDefault();
  if(typeof openAccountSettings==="function")openAccountSettings().catch(error=>{
@@ -17,6 +20,7 @@ document.addEventListener("click",event=>{
   if(content)content.innerHTML='<div class="settings-error">'+String(error?.message||"Could not open settings.")+'</div>';
  });
 });
+document.addEventListener("keydown",event=>{if(event.key==="Escape")document.querySelector("#modal")?.classList.add("hidden")});
 let socialPeople=[],selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
 async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
 
@@ -97,7 +101,7 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 function toast(s){const t=$("#toast");t.textContent=s;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600)}
 function status(s){$("#authStatus").textContent=s}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-async function enterApp(){try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");startPresenceHeartbeat();connectRealtime();$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";try{const p=await api("/account/profile");accountProfile=p.profile||{};applyProfile()}catch(e){console.warn("Account profile:",e.message)}try{const s=await api("/account/preferences");accountPreferences={...preferenceDefaults,...(s.settings||{})};for(const k of Object.keys(preferenceDefaults))accountPreferences[k]={...preferenceDefaults[k],...(s.settings?.[k]||{})};applyPreferences()}catch(e){console.warn("Account preferences:",e.message)}await loadServers()}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
+async function enterApp(){await appReady;try{if(!me)me=(await api("/auth/me")).user;$("#auth").classList.add("hidden");$("#app").classList.remove("hidden");startPresenceHeartbeat();connectRealtime();$("#currentUsername").textContent=me.username;$("#userAvatar").textContent=me.username[0].toUpperCase();$("#accountType").textContent=me.account_type==="basic"?"Basic account":"Full access";try{const p=await api("/account/profile");accountProfile=p?.profile&&typeof p.profile==="object"?p.profile:{};applyProfile()}catch(e){console.warn("Account profile:",e.message)}try{const s=await api("/account/preferences");accountPreferences=normalizePreferences(s?.settings);applyPreferences()}catch(e){console.warn("Account preferences:",e.message)}await loadServers()}catch(e){$("#auth").classList.remove("hidden");$("#app").classList.add("hidden");status("Signed in, but MallowCord could not load: "+(e?.message||"Unknown error"))}}
 async function loadNotificationSettings(){try{const d=await api("/notification-settings");notificationSettings.channels=new Set((d.settings||[]).filter(x=>x.scope_type==="channel"&&x.muted).map(x=>x.scope_id));notificationSettings.servers=new Set((d.settings||[]).filter(x=>x.scope_type==="server"&&x.muted).map(x=>x.scope_id));}catch(e){console.warn("Notification settings:",e.message)}}
 async function setNotificationMuted(scope,id,muted){await api("/notification-settings",{method:"POST",body:JSON.stringify({scope_type:scope,scope_id:id,muted})});const set=scope==="channel"?notificationSettings.channels:notificationSettings.servers;if(muted)set.add(id);else set.delete(id);await loadNotifications();toast((scope==="channel"?"Channel":"Server")+(muted?" muted.":" unmuted."))}
 async function clearItemNotifications(scope,id){await api("/notifications/clear",{method:"POST",body:JSON.stringify({scope_type:scope,scope_id:id})});await loadNotifications();toast("Message pings cleared.")}
@@ -507,6 +511,7 @@ var preferenceDefaults={
  clips:{saveClips:false,clipQuality:"1080p"},
  overlay:{enableOverlay:false,overlayPosition:"top-right"}
 };
+function normalizePreferences(raw){const source=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};const result={};for(const key of Object.keys(preferenceDefaults)){const value=source[key];result[key]={...preferenceDefaults[key],...(value&&typeof value==="object"&&!Array.isArray(value)?value:{})};}return result;}
 const accountPageMeta={
  "account-info":["Account Info","Change your username, display name, profile picture and contact details."],
  "discord-link":["Discord Link","Connect your MallowCord account to your Discord identity to use Mallow-Bot commands."],
@@ -711,8 +716,8 @@ async function getCroppedAvatar(){
 }
 
 function applyProfile(){
- const name=accountProfile.display_name||me.username;$("#currentUsername").textContent=name;
- const avatar=$("#userAvatar"),avatarUrl=accountProfile.avatar_url||me?.avatar_url||"";avatar.innerHTML=avatarUrl?'<img src="'+esc(avatarUrl)+'" alt="">':esc(name[0].toUpperCase());avatar.dataset.status=accountProfile.status||"online";$("#currentUsername").dataset.status=accountProfile.status||"online";
+ const name=accountProfile?.display_name||me?.username||"User";$("#currentUsername").textContent=name;
+ const avatar=$("#userAvatar"),avatarUrl=accountProfile?.avatar_url||me?.avatar_url||"";avatar.textContent=avatarUrl?"":name[0].toUpperCase();if(avatarUrl){const img=document.createElement("img");img.alt="";img.referrerPolicy="no-referrer";img.decoding="async";img.src=avatarUrl;img.onerror=()=>{img.remove();avatar.textContent=name[0].toUpperCase()};avatar.append(img)}avatar.dataset.status=accountProfile?.status||"online";$("#currentUsername").dataset.status=accountProfile?.status||"online";
 }
 function applyCustomCss(source){
  let css=String(source||"");
@@ -786,3 +791,6 @@ $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});locatio
  app.addEventListener("touchcancel",finish,{passive:true});
  window.addEventListener("resize",()=>{if(!mobile())closeDrawers()});
 })();
+
+// Signal that declarations and event handlers are ready before OAuth startup enters the app.
+resolveAppReady();
