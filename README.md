@@ -20,6 +20,7 @@ The `feature/rust-api-migration` branch introduces:
 - Liveness and database-readiness endpoints.
 - Authenticated, timestamped HMAC event ingestion from trusted services.
 - Durable, idempotent event inbox for Discord and backend events.
+- Compatibility API routes for existing device-cookie session lookup, profile edits, preferences, presence, friends, friend requests, DMs, and DM messages.
 - Python event sender for Mallow-Bot integration.
 
 This is an incremental migration. The existing Worker remains live and continues serving the frontend while routes and business logic are ported and tested in Rust. The new event endpoint acknowledges durable storage; it does not yet claim that all event handlers have run.
