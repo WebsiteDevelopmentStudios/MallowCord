@@ -104,13 +104,14 @@ When the Rust host is deployed and verified:
 4. Confirm the proxy allowlist tests and Rust CI are green.
 5. Enable the variable only after checking the exact routes being forwarded.
 
-Before enabling the proxy for the Discord bridge routes, configure these Rust service variables:
+Before enabling the proxy, configure these Rust service variables:
 
 - `MALLOWBOT_SERVICE_KEY`: the same private integration key currently used by Mallow-Bot and the Worker.
+- `IP_HASH_SECRET`: the exact same secret currently used by the Worker for global IP-ban hashes.
 - `MALLOWCORD_DISCORD_GUILD_ID`: the official Discord guild ID. It defaults to the current configured guild if omitted.
 - `MALLOWBOT_ICON_URL`: optional public icon URL used for bot-generated command responses.
 
-Do not place these values in the repository or browser configuration. The Discord snapshot, presence, message ingestion, account linking, command queue/result, and outgoing-message acknowledgement routes are now implemented in Rust. Mallow-Bot user listing and timeout/ban/unban/delete moderation endpoints are also implemented in Rust. Account contact verification and remaining admin utilities remain on the Worker for now.
+Do not place these values in the repository or browser configuration. Keep the Rust origin private behind the intended Cloudflare/Worker path; the IP-ban middleware trusts Cloudflare's `CF-Connecting-IP` header. The Discord snapshot, presence, message ingestion, account linking, command queue/result, and outgoing-message acknowledgement routes are now implemented in Rust. Mallow-Bot user listing and timeout/ban/unban/delete moderation endpoints are also implemented in Rust. Account contact verification and remaining admin utilities remain on the Worker for now.
 
 Only routes and HTTP methods already implemented in Rust are forwarded. Google/Discord OAuth start and callbacks, OAuth code exchange, contact verification, Mallow-Bot Discord bridge endpoints, and other unported routes continue to run on the Worker. Browser cookies and request bodies are forwarded so the existing same-origin session contract is preserved. The Worker adds CORS support for the Rust section PATCH route.
 
