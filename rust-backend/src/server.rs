@@ -1306,7 +1306,7 @@ async fn server_emoji_manager(
     pool: &PgPool,
     user: &AuthUser,
     server_id: &str,
-) -> Result<bool, Response> {
+) -> Result<bool, Box<Response>> {
     let owner_id = sqlx::query_scalar::<_, String>(
         "SELECT owner_id FROM servers WHERE id = $1",
     )
@@ -1315,10 +1315,10 @@ async fn server_emoji_manager(
     .await
     .map_err(|error| {
         tracing::error!(%error, "emoji server lookup failed");
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response()
+        Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response())
     })?;
     let Some(owner_id) = owner_id else {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Server not found."}))).into_response());
+        return Err(Box::new((StatusCode::NOT_FOUND, Json(json!({"error": "Server not found."}))).into_response()));
     };
     let member = sqlx::query_scalar::<_, i32>(
         "SELECT 1 FROM memberships WHERE server_id = $1 AND user_id = $2",
@@ -1332,7 +1332,7 @@ async fn server_emoji_manager(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "emoji_lookup_failed"}))).into_response()
     })?;
     if member.is_none() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response());
+        return Err(Box::new((StatusCode::FORBIDDEN, Json(json!({"error": "You are not a member of this server."}))).into_response()));
     }
     Ok(user.account_type == "owner" || owner_id == user.id)
 }
