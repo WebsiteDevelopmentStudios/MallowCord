@@ -73,7 +73,7 @@ async function sendPresenceHeartbeat(){
 function startPresenceHeartbeat(){
  if(presenceHeartbeatTimer)clearInterval(presenceHeartbeatTimer);
  sendPresenceHeartbeat();
- presenceHeartbeatTimer=setInterval(sendPresenceHeartbeat,60000);
+ presenceHeartbeatTimer=setInterval(sendPresenceHeartbeat,20000);
 }
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){sendPresenceHeartbeat();connectRealtime();if(channelId)loadMessages();if(activeDmId)loadDmMessages();if(serverId)loadMemberList();loadNotifications()}});
 
@@ -287,14 +287,14 @@ function beginReply(m){replyingTo=m;const bar=$("#replyingToBar");bar.innerHTML=
 let activeDmId=null,activeDmUser=null,dmPoll=null;
 async function loadSocial(){
  const [f,d]=await Promise.all([api("/friends"),api("/dms")]);
- const renderUser=(person,actions)=>'<div class="social-person"><button type="button" data-social-profile="'+esc(person.user_id||person.id)+'"><img class="social-user-avatar" src="'+esc(person.avatar_url||"")+'" alt=""><span>'+esc(person.display_name||person.username||"User")+'<small>@'+esc(person.username||"")+'</small></span></button><span class="social-actions">'+actions+'</span></div>';
+ const renderUser=(person,actions)=>'<div class="social-person"><button type="button" data-social-profile="'+esc(person.user_id||person.id)+'"><img class="social-user-avatar" src="'+esc(person.avatar_url||"")+'" alt=""><i class="presence-dot '+esc(person.presence||"offline")+'"></i><span>'+esc(person.display_name||person.username||"User")+'<small>@'+esc(person.username||"")+'</small></span></button><span class="social-actions">'+actions+'</span></div>';
  $("#friendRequests").innerHTML=(f.incoming||[]).map(x=>renderUser(x,'<button type="button" data-friend-action="accept" data-user-id="'+esc(x.user_id)+'">Accept</button><button type="button" data-friend-action="decline" data-user-id="'+esc(x.user_id)+'">Decline</button>')).join("")+(f.outgoing||[]).map(x=>renderUser(x,'<small>Pending</small>')).join("")||'<p class="settings-note">No pending requests.</p>';
  $("#friendList").innerHTML=(f.friends||[]).map(x=>renderUser(x,'<button type="button" data-open-dm="'+esc(x.id)+'">Message</button><button type="button" data-friend-action="remove" data-user-id="'+esc(x.id)+'">Remove</button>')).join("")||'<p class="settings-note">No friends yet.</p>';
- socialPeople=[...(f.friends||[]),...(d.conversations||[])].filter((p,i,a)=>a.findIndex(x=>String(x.user_id||x.id)===String(p.user_id||p.id))===i);$("#dmList").innerHTML=(d.conversations||[]).map(x=>'<button type="button" data-open-dm="'+esc(x.user_id)+'"><img class="social-user-avatar" src="'+esc(x.avatar_url||"")+'" alt=""><span>'+esc(x.display_name||x.username||"User")+'<small>'+esc(x.last_message||"No messages yet")+'</small></span></button>').join("")||'<p class="settings-note">No conversations yet.</p>';
+ socialPeople=[...(f.friends||[]),...(d.conversations||[])].filter((p,i,a)=>a.findIndex(x=>String(x.user_id||x.id)===String(p.user_id||p.id))===i);$("#dmList").innerHTML=(d.conversations||[]).map(x=>'<button type="button" data-open-dm="'+esc(x.user_id)+'"><img class="social-user-avatar" src="'+esc(x.avatar_url||"")+'" alt=""><i class="presence-dot '+esc(x.presence||"offline")+'"></i><span>'+esc(x.display_name||x.username||"User")+'<small>'+esc(x.last_message||"No messages yet")+'</small></span></button>').join("")||'<p class="settings-note">No conversations yet.</p>';
 }
 async function openSocial(){try{$("#app").classList.add("dm-mode");$("#dmWindow").classList.remove("dm-conversation-open");$("#dmProfilePanel").classList.add("hidden");$("#socialModal").classList.remove("hidden");document.querySelectorAll(".servers .server-icon").forEach(b=>b.classList.toggle("active",b.id==="dmHomeBtn"));await loadSocial()}catch(e){toast(e.message)}}
 $("#startConversationBtn").onclick=()=>$("#addFriendForm [name=username]")?.focus();
-async function openDm(userId){try{stopDmTyping();if(dmTypingPoll)clearInterval(dmTypingPoll);$("#dmWindow").classList.add("dm-conversation-open");const conversationButton=Array.from(document.querySelectorAll("#dmList [data-open-dm]")).find(el=>el.dataset.openDm===String(userId));const conversationName=conversationButton?.querySelector("span")?.childNodes?.[0]?.textContent?.trim()||"Direct Message";$("#dmHeaderTitle").textContent=conversationName;const d=await api("/dms/open",{method:"POST",body:JSON.stringify({user_id:userId})});activeDmId=d.conversation.id;activeDmUser=userId;$("#dmEmpty").classList.add("hidden");await loadDmProfile(userId);$("#dmMessages").classList.remove("hidden");$("#dmForm").classList.remove("hidden");await loadDmMessages();if(dmTypingPoll)clearInterval(dmTypingPoll);dmTypingPoll=setInterval(refreshDmTyping,2500);refreshDmTyping();if(dmPoll)clearInterval(dmPoll);dmPoll=null;if(!realtimeConnected())dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},8000);$("#dmForm [name=content]").focus()}catch(e){toast(e.message)}}
+async function openDm(userId){try{stopDmTyping();if(dmTypingPoll)clearInterval(dmTypingPoll);$("#dmWindow").classList.add("dm-conversation-open");const conversationButton=Array.from(document.querySelectorAll("#dmList [data-open-dm]")).find(el=>el.dataset.openDm===String(userId));const conversationName=conversationButton?.querySelector("span")?.childNodes?.[0]?.textContent?.trim()||"Direct Message";$("#dmHeaderTitle").textContent=conversationName;const d=await api("/dms/open",{method:"POST",body:JSON.stringify({user_id:userId})});activeDmId=d.conversation.id;activeDmUser=userId;$("#dmEmpty").classList.add("hidden");await loadDmProfile(userId);$("#dmMessages").classList.remove("hidden");$("#dmForm").classList.remove("hidden");await loadDmMessages();if(dmTypingPoll)clearInterval(dmTypingPoll);dmTypingPoll=setInterval(refreshDmTyping,3000);refreshDmTyping();if(dmPoll)clearInterval(dmPoll);dmPoll=null;if(!realtimeConnected())dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},8000);$("#dmForm [name=content]").focus()}catch(e){toast(e.message)}}
 async function loadDmProfile(userId){
  const panel=$("#dmProfilePanel");if(!panel)return;
  const cached=socialPeople.find(p=>String(p.user_id||p.id)===String(userId))||{};
@@ -312,7 +312,7 @@ async function loadDmProfile(userId){
 let dmTypingPoll=null,dmTypingLastSent=0,dmTypingIdleTimer=null,dmTypingValue="";
 async function sendDmTyping(typing){
  if(!activeDmId)return;
- const nowMs=Date.now();if(typing&&nowMs-dmTypingLastSent<2500)return;
+ const nowMs=Date.now();if(typing&&nowMs-dmTypingLastSent<3000)return;
  dmTypingLastSent=nowMs;
  try{await api("/dms/"+activeDmId+"/typing",{method:"POST",body:JSON.stringify({typing})})}catch(e){console.debug("DM typing:",e.message)}
 }
