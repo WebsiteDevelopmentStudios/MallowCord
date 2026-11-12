@@ -64,6 +64,11 @@ test("proxies API domains already implemented in Rust", () => {
 test("keeps unported and unsupported routes on the Worker", () => {
   const cases = [
     ["GET", "/api/auth/google/token"],
+    ["POST", "/api/bootstrap"],
+    ["POST", "/api/account/password"],
+    ["POST", "/api/auth/recovery/rotate"],
+    ["POST", "/api/admin/users"],
+    ["POST", "/api/integrations/mallowbot/users"],
     ["POST", "/api/auth/discord/callback"],
     ["GET", "/api/servers/server-1/invites"],
     ["GET", "/api/messages/message-1/reactions"],
