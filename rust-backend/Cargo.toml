@@ -5,10 +5,11 @@ edition = "2021"
 publish = false
 
 [dependencies]
-axum = { version = "0.8", features = ["http1", "json", "tokio", "ws"] }
+axum = { version = "0.8", features = ["http1", "json", "multipart", "tokio", "ws"] }
 bytes = "1"
 chrono = "0.4"
 hex = "0.4"
+object_store = { version = "0.12", features = ["aws"] }
 hmac = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
