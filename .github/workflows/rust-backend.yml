@@ -3,11 +3,12 @@ name: Rust backend
 on:
   workflow_dispatch:
   push:
-    branches: [main, "feature/**"]
+    branches: [main]
     paths:
       - "rust-backend/**"
       - ".github/workflows/rust-backend.yml"
   pull_request:
+    branches: [main]
     paths:
       - "rust-backend/**"
       - ".github/workflows/rust-backend.yml"
