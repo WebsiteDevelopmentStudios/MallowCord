@@ -179,7 +179,8 @@ async fn upload_attachment(
     let id = Uuid::new_v4().to_string();
     let object_key = format!("mallowcord/{server_id}/{channel_id}/{id}");
     let object_path = ObjectPath::from(object_key.as_str());
-    let payload = bytes.clone().into();
+    let file_size = bytes.len();
+    let payload = bytes.into();
     if let Err(error) = store.put(&object_path, payload).await {
         tracing::error!(%error, "object storage upload failed");
         return (StatusCode::BAD_GATEWAY, Json(json!({"error": "File storage is temporarily unavailable."}))).into_response();
@@ -194,7 +195,7 @@ async fn upload_attachment(
     .bind(&user.id)
     .bind(&filename)
     .bind(&content_type)
-    .bind(bytes.len() as i64)
+    .bind(file_size as i64)
     .bind(&object_key)
     .bind(now())
     .execute(&pool)
@@ -213,7 +214,7 @@ async fn upload_attachment(
             "id": id,
             "filename": filename,
             "content_type": content_type,
-            "size": bytes.len()
+            "size": file_size
         }})),
     )
         .into_response()
