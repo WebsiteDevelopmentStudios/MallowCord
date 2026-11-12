@@ -286,7 +286,7 @@ async fn list_channels(
         }
     };
 
-    Json(json!({"channels": visible})).into_response()
+    Json(json!({"channels": rows})).into_response()
 }
 
 #[derive(Serialize, FromRow)]
