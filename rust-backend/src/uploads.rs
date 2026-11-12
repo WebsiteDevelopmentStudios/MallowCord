@@ -2,18 +2,18 @@ use axum::{
     body::Body,
     extract::{Multipart, Path, State},
     http::{
-        header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE},
+        header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, HeaderName},
         HeaderMap, HeaderValue, StatusCode,
     },
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use object_store::{path::Path as ObjectPath, ObjectStore};
+use bytes::Bytes;
+use object_store::path::Path as ObjectPath;
 use serde::Serialize;
 use serde_json::json;
 use sqlx::{FromRow, PgPool};
-use std::{sync::Arc, time::Duration};
 use uuid::Uuid;
 
 use crate::{
@@ -184,7 +184,7 @@ async fn upload_attachment(
     let id = Uuid::new_v4().to_string();
     let object_key = format!("mallowcord/{server_id}/{channel_id}/{id}");
     let object_path = ObjectPath::from(object_key.as_str());
-    let payload = bytes.clone().into();
+    let payload = Bytes::from(bytes.clone()).into();
     if let Err(error) = store.put(&object_path, payload).await {
         tracing::error!(%error, "object storage upload failed");
         return (StatusCode::BAD_GATEWAY, Json(json!({"error": "File storage is temporarily unavailable."}))).into_response();
@@ -299,6 +299,7 @@ async fn get_attachment(
         .header(CONTENT_TYPE, HeaderValue::from_str(&metadata.content_type).unwrap_or(HeaderValue::from_static("application/octet-stream")))
         .header(CONTENT_DISPOSITION, format!("{disposition}; filename=\"{safe_filename}\""))
         .header(CACHE_CONTROL, "private, max-age=3600")
+        .header("x-content-type-options", "nosniff")
         .body(Body::from(bytes));
     match response {
         Ok(response) => response,
