@@ -20,7 +20,7 @@ use crate::{
 
 fn origin_allowed(headers: &HeaderMap) -> bool {
     let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) else {
-        return true;
+        return false;
     };
     let configured = std::env::var("MALLOWCORD_ALLOWED_ORIGINS")
         .unwrap_or_else(|_| "https://mallowcord-web.onrender.com".to_owned());
@@ -153,4 +153,15 @@ async fn handle_socket(
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new().route("/api/realtime", get(websocket))
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn websocket_rejects_requests_without_an_origin() {
+        assert!(!origin_allowed(&HeaderMap::new()));
+    }
 }
