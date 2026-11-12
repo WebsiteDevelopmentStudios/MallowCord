@@ -169,3 +169,8 @@ The defaults and response shape match the current Worker implementation. Migrati
 
 
 Server creation remains intentionally disabled in Rust with the same HTTP 403 response as the Worker. The API does not create a server until the separate server-invitation flow is ready.
+
+
+## PostgreSQL migration verification
+
+The Rust CI job starts a disposable PostgreSQL 16 service, seeds only the pre-existing Worker-owned baseline tables, applies every Rust migration twice, and verifies the new runtime tables and hot-path indexes. This checks that the additive migrations work against the shape of the existing Neon schema without resetting application data. The same job runs Rust unit tests and Clippy.
