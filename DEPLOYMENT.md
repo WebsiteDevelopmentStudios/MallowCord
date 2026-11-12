@@ -42,3 +42,50 @@ On the Render service running Mallow-Bot, set MALLOWCORD_API_URL=https://YOUR-DO
 - Add server invites/discovery, server-level bans, role assignment and permission checks.
 - Add pagination, spam controls, reporting and moderation UI.
 - Add Durable Objects/WebSockets before expecting Discord-like realtime behavior.
+
+
+## Rust backend rollout (staged; not yet the browser API)
+
+The Rust service is intentionally separate from the live Cloudflare Worker during migration. Do not point the frontend at it yet.
+
+### Required runtime configuration
+
+Set these as server-side environment variables on the Rust host:
+
+- `DATABASE_URL`: Neon PostgreSQL connection string for the existing MallowCord database.
+- `MALLOWCORD_INTERNAL_EVENT_SECRET`: a new random secret with at least 32 bytes.
+- `MALLOWCORD_REQUIRE_DATABASE=true`.
+- `MALLOWCORD_BIND_ADDR=0.0.0.0:8081`.
+- `RUST_LOG=info`.
+
+Do not reuse the Cloudflare Worker service key as the HMAC secret. Do not put any of these values in GitHub, the browser, or the Render static site.
+
+### Build and health checks
+
+Build the container from the repository root:
+
+```sh
+docker build -f rust-backend/Dockerfile -t mallowcord-rust-backend .
+```
+
+Run it with the environment variables above and expose port 8081 only behind a firewall or private reverse proxy. Verify:
+
+- `GET /health` returns liveness.
+- `GET /ready` returns HTTP 200 only when Neon is reachable and migrations have completed.
+- `POST /internal/v1/events` rejects missing, expired, or invalid signatures.
+- Repeated event IDs do not create duplicate inbox rows.
+
+The SQLx migration creates only the Rust service's event inbox table. It does not modify or reset existing MallowCord user, OAuth, server, message, friend, or DM data.
+
+### Mallow-Bot event sender
+
+On the Mallow-Bot host, configure:
+
+- `MALLOWCORD_RUST_API_URL`: private URL of the Rust service.
+- `MALLOWCORD_INTERNAL_EVENT_SECRET`: the same secret configured on Rust.
+
+Use `mallowbot-integration/rust_events.py` to send events. Supply the same event ID when retrying an event so the Rust inbox can deduplicate it. Do not enable production event forwarding until the Rust host is private, the secret is installed on both sides, and the event inbox has been verified.
+
+### Production cutover gate
+
+The Worker remains the browser API until Rust has feature parity and regression coverage for OAuth/device sessions, account and profile reads, server/channel/member/role permissions, messages, reactions, replies, friends, DMs, uploads, and moderation. A Rust deployment alone does not replace those routes. Keep the existing Worker and Neon database intact throughout the migration.
