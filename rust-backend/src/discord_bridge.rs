@@ -487,7 +487,7 @@ async fn discord_message(
     mentioned_ids.sort();
     mentioned_ids.dedup();
     if !mentioned_ids.is_empty() {
-        let target_user_ids = match sqlx::query_scalar::<_, String>(
+        let mut target_user_ids = match sqlx::query_scalar::<_, String>(
             "SELECT user_id FROM discord_account_links
              WHERE server_id = $1 AND discord_user_id = ANY($2)
              UNION
@@ -509,6 +509,7 @@ async fn discord_message(
                     .into_response();
             }
         };
+        target_user_ids.retain(|target_user_id| target_user_id != &user_id);
         if !target_user_ids.is_empty() {
             let notification_ids: Vec<String> = target_user_ids
                 .iter()
