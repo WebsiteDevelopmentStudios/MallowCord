@@ -51,6 +51,11 @@ jobs:
       MALLOWBOT_SERVICE_KEY: ${{ secrets.MALLOWBOT_SERVICE_KEY }}
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install worker-build for Wrangler custom build
+        run: cargo install worker-build --locked
       - name: Check deployment credentials
         if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.MALLOWBOT_SERVICE_KEY == '' }}
         run: echo "::warning::Staging deploy skipped. Add CLOUDFLARE_API_TOKEN and MALLOWBOT_SERVICE_KEY as repository Actions secrets."
