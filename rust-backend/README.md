@@ -122,7 +122,7 @@ docker run --rm -p 8081:8081 \
 - Keep browser cookies and OAuth secrets server-side. The browser must not call privileged internal endpoints.
 - Keep Discord bot credentials inside Mallow-Bot. Rust accepts the separate server-only Mallow-Bot service key and signed internal events, never the Discord bot token.
 - Port one domain at a time and maintain API compatibility through the opt-in Worker proxy until the frontend is deliberately switched.
-- Google/Discord OAuth provider redirects and callbacks and Worker error-log utilities remain on the Worker; OAuth login-code exchange and device-session creation now run in Rust.
+- Google/Discord OAuth start and callback handlers now run in Rust when their Worker proxy routes are enabled; the provider-registered callback URL remains on the Worker domain for compatibility. The Worker still captures its own request errors, while Rust provides the owner-only error-log administration API.
 - Do not set `RUST_API_ORIGIN` until the Rust host is deployed, migrations are applied, secrets are configured, and route-level testing is complete.
 - Do not remove the Worker or D1 rollback binding until all routes and data paths have been verified.
 
