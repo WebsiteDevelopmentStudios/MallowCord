@@ -751,14 +751,25 @@ async fn edit_message(
     if length == 0 || length > 4000 {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "Message must be 1–4000 characters."}))).into_response();
     }
+    let edited_at = now();
     match sqlx::query("UPDATE messages SET content = $1, edited_at = $2 WHERE id = $3")
         .bind(content)
-        .bind(now())
+        .bind(edited_at)
         .bind(&message_id)
         .execute(&pool)
         .await
     {
-        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Ok(_) => {
+            let _ = state.realtime.send(json!({
+                "type": "message.updated",
+                "server_id": metadata.2,
+                "channel_id": metadata.1,
+                "message_id": message_id,
+                "content": content,
+                "edited_at": edited_at
+            }));
+            Json(json!({"ok": true})).into_response()
+        },
         Err(error) => {
             tracing::error!(%error, "message edit failed");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_edit_failed"}))).into_response()
@@ -799,7 +810,15 @@ async fn delete_message(
         .execute(&pool)
         .await
     {
-        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Ok(_) => {
+            let _ = state.realtime.send(json!({
+                "type": "message.deleted",
+                "server_id": metadata.2,
+                "channel_id": metadata.1,
+                "message_id": message_id
+            }));
+            Json(json!({"ok": true})).into_response()
+        }
         Err(error) => {
             tracing::error!(%error, "message delete failed");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "message_delete_failed"}))).into_response()
@@ -912,6 +931,15 @@ async fn toggle_reaction(
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "reaction_update_failed"}))).into_response();
         }
     };
+    let _ = state.realtime.send(json!({
+        "type": "message.reaction.updated",
+        "server_id": metadata.2,
+        "channel_id": metadata.1,
+        "message_id": message_id,
+        "emoji": emoji,
+        "added": added,
+        "user_id": user.id
+    }));
     Json(json!({"ok": true, "added": added})).into_response()
 }
 
