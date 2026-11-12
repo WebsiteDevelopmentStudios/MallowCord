@@ -590,8 +590,8 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 .bind(&[text(&payload.user_id),text(&server.id)])?.first::<UserRow>(None).await?);
         let ignored = linked.is_none();
         if let Some(user) = linked.as_ref() {
-            db.prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=?")
-                .bind(&[text(status),number(now()),text(&user.user_id)])?.run().await?;
+            db.prepare("UPDATE user_profiles SET status=?,updated_at=? WHERE user_id=? AND (status IS NULL OR status != ?)")
+                .bind(&[text(status),number(now()),text(&user.user_id),text(status)])?.run().await?;
         }
         return response(&json!({"ok":true,"ignored":ignored}),200);
     }
