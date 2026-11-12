@@ -232,7 +232,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
         let discord_id = role.id.trim();
         let name = role.name.trim();
         if discord_id.is_empty() || name.is_empty() || name == "@everyone" { continue; }
-        let linked = db.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=?")
+        let linked = db.prepare("SELECT role_id AS id FROM discord_role_links WHERE discord_role_id=?")
             .bind(&[text(discord_id)])?.first::<IdRow>(None).await?;
         let existing = if linked.is_none() {
             db.prepare("SELECT id FROM roles WHERE server_id=? AND name=? LIMIT 1")
@@ -264,7 +264,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
                 } else if let Some(mapped) = role_ids.get(&overwrite.id) {
                     Some(mapped.clone())
                 } else {
-                    db.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
+                    db.prepare("SELECT role_id AS id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
                         .bind(&[text(&overwrite.id),text(&server.id)])?
                         .first::<IdRow>(None).await?.map(|r|r.id)
                 }
@@ -359,7 +359,7 @@ async fn sync_discord(db: &D1Database, payload: SyncPayload) -> Result<Value> {
             let mapped = if let Some(value) = role_ids.get(discord_role) {
                 Some(value.clone())
             } else {
-                db.prepare("SELECT role_id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
+                db.prepare("SELECT role_id AS id FROM discord_role_links WHERE discord_role_id=? AND server_id=?")
                     .bind(&[text(discord_role),text(&server.id)])?
                     .first::<IdRow>(None).await?.map(|row| row.id)
             };
