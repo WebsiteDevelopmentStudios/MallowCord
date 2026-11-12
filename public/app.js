@@ -2,6 +2,34 @@ const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const $=s=>document.querySelector(s);
 let selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
 async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
+
+// OAuth handoff runs immediately after the API helper, before the rest of the UI
+// initializes. This prevents unrelated UI startup errors from swallowing the login code.
+(async()=>{
+ const params=new URLSearchParams(location.search);
+ const code=params.get("oauth_code");
+ const loginError=params.get("login_error");
+ if(code){
+  try{
+   const result=await api("/auth/exchange",{method:"POST",body:JSON.stringify({code})});
+   history.replaceState(null,"",location.pathname+location.hash);
+   me=result.user;
+   await enterApp();
+  }catch(e){
+   history.replaceState(null,"",location.pathname+location.hash);
+   status("Sign-in failed: "+(e?.message||"Please try again."));
+   console.error("MallowCord OAuth exchange failed:",e);
+  }
+  return;
+ }
+ if(loginError){
+  history.replaceState(null,"",location.pathname+location.hash);
+  status("Sign-in with "+(loginError==="google"?"Google":"Discord")+" failed. Please try again.");
+  return;
+ }
+ try{me=(await api("/auth/me")).user;await enterApp()}catch{}
+})();
+
 let realtimeSocket=null,realtimeReconnectTimer=null,realtimeRetry=1000,memberRefreshTimer=null;
 function realtimeConnected(){return typeof WebSocket!=="undefined"&&realtimeSocket?.readyState===WebSocket.OPEN}
 function startRealtimeFallback(){
@@ -636,32 +664,7 @@ $("#settingsBtn").onclick=openAccountSettings;
 
 $("#closeModal").onclick=()=>$("#modal").classList.add("hidden");
 $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};
-// OAuth handoff runs immediately after the API helper, before the rest of the UI
-// initializes. This prevents unrelated UI startup errors from swallowing the login code.
-(async()=>{
- const params=new URLSearchParams(location.search);
- const code=params.get("oauth_code");
- const loginError=params.get("login_error");
- if(code){
-  try{
-   const result=await api("/auth/exchange",{method:"POST",body:JSON.stringify({code})});
-   history.replaceState(null,"",location.pathname+location.hash);
-   me=result.user;
-   await enterApp();
-  }catch(e){
-   history.replaceState(null,"",location.pathname+location.hash);
-   status("Sign-in failed: "+(e?.message||"Please try again."));
-   console.error("MallowCord OAuth exchange failed:",e);
-  }
-  return;
- }
- if(loginError){
-  history.replaceState(null,"",location.pathname+location.hash);
-  status("Sign-in with "+(loginError==="google"?"Google":"Discord")+" failed. Please try again.");
-  return;
- }
- try{me=(await api("/auth/me")).user;await enterApp()}catch{}
-})();
+
 
 // Mobile channel/member drawers and interactive swipe gestures
 (()=>{
