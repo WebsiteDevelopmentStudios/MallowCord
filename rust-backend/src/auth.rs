@@ -2,12 +2,15 @@ use axum::{
     extract::State,
     http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
+use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::AppState;
 
@@ -87,6 +90,114 @@ async fn me(State(state): State<AppState>, headers: HeaderMap) -> Response {
     }
 }
 
+
+#[derive(Deserialize)]
+struct OAuthExchangeInput {
+    code: String,
+}
+
+async fn exchange(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<OAuthExchangeInput>,
+) -> Response {
+    let code = input.code.trim();
+    if code.len() != 64 || !code.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign-in code is invalid or expired."}))).into_response();
+    }
+    let Some(pool) = state.database.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "database_not_configured"}))).into_response();
+    };
+    let code_hash = hex::encode(Sha256::digest(code.as_bytes()));
+    let now = chrono::Utc::now().timestamp();
+    let user_id = match sqlx::query_scalar::<_, String>(
+        "DELETE FROM oauth_login_codes WHERE code_hash = $1 AND expires_at >= $2 RETURNING user_id",
+    )
+    .bind(code_hash)
+    .bind(now)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(user_id)) => user_id,
+        Ok(None) => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign-in code is invalid or expired."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "OAuth login code exchange failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "oauth_exchange_failed"}))).into_response();
+        }
+    };
+    let user = match sqlx::query_as::<_, AuthUser>(
+        "SELECT id, username, account_type, status, timeout_until FROM users WHERE id = $1",
+    )
+    .bind(&user_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(user)) if user.status == "active" => user,
+        Ok(_) => return (StatusCode::FORBIDDEN, Json(json!({"error": "This MallowCord account is not active."}))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "OAuth exchange user lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "oauth_exchange_failed"}))).into_response();
+        }
+    };
+
+    let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+    let ip_hash = state.ip_hash_secret.as_ref().and_then(|secret| {
+        headers
+            .get("x-mallowcord-client-ip")
+            .or_else(|| headers.get("cf-connecting-ip"))
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| !value.trim().is_empty())
+            .map(|ip| {
+                let mut material = ip.trim().as_bytes().to_vec();
+                material.extend_from_slice(secret.as_slice());
+                hex::encode(Sha256::digest(material))
+            })
+    });
+    let user_agent = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if let Err(error) = sqlx::query(
+        "INSERT INTO sessions(id, user_id, token_hash, created_at, expires_at, user_agent, ip_hash)
+         VALUES($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&user.id)
+    .bind(token_hash)
+    .bind(now)
+    .bind(now + 30 * 24 * 60 * 60)
+    .bind(user_agent)
+    .bind(ip_hash)
+    .execute(pool)
+    .await
+    {
+        tracing::error!(%error, "OAuth session creation failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "oauth_session_failed"}))).into_response();
+    }
+
+    let cookie = format!(
+        "mallowcord_device={token}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age={}",
+        30 * 24 * 60 * 60
+    );
+    let mut response = Json(json!({
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "account_type": user.account_type
+        }
+    })).into_response();
+    match HeaderValue::from_str(&cookie) {
+        Ok(value) => {
+            response.headers_mut().insert(SET_COOKIE, value);
+            response
+        }
+        Err(error) => {
+            tracing::error!(%error, "OAuth session cookie construction failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "oauth_session_failed"}))).into_response()
+        }
+    }
+}
 
 const CLEAR_DEVICE_COOKIE: &str =
     "mallowcord_device=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0";
@@ -210,6 +321,7 @@ async fn account_status(State(state): State<AppState>, headers: HeaderMap) -> Re
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/auth/exchange", post(exchange))
         .route("/api/auth/me", get(me))
         .route("/api/auth/logout", axum::routing::post(logout))
         .route("/api/account/status", get(account_status))
