@@ -23,7 +23,7 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS phone_verified_at BIGINT;
 
 CREATE TABLE IF NOT EXISTS user_preferences (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    settings_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    settings_json TEXT NOT NULL DEFAULT '{}',
     updated_at BIGINT NOT NULL
 );
 
