@@ -1,7 +1,4 @@
 -- Hot-path indexes for the Rust API. All are additive and safe to apply repeatedly.
-CREATE INDEX IF NOT EXISTS sessions_token_hash_idx
-    ON sessions(token_hash);
-
 CREATE INDEX IF NOT EXISTS memberships_user_server_idx
     ON memberships(user_id, server_id);
 
