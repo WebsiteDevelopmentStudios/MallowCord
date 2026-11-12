@@ -604,15 +604,15 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
         let mut binds = vec![text(&server.id)];
         binds.extend(ids.iter().map(|id| text(id)));
         let user_links = db.prepare(&format!("SELECT discord_user_id,user_id FROM discord_user_links WHERE server_id=? AND discord_user_id IN ({marks})"))
-            .bind(&binds)?.all::<DiscordUserRow>().await?;
+            .bind(&binds)?.all().await?.results::<DiscordUserRow>()?;
         let mut account_binds = vec![text(&server.id)];
         account_binds.extend(ids.iter().map(|id| text(id)));
         let account_links = db.prepare(&format!("SELECT discord_user_id,user_id FROM discord_account_links WHERE server_id=? AND discord_user_id IN ({marks})"))
-            .bind(&account_binds)?.all::<DiscordUserRow>().await?;
+            .bind(&account_binds)?.all().await?.results::<DiscordUserRow>()?;
         let oauth_links = db.prepare(&format!("SELECT provider_user_id AS discord_user_id,user_id FROM oauth_accounts WHERE provider='discord' AND provider_user_id IN ({})", ids.iter().map(|_| "?").collect::<Vec<_>>().join(",")))
-            .bind(&ids.iter().map(|id| text(id)).collect::<Vec<_>>())?.all::<DiscordUserRow>().await?;
+            .bind(&ids.iter().map(|id| text(id)).collect::<Vec<_>>())?.all().await?.results::<DiscordUserRow>()?;
         let mut linked: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
-        for row in user_links.results.into_iter().chain(account_links.results).chain(oauth_links.results) {
+        for row in user_links.into_iter().chain(account_links).chain(oauth_links) {
             linked.entry(row.discord_user_id).or_default().insert(row.user_id);
         }
         let mut statements = Vec::new();
