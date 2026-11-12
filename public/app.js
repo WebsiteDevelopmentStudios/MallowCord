@@ -20,6 +20,7 @@ document.addEventListener("click",event=>{
  });
 });
 document.addEventListener("keydown",event=>{if(event.key==="Escape")document.querySelector("#modal")?.classList.add("hidden")});
+const memberDirectoryCache=new Map();
 let socialPeople=[],selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
 async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
 
@@ -108,11 +109,16 @@ function closeItemMenu(){$("#itemContextMenu")?.classList.add("hidden")}
 function openItemMenu(scope,id,label,x,y){const muted=(scope==="channel"?notificationSettings.channels:notificationSettings.servers).has(id),menu=$("#itemContextMenu");menu.dataset.scope=scope;menu.dataset.id=id;menu.innerHTML='<div class="context-label">'+esc(label)+'</div><button type="button" data-action="mute">'+(muted?"Unmute":"Mute")+' '+(scope==="channel"?"channel":"server")+'</button><button type="button" data-action="clear">Clear message pings</button>';menu.classList.remove("hidden");const rect=menu.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(x,innerWidth-rect.width-8))+"px";menu.style.top=Math.max(8,Math.min(y,innerHeight-rect.height-8))+"px"}
 async function loadNotifications(){if(notificationsLoading||!me)return;notificationsLoading=true;try{const data=await api("/notifications"),rows=data.unread||[],bc=new Map(),bs=new Map();for(const r of rows){bc.set(r.channel_id,(bc.get(r.channel_id)||0)+Number(r.count||0));bs.set(r.server_id,(bs.get(r.server_id)||0)+Number(r.count||0));}document.querySelectorAll("#channelList .channel").forEach(el=>{const n=bc.get(el.dataset.id)||0;let b=el.querySelector(".unread-count");if(n){if(!b){b=document.createElement("span");b.className="unread-count";el.append(b)}b.textContent=n>99?"99+":String(n);el.classList.add("has-unread")}else{b?.remove();el.classList.remove("has-unread")}});document.querySelectorAll(".servers .server-icon[data-server-id]").forEach(el=>{const n=bs.get(el.dataset.serverId)||0;let b=el.querySelector(".server-unread-count");if(n){if(!b){b=document.createElement("span");b.className="server-unread-count";el.append(b)}b.textContent=n>99?"99+":String(n)}else b?.remove()})}catch(e){console.warn("Notifications:",e.message)}finally{notificationsLoading=false}}
 async function loadServers(){const d=await api("/servers");const list=d.servers||[];const rail=document.querySelector(".servers");rail.innerHTML='<button id="dmHomeBtn" type="button" class="server-icon dm-home-button" title="Direct Messages" aria-label="Direct Messages"><img src="https://raw.githubusercontent.com/WebsiteDevelopmentStudios/Mallow-Bot/main/MallowBot.png" alt="MallowBot"></button><div class="server-divider"></div>';$("#dmHomeBtn").onclick=openSocial;for(const s of list){const b=document.createElement("button");b.type="button";b.className="server-icon"+(s.id===serverId?" active":"");b.title=s.name;b.dataset.serverId=s.id;b.textContent=(s.name||"?")[0].toUpperCase();if(s.icon_url){const im=document.createElement("img");im.src=s.icon_url;im.alt=s.name;im.onerror=()=>im.remove();b.textContent="";b.append(im)}b.onclick=()=>selectServer(s);b.addEventListener("contextmenu",e=>{e.preventDefault();openItemMenu("server",s.id,s.name,e.clientX,e.clientY)});rail.append(b)}const divider=document.createElement("div");divider.className="server-divider";rail.append(divider);const add=document.createElement("button");add.id="addServer";add.type="button";add.className="server-icon add";add.title="Create server";add.textContent="+";add.style.display="none";add.onclick=()=>toast("Server creation is temporarily disabled. Server invitations are coming soon.");rail.append(add);if(!list.length){toast("You have not joined a server yet.");return}const selected=list.find(x=>x.id===serverId)||list.find(x=>x.is_system)||list[0];await selectServer(selected)}
-async function selectServer(s){$("#app").classList.remove("dm-mode");$("#socialModal").classList.add("hidden");if(memberPoll)clearInterval(memberPoll);memberPoll=null;serverId=s.id;mentionDirectoryServerId=null;lastMessagesSignature="";currentServer=s;channelId=null;currentChannel=null;$("#workspaceName").textContent=s.name;$("#channelTitle").textContent="Select a channel";$("#messages").innerHTML="";$("#channelList").innerHTML="";document.querySelectorAll(".server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===s.id));try{const meta=await api("/servers/"+serverId+"/settings");canManageServer=!!meta.can_manage}catch{canManageServer=false}$("#createChannelBtn").style.display=canManageServer?"grid":"none";await Promise.all([loadChannels(),loadMemberList(),loadNotificationSettings()]);loadNotifications();if(notificationPoll)clearInterval(notificationPoll);notificationPoll=null;if(!realtimeConnected())notificationPoll=setInterval(()=>{if(document.visibilityState==="visible")loadNotifications()},45000);if(!realtimeConnected())memberPoll=setInterval(()=>{if(document.visibilityState==="visible")loadMemberList()},60000);checkOnboarding().catch(e=>console.warn("Onboarding:",e))}
+async function selectServer(s){$("#app").classList.remove("dm-mode");$("#socialModal").classList.add("hidden");if(memberPoll)clearInterval(memberPoll);memberPoll=null;serverId=s.id;mentionDirectoryServerId=null;lastMessagesSignature="";currentServer=s;channelId=null;currentChannel=null;$("#workspaceName").textContent=s.name;$("#channelTitle").textContent="Select a channel";$("#messages").innerHTML="";$("#channelList").innerHTML="";document.querySelectorAll(".server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===s.id));const selectedId=serverId;const [meta]=await Promise.all([api("/servers/"+selectedId+"/settings").catch(()=>({can_manage:false})),loadChannels(),loadMemberList(),loadNotificationSettings()]);if(serverId!==selectedId)return;canManageServer=!!meta.can_manage;$("#createChannelBtn").style.display=canManageServer?"grid":"none";loadNotifications();if(notificationPoll)clearInterval(notificationPoll);notificationPoll=null;if(!realtimeConnected())notificationPoll=setInterval(()=>{if(document.visibilityState==="visible")loadNotifications()},45000);if(!realtimeConnected())memberPoll=setInterval(()=>{if(document.visibilityState==="visible")loadMemberList()},60000);checkOnboarding().catch(e=>console.warn("Onboarding:",e))}
 async function loadMemberList(){
  if(!serverId)return;
+ const requestedServerId=serverId,box=$("#memberList");
+ const cachedHtml=memberDirectoryCache.get(requestedServerId);
+ if(cachedHtml&&serverId===requestedServerId)box.innerHTML=cachedHtml;
  try{
-  const d=await api("/servers/"+serverId+"/members"),box=$("#memberList"),members=d.members||[];
+  const d=await api("/servers/"+requestedServerId+"/members");
+  if(serverId!==requestedServerId)return;
+  const members=d.members||[];
   const isBot=m=>m.is_bot===true||m.is_bot===1||m.is_bot==="1"||String(m.is_bot).toLowerCase()==="true";
   const discord=members.filter(m=>String(m.id).startsWith("discord:"));
   const discordBots=members.filter(isBot);
@@ -148,6 +154,7 @@ async function loadMemberList(){
   const botEntry=mallowBotRecord?button(mallowBotRecord):officialBot;
   const botGroup='<div class="member-group-title bot-group-title">Bots <span>'+(otherBots.length+1)+'</span></div>'+botEntry+otherBots.map(button).join("");
   box.innerHTML=roleMarkup+botGroup+group("Discord Members — online",discordHumans.filter(m=>["online","idle","dnd"].includes(m.presence)))+group("Discord Members — offline",discordHumans.filter(m=>!["online","idle","dnd"].includes(m.presence)));
+  memberDirectoryCache.set(requestedServerId,box.innerHTML);
  }catch(e){console.warn("Member list:",e.message)}
 }
 function renderChannelLabel(name){
@@ -511,7 +518,7 @@ var preferenceDefaults={
  overlay:{enableOverlay:false,overlayPosition:"top-right"}
 };
 function normalizePreferences(raw){const source=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};const result={};for(const key of Object.keys(preferenceDefaults)){const value=source[key];result[key]={...preferenceDefaults[key],...(value&&typeof value==="object"&&!Array.isArray(value)?value:{})};}return result;}
-const accountPageMeta={
+var accountPageMeta={
  "account-info":["Account Info","Change your username, display name, profile picture and contact details."],
  "discord-link":["Discord Link","Connect your MallowCord account to your Discord identity to use Mallow-Bot commands."],
  security:["Sign-in & Security","Manage your connected sign-in and active device session."],
@@ -539,8 +546,7 @@ async function openAccountSettings(){
  $("#accountSettingsContent").innerHTML='<div class="settings-loading">Loading account settings…</div>';
  try{
   const [p,s]=await Promise.all([api("/account/profile"),api("/account/preferences")]);
-  accountProfile=p.profile||{};accountPreferences={...preferenceDefaults,...(s.settings||{})};
-  for(const k of Object.keys(preferenceDefaults))accountPreferences[k]={...preferenceDefaults[k],...(s.settings?.[k]||{})};
+  accountProfile=p?.profile&&typeof p.profile==="object"?p.profile:{};accountPreferences=normalizePreferences(s?.settings);
   await showAccountPage("account-info");
  }catch(e){$("#accountSettingsContent").innerHTML='<div class="settings-error">'+esc(e.message)+'</div>'}
 }
@@ -596,7 +602,7 @@ async function loadErrorLogs(){
 }
 async function showAccountPage(page){
  activeAccountPage=page;document.querySelectorAll(".account-nav").forEach(b=>b.classList.toggle("active",b.dataset.page===page));
- const meta=accountPageMeta[page]||["Settings","Manage your preferences."];
+ const meta=(accountPageMeta&&accountPageMeta[page])||["Settings","Manage your preferences."];
  $("#accountPageTitle").textContent=meta[0];$("#accountPageDescription").textContent=meta[1];
  const root=$("#accountSettingsContent");
  if(page==="discord-link"){
