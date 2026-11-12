@@ -14,7 +14,7 @@ function stopRealtimeFallback(){
  if(dmPoll)clearInterval(dmPoll);dmPoll=null;
  if(memberPoll)clearInterval(memberPoll);memberPoll=null;
 }
-function scheduleMemberRefresh(){if(memberRefreshTimer)clearTimeout(memberRefreshTimer);memberRefreshTimer=setTimeout(()=>{memberRefreshTimer=null;if(serverId)loadMemberList()},250);
+function scheduleMemberRefresh(){if(memberRefreshTimer)clearTimeout(memberRefreshTimer);memberRefreshTimer=setTimeout(()=>{memberRefreshTimer=null;if(serverId)loadMemberList()},250)}
 function connectRealtime(){
  if(!me||typeof WebSocket==="undefined"){startRealtimeFallback();return}
  if(realtimeSocket&&(realtimeSocket.readyState===WebSocket.OPEN||realtimeSocket.readyState===WebSocket.CONNECTING))return;
