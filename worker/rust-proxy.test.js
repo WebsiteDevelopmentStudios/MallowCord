@@ -5,13 +5,6 @@ import { proxyToRust, shouldProxyRustApi } from "./rust-proxy.js";
 
 test("proxies API domains already implemented in Rust", () => {
   const cases = [
-    ["GET", "/api/auth/me"],
-    ["GET", "/api/auth/google"],
-    ["GET", "/api/auth/google/callback"],
-    ["GET", "/api/auth/discord"],
-    ["GET", "/api/auth/discord/callback"],
-    ["POST", "/api/auth/logout"],
-    ["POST", "/api/auth/exchange"],
     ["POST", "/api/auth/username"],
     ["POST", "/api/account/contact/request"],
     ["POST", "/api/account/contact/confirm"],
@@ -35,7 +28,6 @@ test("proxies API domains already implemented in Rust", () => {
     ["POST", "/api/channels/channel-1/attachments"],
     ["GET", "/api/public/avatars/user-1"],
     ["GET", "/api/realtime"],
-    ["GET", "/api/notifications"],
     ["GET", "/api/users/user-1/profile"],
     ["POST", "/api/integrations/mallowbot/discord/sync"],
     ["POST", "/api/integrations/mallowbot/discord/presence"],
@@ -64,6 +56,14 @@ test("proxies API domains already implemented in Rust", () => {
 
 test("keeps unported and unsupported routes on the Worker", () => {
   const cases = [
+    ["GET", "/api/auth/me"],
+    ["GET", "/api/auth/google"],
+    ["GET", "/api/auth/google/callback"],
+    ["GET", "/api/auth/discord"],
+    ["GET", "/api/auth/discord/callback"],
+    ["POST", "/api/auth/logout"],
+    ["POST", "/api/auth/exchange"],
+    ["GET", "/api/notifications"],
     ["GET", "/api/auth/google/token"],
     ["POST", "/api/bootstrap"],
     ["POST", "/api/account/password"],
