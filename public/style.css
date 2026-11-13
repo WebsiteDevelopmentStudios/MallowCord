@@ -1488,3 +1488,80 @@ body{
  .dm-header-actions>.dm-community-link{width:36px!important;min-width:36px!important;height:36px!important;min-height:36px!important;padding:0!important;gap:0!important}
  .dm-header-actions>.dm-community-link span{display:none!important}
 }
+
+
+/* Rebuild the DM profile stack with non-overlapping vertical flow. */
+#dmProfilePanel.dm-profile-panel{
+ position:relative!important;
+ display:block;
+ box-sizing:border-box!important;
+ min-width:0!important;
+ min-height:0!important;
+ height:100%!important;
+ padding:0 20px 30px!important;
+ overflow-x:hidden!important;
+ overflow-y:auto!important;
+}
+#dmProfilePanel .dm-profile-banner{
+ display:block!important;
+ width:calc(100% + 40px)!important;
+ height:124px!important;
+ margin:0 -20px!important;
+ flex:none!important;
+}
+#dmProfilePanel #dmProfileAvatar.dm-profile-avatar{
+ display:block!important;
+ position:relative!important;
+ z-index:1!important;
+ width:88px!important;height:88px!important;
+ min-width:88px!important;max-width:88px!important;
+ min-height:88px!important;max-height:88px!important;
+ aspect-ratio:1/1!important;
+ box-sizing:border-box!important;
+ margin:-44px 0 0!important;
+ padding:0!important;
+ border:6px solid rgba(12,15,20,.98)!important;
+ border-radius:50%!important;
+ overflow:hidden!important;
+}
+#dmProfilePanel #dmProfileAvatar img{
+ position:absolute!important;inset:0!important;
+ display:block!important;width:100%!important;height:100%!important;
+ max-width:none!important;max-height:none!important;
+ object-fit:cover!important;object-position:center!important;
+ border-radius:50%!important;
+}
+#dmProfilePanel #dmProfileName{
+ display:block!important;
+ position:relative!important;
+ clear:both!important;
+ margin:14px 0 0!important;
+ padding:0!important;
+ line-height:1.3!important;
+ overflow-wrap:anywhere!important;
+}
+#dmProfilePanel #dmProfileUsername{
+ display:block!important;
+ position:relative!important;
+ clear:both!important;
+ margin:10px 0 0!important;
+ padding:0!important;
+ line-height:1.5!important;
+ overflow-wrap:anywhere!important;
+}
+#dmProfilePanel #dmProfileStatus{display:inline-block!important;margin-top:12px!important}
+@media(max-width:1050px){
+ .dm-workspace .dm-window{grid-template-columns:250px minmax(0,1fr)!important}
+ .dm-profile-panel{display:none!important}
+}
+@media(max-width:650px){
+ .dm-workspace .dm-window{grid-template-columns:minmax(0,1fr)!important}
+ .dm-workspace .dm-window.dm-conversation-open{grid-template-columns:minmax(0,1fr)!important}
+ .dm-workspace .dm-main{min-width:0!important;width:100%!important}
+ .dm-header{width:100%!important;min-width:0!important}
+ .dm-header>div:first-of-type{min-width:0!important;flex:1 1 0!important}
+ .dm-header b{max-width:100%!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+ .dm-profile-panel{display:none!important}
+ .dm-back-button{display:grid!important;place-items:center!important;flex:0 0 30px!important;width:30px!important}
+ .dm-main .dm-compose{width:100%!important;min-width:0!important}
+}
