@@ -1,6 +1,15 @@
 const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const preloadChecks=new Map();
-let preloadPanelOpen=true;
+const PRELOAD_HIDDEN_KEY="mallowcord.preloadDiagnostics.hidden";
+function preloadIsHidden(){try{return localStorage.getItem(PRELOAD_HIDDEN_KEY)==="1"}catch{return false}}
+function renderPreloadShow(){
+ let tab=document.getElementById("mallowPreloadShow");
+ if(tab)return;
+ tab=document.createElement("button");tab.id="mallowPreloadShow";tab.textContent="Preload log";
+ tab.style.cssText="position:fixed;right:16px;bottom:16px;z-index:100000;background:#1b2633;color:white;border:1px solid #425064;border-radius:8px;padding:9px 12px;cursor:pointer";
+ tab.onclick=()=>{try{localStorage.removeItem(PRELOAD_HIDDEN_KEY)}catch{}tab.remove();renderPreloadPanel()};
+ document.body.append(tab);
+}
 function preloadCheck(name,state,detail=""){
  preloadChecks.set(name,{state,detail,time:new Date().toLocaleTimeString()});
  renderPreloadPanel();
@@ -12,6 +21,12 @@ function renderPreloadPanel(){
   document.getElementById("mallowPreloadShow")?.remove();
   return;
  }
+ if(preloadIsHidden()){
+  document.getElementById("mallowPreloadPanel")?.remove();
+  renderPreloadShow();
+  return;
+ }
+ document.getElementById("mallowPreloadShow")?.remove();
  let panel=document.getElementById("mallowPreloadPanel");
  if(!panel){
   panel=document.createElement("section");panel.id="mallowPreloadPanel";
@@ -23,7 +38,7 @@ function renderPreloadPanel(){
  const icon=s=>s==="ok"?"✓":s==="fail"?"✕":s==="pending"?"…":"—";
  const color=s=>s==="ok"?"#55d98a":s==="fail"?"#ff7272":s==="pending"?"#f4c66a":"#a8b2c1";
  panel.innerHTML='<header style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#1b2633"><b style="flex:1">MallowCord preload diagnostics</b><button id="mallowPreloadHide" style="background:#344355;color:white;border:0;border-radius:6px;padding:5px 9px;cursor:pointer">Hide</button></header><div style="padding:10px 14px;border-bottom:1px solid #344355"><b style="color:'+(fail?'#ff7272':pending?'#f4c66a':'#55d98a')+'">'+(fail?fail+" failed":pending?pending+" still loading":rows.length&&ok===rows.length?"Preload checks passed":"Waiting for preload")+'</b><span style="color:#a8b2c1"> · '+ok+'/'+rows.length+' passed</span><div style="color:#a8b2c1;font-size:11px;margin-top:3px">Checks the initial app/server data requests. It does not claim every DM or message history is cached.</div></div><div style="padding:6px 14px 12px;overflow:auto;max-height:calc(min(68vh,560px) - 115px)">'+(rows.length?rows.map(([name,v])=>'<div style="display:flex;gap:9px;padding:5px 0;border-bottom:1px solid #263342"><b style="color:'+color(v.state)+';width:14px">'+icon(v.state)+'</b><span style="flex:1;min-width:0"><b>'+esc(name)+'</b>'+(v.detail?'<div style="color:'+(v.state==="fail"?"#ff9999":"#a8b2c1")+';overflow-wrap:anywhere">'+esc(v.detail)+'</div>':"")+'</span><small style="color:#8997a8">'+esc(v.time)+'</small></div>').join(""):'No checks started yet.')+'</div>';
- panel.querySelector("#mallowPreloadHide").onclick=()=>{panel.remove();const tab=document.createElement("button");tab.id="mallowPreloadShow";tab.textContent="Preload log";tab.style.cssText="position:fixed;right:16px;bottom:16px;z-index:100000;background:#1b2633;color:white;border:1px solid #425064;border-radius:8px;padding:9px 12px;cursor:pointer";tab.onclick=()=>{tab.remove();preloadPanelOpen=true;renderPreloadPanel()};document.body.append(tab)};
+ panel.querySelector("#mallowPreloadHide").onclick=()=>{try{localStorage.setItem(PRELOAD_HIDDEN_KEY,"1")}catch{}panel.remove();renderPreloadShow()};
 }
 async function preloadRun(name,fn){
  preloadCheck(name,"pending","Loading…");
