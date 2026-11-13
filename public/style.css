@@ -1202,3 +1202,125 @@ body{
  #modal .account-settings-nav{padding:14px 7px}
  #modal .account-settings-content{padding:20px 12px 30px}
 }
+
+
+/* Server chat polish: remove the empty-channel welcome splash and use a
+   compact floating composer, matching the DM workspace treatment. */
+#app:not(.dm-mode) .chat .welcome{display:none!important}
+#app:not(.dm-mode) .chat{position:relative;isolation:isolate}
+#app:not(.dm-mode) .chat .messages{padding-bottom:112px!important}
+#app:not(.dm-mode) .chat .message-compose-row{
+  position:absolute!important;
+  z-index:20;
+  left:50%;
+  bottom:18px;
+  transform:translateX(-50%);
+  width:min( min(920px, calc(100% - 48px)), 920px);
+  min-height:62px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:9px 12px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:16px;
+  background:rgba(18,21,26,.94);
+  box-shadow:0 12px 34px rgba(0,0,0,.34),0 2px 8px rgba(0,0,0,.18);
+  backdrop-filter:blur(18px) saturate(120%);
+  -webkit-backdrop-filter:blur(18px) saturate(120%);
+}
+#app:not(.dm-mode) .chat .message-compose-row .message-form{
+  min-width:0;
+  flex:1;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:0;
+  padding:0!important;
+}
+#app:not(.dm-mode) .chat .message-compose-row .message-form input{
+  height:42px;
+  min-width:0;
+  padding:0 12px;
+  border:1px solid transparent;
+  border-radius:10px;
+  background:rgba(255,255,255,.055);
+  box-shadow:none;
+}
+#app:not(.dm-mode) .chat .message-compose-row .message-form input:focus{
+  border-color:rgba(163,175,189,.38);
+  background:rgba(255,255,255,.075);
+  box-shadow:0 0 0 3px rgba(135,149,165,.10);
+}
+#app:not(.dm-mode) .chat .message-compose-row .message-form button{
+  height:40px;
+  min-width:64px;
+  border-radius:9px;
+  padding:0 15px;
+}
+#app:not(.dm-mode) .chat .message-compose-row .emoji-picker-trigger{
+  flex:0 0 40px;
+  width:40px;
+  height:40px;
+  border:0;
+  border-radius:10px;
+  background:transparent;
+  color:#b9c1cc;
+}
+#app:not(.dm-mode) .chat .message-compose-row .emoji-picker-trigger:hover{
+  background:rgba(255,255,255,.09);
+  color:#fff;
+}
+#app:not(.dm-mode) .chat #emojiPicker{
+  bottom:88px;
+}
+
+/* The account controls sit in their own floating dock, not a full-width
+   rectangular footer at the bottom of the channel sidebar. */
+#app:not(.dm-mode) .channels .user-panel{
+  flex:0 0 auto;
+  min-height:58px;
+  margin: auto 10px 12px;
+  padding:9px 10px;
+  gap:8px;
+  border:1px solid rgba(255,255,255,.11);
+  border-radius:13px;
+  background:rgba(12,15,20,.88);
+  box-shadow:0 8px 24px rgba(0,0,0,.24);
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+}
+#app:not(.dm-mode) .channels .user-profile-trigger{
+  min-width:0;
+  gap:9px;
+}
+#app:not(.dm-mode) .channels .user-profile-trigger .avatar{
+  flex:0 0 34px;
+}
+#app:not(.dm-mode) .channels .user-panel #settingsBtn{
+  flex:0 0 34px;
+  width:34px;
+  height:34px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  border-radius:9px;
+  background:rgba(255,255,255,.055);
+  color:#c5ccd5;
+}
+#app:not(.dm-mode) .channels .user-panel #settingsBtn:hover{
+  background:rgba(255,255,255,.12);
+  color:#fff;
+}
+@media(max-width:650px){
+  #app:not(.dm-mode) .chat .message-compose-row{
+    bottom:max(10px,env(safe-area-inset-bottom));
+    width:calc(100% - 20px);
+    padding:7px;
+    border-radius:14px;
+  }
+  #app:not(.dm-mode) .chat .messages{padding-bottom:100px!important}
+  #app:not(.dm-mode) .channels .user-panel{
+    margin: auto 5px 9px;
+    padding:7px 6px;
+  }
+}
