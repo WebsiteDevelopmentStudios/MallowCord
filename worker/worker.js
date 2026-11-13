@@ -308,6 +308,7 @@ async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-b
   await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_message_links(discord_message_id TEXT PRIMARY KEY,mallow_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,discord_channel_id TEXT NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
 });}
 const discordBridgePath=p.startsWith("/api/integrations/mallowbot/discord/");
@@ -458,7 +459,7 @@ if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to 
   for(const row of accountLinks.results||[]){if(!linked.has(row.discord_user_id))linked.set(row.discord_user_id,new Set());linked.get(row.discord_user_id).add(row.user_id);}
   for(const row of oauthLinks.results||[]){if(!linked.has(row.discord_user_id))linked.set(row.discord_user_id,new Set());linked.get(row.discord_user_id).add(row.user_id);}
   const statements=[];
-  for(const item of updates){const did=String(item.user_id||""),userIds=linked.get(did)||new Set(),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline";for(const userId of userIds)statements.push(getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(userId,status,now()));}
+  for(const item of updates){const did=String(item.user_id||""),userIds=linked.get(did)||new Set(),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline",seenAt=status==="offline"?0:now();for(const userId of userIds){statements.push(getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(userId,status,now()));statements.push(getDatabase(env).prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(userId,seenAt));}}
   if(!statements.length)return json({ok:true,updated:0});
   const results=await getDatabase(env).batch(statements);return json({ok:true,updated:results.reduce((n,r)=>n+(r.meta?.changes||0),0)});
  }
@@ -467,7 +468,7 @@ if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to 
   const presence=["online","idle","dnd","offline"].includes(b.status)?b.status:"offline";
   const discordId=String(b.user_id||""),linked=await getDatabase(env).prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM oauth_accounts WHERE provider='discord' AND provider_user_id=?").bind(discordId).first();
   if(!linked)return json({ok:true,ignored:true});
-  await getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(linked.user_id,presence,now()).run();return json({ok:true});
+  await getDatabase(env).batch([getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(linked.user_id,presence,now()),getDatabase(env).prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(linked.user_id,presence==="offline"?0:now())]);return json({ok:true});
  }
  if(p==="/api/integrations/mallowbot/discord/messages"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
