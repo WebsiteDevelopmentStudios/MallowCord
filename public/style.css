@@ -1448,3 +1448,43 @@ body{
 .dm-community-link:hover{background:rgba(88,101,242,.24)!important;color:#fff!important}
 .dm-community-link svg{width:17px;height:17px;flex:0 0 17px}
 .dm-nav-links .dm-community-link{font-size:12px;font-weight:700}
+
+
+/* DM header actions: keep community invite immediately beside search. */
+.dm-header-actions{
+ display:flex!important;
+ align-items:center!important;
+ justify-content:flex-end!important;
+ gap:8px!important;
+ flex:0 0 auto!important;
+ min-width:max-content!important;
+}
+.dm-header-actions>button{
+ display:grid!important;
+ place-items:center!important;
+ width:38px!important;height:38px!important;
+ flex:0 0 38px!important;
+ border-radius:9px!important;
+}
+.dm-header-actions>.dm-community-link{
+ display:inline-flex!important;
+ align-items:center!important;
+ justify-content:center!important;
+ gap:7px!important;
+ min-height:36px!important;
+ padding:0 11px!important;
+ border-radius:9px!important;
+ white-space:nowrap!important;
+ font-size:12px!important;
+ font-weight:700!important;
+}
+.dm-header-actions>.dm-community-link svg{width:17px;height:17px;flex:0 0 17px}
+@media(max-width:650px){
+ .dm-header{gap:7px!important;padding-left:10px!important;padding-right:10px!important}
+ .dm-header>div:first-of-type{flex:1 1 auto!important;min-width:0!important}
+ .dm-header-kicker,.dm-header b{display:block!important;max-width:100%!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+ .dm-header-actions{gap:4px!important}
+ .dm-header-actions>button{width:34px!important;height:34px!important;flex-basis:34px!important}
+ .dm-header-actions>.dm-community-link{width:36px!important;min-width:36px!important;height:36px!important;min-height:36px!important;padding:0!important;gap:0!important}
+ .dm-header-actions>.dm-community-link span{display:none!important}
+}
