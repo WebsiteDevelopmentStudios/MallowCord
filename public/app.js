@@ -68,7 +68,7 @@ document.addEventListener("click",event=>{
 document.addEventListener("keydown",event=>{if(event.key==="Escape")document.querySelector("#modal")?.classList.add("hidden")});
 const memberDirectoryCache=new Map();
 let socialPeople=[],selectedAttachments=[],me=null,serverId=null,channelId=null,currentChannel=null,poll=null,currentServer=null,serverRoles=[],canManageServer=false,replyingTo=null,contextMessage=null,editingMessage=null,serverEmojis=[],mentionDirectory={roles:[],users:[],channels:[]},composerMatches=[],composerMatchIndex=0,mentionDirectoryServerId=null,lastMessagesSignature="",messagesLoading=false,memberPoll=null,notificationPoll=null,notificationsLoading=false,notificationSettings={channels:new Set(),servers:new Set()};
-async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
+async function api(path,opts={}){const headers={...(opts.headers||{})};const sessionToken=localStorage.getItem("mallowcord_session_token");if(sessionToken&&!Object.keys(headers).some(k=>k.toLowerCase()==="authorization"))headers.Authorization="Bearer "+sessionToken;if(!(opts.body instanceof FormData)&&!Object.keys(headers).some(k=>k.toLowerCase()==="content-type"))headers["content-type"]="application/json";const r=await fetch(API_BASE+path,{credentials:"include",...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error((d.error||"Request failed")+(d.path?" ["+d.path+"]":"")+(d.detail?" — "+d.detail:""));return d}
 
 // OAuth handoff runs immediately after the API helper, before the rest of the UI
 // initializes. This prevents unrelated UI startup errors from swallowing the login code.
@@ -79,6 +79,7 @@ async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts
  if(code){
   try{
    const result=await api("/auth/exchange",{method:"POST",body:JSON.stringify({code})});
+   if(result.session_token)localStorage.setItem("mallowcord_session_token",result.session_token);
    history.replaceState(null,"",location.pathname+location.hash);
    me=result.user;
    await enterApp();
