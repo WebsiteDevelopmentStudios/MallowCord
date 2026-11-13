@@ -1370,3 +1370,20 @@ body{
  .dm-main .dm-compose{padding-left:7px;padding-right:7px}
  .dm-main .dm-compose .primary{padding:0 11px}
 }
+
+
+/* Community invite sits directly beside the chat refresh control. */
+.chat-head{min-width:0}
+.community-invite-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;flex:0 0 auto;min-height:34px;padding:0 12px;border:1px solid rgba(88,101,242,.48);border-radius:9px;background:rgba(88,101,242,.16);color:#e7e9ff;text-decoration:none;font-size:12px;font-weight:700;white-space:nowrap;transition:background .16s,border-color .16s,transform .16s}
+.community-invite-btn:hover{background:rgba(88,101,242,.28);border-color:rgba(120,130,255,.8);transform:translateY(-1px)}
+.community-invite-btn svg{width:17px;height:17px;flex:0 0 17px}
+#refreshBtn{flex:0 0 auto}
+@media(max-width:650px){
+ .chat-head{gap:6px}
+ .community-invite-btn{min-height:32px;padding:0 8px;gap:6px;font-size:11px}
+ .community-invite-btn svg{width:16px;height:16px;flex-basis:16px}
+}
+@media(max-width:380px){
+ .community-invite-btn{padding:0 7px;font-size:10px;gap:5px}
+ .chat-head .head-muted{display:none}
+}
