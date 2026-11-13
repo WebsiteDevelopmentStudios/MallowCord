@@ -1,9 +1,4 @@
 const RUST_ROUTES = [
-  ["GET", /^\/api\/auth\/me$/],
-  ["GET", /^\/api\/auth\/(?:google|discord)$/],
-  ["GET", /^\/api\/auth\/(?:google|discord)\/callback$/],
-  ["POST", /^\/api\/auth\/logout$/],
-  ["POST", /^\/api\/auth\/exchange$/],
   ["POST", /^\/api\/auth\/username$/],
   ["POST", /^\/api\/account\/contact\/(?:request|confirm)$/],
   ["GET", /^\/api\/discord\/link\/status$/],
@@ -50,7 +45,6 @@ const RUST_ROUTES = [
   ["GET", /^\/api\/dms\/[^/]+\/messages$/],
   ["POST", /^\/api\/dms\/[^/]+\/messages$/],
   ["GET", /^\/api\/realtime$/],
-  ["GET", /^\/api\/notifications$/],
   ["POST", /^\/api\/notifications\/(?:read|clear)$/],
   ["GET", /^\/api\/notification-settings$/],
   ["POST", /^\/api\/notification-settings$/],
