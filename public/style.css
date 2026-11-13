@@ -1565,3 +1565,30 @@ body{
  .dm-back-button{display:grid!important;place-items:center!important;flex:0 0 30px!important;width:30px!important}
  .dm-main .dm-compose{width:100%!important;min-width:0!important}
 }
+
+
+/* Mobile interaction and layout fixes (Nov 13, 2026). */
+@media(max-width:650px){
+ #app .chat{min-width:0;touch-action:pan-y}
+ #app .mobile-nav-toggle{position:relative;z-index:2;display:grid!important;place-items:center!important;flex:0 0 40px!important;width:40px!important;height:40px!important;min-width:40px!important;min-height:40px!important;border-radius:10px!important;background:rgba(255,255,255,.10)!important;color:#fff!important;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+ #app .channels{z-index:300!important;visibility:visible}
+ #app .members{z-index:301!important;visibility:visible;will-change:transform}
+ #app .mobile-drawer-backdrop{z-index:299!important}
+ #app.mobile-channels-open .channels,#app.mobile-members-open .members{pointer-events:auto!important}
+ #app:not(.mobile-channels-open):not(.mobile-members-open) .mobile-drawer-backdrop{pointer-events:none!important}
+ #app .members.mobile-drawer-dragging{transition:none!important}
+ #mallowPreloadPanel{top:calc(8px + env(safe-area-inset-top))!important;right:8px!important;bottom:auto!important;left:auto!important;width:min(360px,calc(100vw - 16px))!important;max-height:min(38dvh,320px)!important;z-index:9000!important}
+ #mallowPreloadPanel>div:last-child{max-height:calc(min(38dvh,320px) - 105px)!important}
+ #mallowPreloadShow{top:calc(8px + env(safe-area-inset-top))!important;right:8px!important;bottom:auto!important;z-index:9000!important}
+ .dm-workspace .dm-header{display:flex!important;align-items:center!important;gap:8px!important;min-height:64px!important;height:auto!important;padding:calc(8px + env(safe-area-inset-top)) 10px 9px!important}
+ .dm-workspace .dm-header>div:first-of-type{flex:1 1 0!important;min-width:0!important}
+ .dm-workspace .dm-header-kicker{font-size:10px!important;line-height:1.2!important}
+ .dm-workspace .dm-header b{font-size:14px!important;line-height:1.25!important}
+ .dm-workspace .dm-back-button{display:grid!important;flex:0 0 34px!important;width:34px!important;height:36px!important;place-items:center!important}
+ .dm-workspace .dm-header-actions{flex:0 0 auto!important;min-width:0!important}
+ .dm-workspace .dm-header-actions>button{width:34px!important;height:34px!important;flex-basis:34px!important}
+ .dm-workspace .dm-header-actions>.dm-community-link{width:36px!important;height:36px!important;min-width:36px!important;flex-basis:36px!important}
+ .dm-workspace .dm-sidebar{width:100%!important;min-width:0!important}
+ .dm-workspace .dm-main{width:100%!important;min-width:0!important}
+ .dm-workspace .dm-main .dm-compose{margin:0!important;padding:9px 10px calc(10px + env(safe-area-inset-bottom))!important}
+}
