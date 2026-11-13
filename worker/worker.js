@@ -66,7 +66,6 @@ async function ensureNotificationTables(env){return ensureSchemaOnce("notificati
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_notification_settings(user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),scope_id TEXT NOT NULL,muted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,scope_type,scope_id))").run();
 });}
 async function ensureMemberDirectoryTables(env){return ensureSchemaOnce("member-directory-tables",async()=>{
- await ensureAccountTables(env);
  await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
