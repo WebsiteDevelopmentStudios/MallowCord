@@ -45,14 +45,7 @@ const API_BASE="https://mallowcord-api.wowgrayhaha.workers.dev/api";
 const preloadChecks=new Map();
 const PRELOAD_HIDDEN_KEY="mallowcord.preloadDiagnostics.hidden";
 function preloadIsHidden(){try{return localStorage.getItem(PRELOAD_HIDDEN_KEY)==="1"}catch{return false}}
-function renderPreloadShow(){
- let tab=document.getElementById("mallowPreloadShow");
- if(tab)return;
- tab=document.createElement("button");tab.id="mallowPreloadShow";tab.textContent="Preload log";
- tab.style.cssText="position:fixed;right:8px;top:calc(8px + env(safe-area-inset-top));z-index:9000;background:#1b2633;color:white;border:1px solid #425064;border-radius:8px;padding:8px 10px;cursor:pointer";
- tab.onclick=()=>{try{localStorage.removeItem(PRELOAD_HIDDEN_KEY)}catch{}tab.remove();renderPreloadPanel()};
- document.body.append(tab);
-}
+function renderPreloadShow(){ /* Hidden diagnostics stay hidden; there is intentionally no reopen control. */ }
 function preloadCheck(name,state,detail=""){
  preloadChecks.set(name,{state,detail,time:new Date().toLocaleTimeString()});
  renderPreloadPanel();
