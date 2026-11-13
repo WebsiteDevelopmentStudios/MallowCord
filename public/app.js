@@ -6,7 +6,7 @@ function renderPreloadShow(){
  let tab=document.getElementById("mallowPreloadShow");
  if(tab)return;
  tab=document.createElement("button");tab.id="mallowPreloadShow";tab.textContent="Preload log";
- tab.style.cssText="position:fixed;right:16px;bottom:16px;z-index:100000;background:#1b2633;color:white;border:1px solid #425064;border-radius:8px;padding:9px 12px;cursor:pointer";
+ tab.style.cssText="position:fixed;right:8px;top:calc(8px + env(safe-area-inset-top));z-index:9000;background:#1b2633;color:white;border:1px solid #425064;border-radius:8px;padding:8px 10px;cursor:pointer";
  tab.onclick=()=>{try{localStorage.removeItem(PRELOAD_HIDDEN_KEY)}catch{}tab.remove();renderPreloadPanel()};
  document.body.append(tab);
 }
@@ -30,14 +30,14 @@ function renderPreloadPanel(){
  let panel=document.getElementById("mallowPreloadPanel");
  if(!panel){
   panel=document.createElement("section");panel.id="mallowPreloadPanel";
-  panel.style.cssText="position:fixed;right:16px;bottom:16px;z-index:100000;width:min(390px,calc(100vw - 32px));max-height:min(68vh,560px);overflow:hidden;background:#111820;color:#e8edf4;border:1px solid #425064;border-radius:12px;box-shadow:0 12px 42px #0009;font:13px/1.45 system-ui,sans-serif";
+  panel.style.cssText="position:fixed;right:8px;top:calc(8px + env(safe-area-inset-top));bottom:auto;z-index:9000;width:min(390px,calc(100vw - 16px));max-height:min(42dvh,360px);overflow:hidden;background:#111820;color:#e8edf4;border:1px solid #425064;border-radius:12px;box-shadow:0 12px 42px #0009;font:13px/1.45 system-ui,sans-serif";
   document.body.append(panel);
  }
  const rows=[...preloadChecks.entries()];
  const ok=rows.filter(([,v])=>v.state==="ok").length,fail=rows.filter(([,v])=>v.state==="fail").length,pending=rows.filter(([,v])=>v.state==="pending").length;
  const icon=s=>s==="ok"?"✓":s==="fail"?"✕":s==="pending"?"…":"—";
  const color=s=>s==="ok"?"#55d98a":s==="fail"?"#ff7272":s==="pending"?"#f4c66a":"#a8b2c1";
- panel.innerHTML='<header style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#1b2633"><b style="flex:1">MallowCord preload diagnostics</b><button id="mallowPreloadHide" style="background:#344355;color:white;border:0;border-radius:6px;padding:5px 9px;cursor:pointer">Hide</button></header><div style="padding:10px 14px;border-bottom:1px solid #344355"><b style="color:'+(fail?'#ff7272':pending?'#f4c66a':'#55d98a')+'">'+(fail?fail+" failed":pending?pending+" still loading":rows.length&&ok===rows.length?"Preload checks passed":"Waiting for preload")+'</b><span style="color:#a8b2c1"> · '+ok+'/'+rows.length+' passed</span><div style="color:#a8b2c1;font-size:11px;margin-top:3px">Checks the initial app/server data requests. It does not claim every DM or message history is cached.</div></div><div style="padding:6px 14px 12px;overflow:auto;max-height:calc(min(68vh,560px) - 115px)">'+(rows.length?rows.map(([name,v])=>'<div style="display:flex;gap:9px;padding:5px 0;border-bottom:1px solid #263342"><b style="color:'+color(v.state)+';width:14px">'+icon(v.state)+'</b><span style="flex:1;min-width:0"><b>'+esc(name)+'</b>'+(v.detail?'<div style="color:'+(v.state==="fail"?"#ff9999":"#a8b2c1")+';overflow-wrap:anywhere">'+esc(v.detail)+'</div>':"")+'</span><small style="color:#8997a8">'+esc(v.time)+'</small></div>').join(""):'No checks started yet.')+'</div>';
+ panel.innerHTML='<header style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#1b2633"><b style="flex:1">MallowCord preload diagnostics</b><button id="mallowPreloadHide" style="background:#344355;color:white;border:0;border-radius:6px;padding:5px 9px;cursor:pointer">Hide</button></header><div style="padding:10px 14px;border-bottom:1px solid #344355"><b style="color:'+(fail?'#ff7272':pending?'#f4c66a':'#55d98a')+'">'+(fail?fail+" failed":pending?pending+" still loading":rows.length&&ok===rows.length?"Preload checks passed":"Waiting for preload")+'</b><span style="color:#a8b2c1"> · '+ok+'/'+rows.length+' passed</span><div style="color:#a8b2c1;font-size:11px;margin-top:3px">Checks the initial app/server data requests. It does not claim every DM or message history is cached.</div></div><div style="padding:6px 14px 12px;overflow:auto;max-height:calc(min(42dvh,360px) - 115px)">'+(rows.length?rows.map(([name,v])=>'<div style="display:flex;gap:9px;padding:5px 0;border-bottom:1px solid #263342"><b style="color:'+color(v.state)+';width:14px">'+icon(v.state)+'</b><span style="flex:1;min-width:0"><b>'+esc(name)+'</b>'+(v.detail?'<div style="color:'+(v.state==="fail"?"#ff9999":"#a8b2c1")+';overflow-wrap:anywhere">'+esc(v.detail)+'</div>':"")+'</span><small style="color:#8997a8">'+esc(v.time)+'</small></div>').join(""):'No checks started yet.')+'</div>';
  panel.querySelector("#mallowPreloadHide").onclick=()=>{try{localStorage.setItem(PRELOAD_HIDDEN_KEY,"1")}catch{}panel.remove();renderPreloadShow()};
 }
 async function preloadRun(name,fn){
@@ -823,51 +823,48 @@ $("#closeModal").onclick=()=>$("#modal").classList.add("hidden");
 $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});localStorage.removeItem("mallowcord_session_token");location.reload()};
 
 
-// Mobile channel/member drawers and interactive swipe gestures
+// Mobile channel/member drawers. Pointer Events cover Chrome Android,
+// touch laptops and modern mobile browsers with one gesture path.
 (()=>{
  const app=document.querySelector("#app"),toggle=document.querySelector("#mobileChannelsToggle"),members=document.querySelector(".members");
  if(!app||!toggle||!members)return;
  let gesture=null;
  const mobile=()=>window.matchMedia("(max-width:650px)").matches;
- function closeDrawers(){app.classList.remove("mobile-channels-open","mobile-members-open");toggle.setAttribute("aria-expanded","false");toggle.setAttribute("aria-label","Open channels");members.style.transform=""}
- function openChannels(){app.classList.remove("mobile-members-open");app.classList.add("mobile-channels-open");toggle.setAttribute("aria-expanded","true");toggle.setAttribute("aria-label","Close channels")}
- function openMembers(){app.classList.remove("mobile-channels-open");app.classList.add("mobile-members-open");toggle.setAttribute("aria-expanded","false");members.style.transform=""}
- toggle.addEventListener("click",()=>{if(!mobile())return;if(app.classList.contains("mobile-channels-open"))closeDrawers();else openChannels()});
+ function setToggle(open){toggle.setAttribute("aria-expanded",String(open));toggle.setAttribute("aria-label",open?"Close channels":"Open channels")}
+ function closeDrawers(){app.classList.remove("mobile-channels-open","mobile-members-open");setToggle(false);members.style.transform="";members.classList.remove("mobile-drawer-dragging")}
+ function openChannels(){app.classList.remove("mobile-members-open");members.style.transform="";app.classList.add("mobile-channels-open");setToggle(true)}
+ function openMembers(){app.classList.remove("mobile-channels-open");members.style.transform="";app.classList.add("mobile-members-open");setToggle(false)}
+ toggle.onclick=e=>{e.preventDefault();e.stopPropagation();if(!mobile())return;if(app.classList.contains("mobile-channels-open"))closeDrawers();else openChannels()};
  const backdrop=document.createElement("button");backdrop.type="button";backdrop.className="mobile-drawer-backdrop";backdrop.setAttribute("aria-label","Close navigation");backdrop.addEventListener("click",closeDrawers);app.append(backdrop);
- document.querySelector("#channelList")?.addEventListener("click",e=>{if(mobile()&&e.target.closest(".channel"))closeDrawers()});
+ document.querySelector("#channelList")?.addEventListener("click",e=>{if(mobile()&&e.target instanceof Element&&e.target.closest(".channel"))closeDrawers()});
  document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawers()});
  function begin(e){
-  if(!mobile()||e.touches.length!==1)return;
-  const t=e.touches[0],memberOpen=app.classList.contains("mobile-members-open");
-  const inMember=!!e.target.closest(".members");
-  const inChat=!!e.target.closest(".chat");
-  if((memberOpen&&!inMember)||(!memberOpen&&!inChat))return;
-  gesture={x:t.clientX,y:t.clientY,dx:0,mode:memberOpen?"close":"open",horizontal:false};
+  if(!mobile()||e.pointerType!=="touch"||gesture)return;
+  const memberOpen=app.classList.contains("mobile-members-open"),target=e.target instanceof Element?e.target:null;
+  const inMember=!!target?.closest(".members"),inChat=!!target?.closest(".chat"),fromRightEdge=e.clientX>=window.innerWidth-34;
+  if(memberOpen?!inMember:(!inChat&&!fromRightEdge))return;
+  gesture={id:e.pointerId,x:e.clientX,y:e.clientY,dx:0,horizontal:false,mode:memberOpen?"close":"open"};
+  try{app.setPointerCapture(e.pointerId)}catch{}
  }
  function move(e){
-  if(!gesture||!mobile()||e.touches.length!==1)return;
-  const t=e.touches[0],dx=t.clientX-gesture.x,dy=t.clientY-gesture.y;
-  if(!gesture.horizontal&&Math.abs(dx)>9&&Math.abs(dx)>Math.abs(dy)*1.15)gesture.horizontal=true;
+  if(!gesture||e.pointerId!==gesture.id||!mobile())return;
+  const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+  if(!gesture.horizontal&&Math.abs(dx)>10&&Math.abs(dx)>Math.abs(dy)*1.1)gesture.horizontal=true;
   if(!gesture.horizontal)return;
   if((gesture.mode==="open"&&dx>0)||(gesture.mode==="close"&&dx<0))return;
-  gesture.dx=dx;
+  gesture.dx=dx;const width=members.getBoundingClientRect().width||300;
   members.classList.add("mobile-drawer-dragging");
-  const width=members.getBoundingClientRect().width||300;
   members.style.transform=gesture.mode==="open"?"translateX("+Math.max(0,Math.min(105,105+dx/width*105))+"%)":"translateX("+Math.max(0,Math.min(width,dx))+"px)";
  }
- function finish(){
-  if(!gesture)return;
+ function finish(e){
+  if(!gesture||e.pointerId!==gesture.id)return;
   const g=gesture;gesture=null;members.classList.remove("mobile-drawer-dragging");
   if(!mobile()){members.style.transform="";return}
-  if(!g.horizontal){members.style.transform="";return}
-  if(g.mode==="open"&&g.dx<-55)openMembers();
-  else if(g.mode==="close"&&g.dx>55)closeDrawers();
+  if(g.horizontal&&g.mode==="open"&&g.dx<-48)openMembers();
+  else if(g.horizontal&&g.mode==="close"&&g.dx>48)closeDrawers();
   else members.style.transform="";
  }
- app.addEventListener("touchstart",begin,{passive:true});
- app.addEventListener("touchmove",move,{passive:true});
- app.addEventListener("touchend",finish,{passive:true});
- app.addEventListener("touchcancel",finish,{passive:true});
+ app.addEventListener("pointerdown",begin,{passive:true});app.addEventListener("pointermove",move,{passive:true});
+ app.addEventListener("pointerup",finish,{passive:true});app.addEventListener("pointercancel",finish,{passive:true});
  window.addEventListener("resize",()=>{if(!mobile())closeDrawers()});
 })();
-
