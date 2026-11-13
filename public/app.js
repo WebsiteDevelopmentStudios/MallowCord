@@ -714,7 +714,7 @@ async function showAccountPage(page){
   // Email and phone verification are intentionally unavailable until the feature is released.
  }else if(page==="security"){
   root.innerHTML='<div class="account-panel"><h3>Connected sign-in</h3><p class="account-note">MallowCord sign-in is handled by Google or Discord. Your provider password is never stored by MallowCord.</p><p class="account-note">To change your sign-in provider, sign out and continue with the other provider. Account linking will be available in a future update.</p></div><div class="account-panel"><h3>Device session</h3><p class="account-note">This device is signed in using a secure, HTTP-only session cookie.</p><button id="securityLogout" class="danger">Sign out of this device</button></div>';
-  $("#securityLogout").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};
+  $("#securityLogout").onclick=async()=>{await api("/auth/logout",{method:"POST"});localStorage.removeItem("mallowcord_session_token");location.reload()};
  }else if(page==="status"){
   const d=await api("/account/status"),u=d.account;
   root.innerHTML='<div class="account-panel"><h3>Account standing</h3><div class="status-line"><span>Account status</span><b class="'+(u.status==="active"?"status-good":"status-warning")+'">'+esc(u.status)+'</b></div><div class="status-line"><span>Account type</span><b>'+esc(u.account_type)+'</b></div><div class="status-line"><span>Username</span><b>'+esc(u.username)+'</b></div><div class="status-line"><span>Created</span><b>'+new Date(u.created_at*1000).toLocaleDateString()+'</b></div>'+(u.timeout_until?'<div class="status-line"><span>Timeout expires</span><b>'+new Date(u.timeout_until*1000).toLocaleString()+'</b></div>':"")+'</div>';
@@ -820,7 +820,7 @@ function applyPreferences(){const theme=accountPreferences.appearance?.theme||"d
 // Settings button is handled by the early delegated listener above.
 
 $("#closeModal").onclick=()=>$("#modal").classList.add("hidden");
-$("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});location.reload()};
+$("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});localStorage.removeItem("mallowcord_session_token");location.reload()};
 
 
 // Mobile channel/member drawers and interactive swipe gestures
