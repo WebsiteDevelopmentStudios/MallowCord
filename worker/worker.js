@@ -18,17 +18,6 @@ const ipDigest=async(req,env)=>ip(req)?sha(ip(req)+env.IP_HASH_SECRET):null;
 async function passwordHash(password,salt){salt=salt||token().slice(0,32);const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:new TextEncoder().encode(salt),iterations:100000,hash:"SHA-256"},key,256);return "pbkdf2$"+salt+"$"+hex(bits);}
 async function passwordCheck(password,stored){if(!stored)return false;const p=stored.split("$");if(p[0]!=="pbkdf2")return false;const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);for(const iterations of [100000,210000]){try{const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:new TextEncoder().encode(p[1]),iterations,hash:"SHA-256"},key,256);if(hex(bits)===p[2])return true;}catch{}}return false;}
 async function body(req){try{return await req.json()}catch{return {}}}
-async function mirrorPresenceToRust(env,payload){
- const origin=String(env.RUST_API_ORIGIN||"").trim(),key=String(env.MALLOWBOT_SERVICE_KEY||"").trim();
- if(!origin||!key)return;
- try{
-  const target=new URL("/api/integrations/mallowbot/discord/presence/batch",origin);
-  const response=await fetch(target,{method:"POST",headers:{"content-type":"application/json","X-MallowBot-Key":key},body:JSON.stringify(payload)});
-  if(!response.ok){console.warn("Rust presence mirror returned HTTP",response.status);return;}
-  const result=await response.json();
-  if(!result?.ok)console.warn("Rust presence mirror did not confirm update",result);
- }catch(error){console.warn("Rust presence mirror failed",String(error?.message||error));}
-}
 async function userFor(req,env){const c=(req.headers.get("Cookie")||"").split(";").map(x=>x.trim()).find(x=>x.startsWith(COOKIE+"="));if(!c)return null;const th=await sha(c.slice(COOKIE.length+1));const u=await getDatabase(env).prepare("SELECT u.id,u.username,u.account_type,u.status,u.timeout_until,s.id AS session_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?").bind(th,now()).first();if(!u||u.status==="banned"||u.status==="deleted")return null;if(u.status==="timed_out"&&u.timeout_until>now())u.timed_out=true;return u;}
 const isOwner=u=>u&&u.account_type==="owner";
 async function session(req,env,userId){const raw=token(),t=now();await getDatabase(env).prepare("INSERT INTO sessions(id,user_id,token_hash,created_at,expires_at,user_agent,ip_hash) VALUES(?,?,?,?,?,?,?)").bind(uid(),userId,await sha(raw),t,t+DAYS*86400,req.headers.get("User-Agent")||"",await ipDigest(req,env)).run();return setCookie(raw);}
@@ -472,16 +461,14 @@ if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to 
   const statements=[];
   for(const item of updates){const did=String(item.user_id||""),userIds=linked.get(did)||new Set(),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline",seenAt=status==="offline"?0:now();for(const userId of userIds){statements.push(getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(userId,status,now()));statements.push(getDatabase(env).prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(userId,seenAt));}}
   if(statements.length)await getDatabase(env).batch(statements);
-  await mirrorPresenceToRust(env,{guild_id:b.guild_id,updates});
   return json({ok:true,updated:statements.length});
  }
  if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
   const presence=["online","idle","dnd","offline"].includes(b.status)?b.status:"offline";
   const discordId=String(b.user_id||""),linked=await getDatabase(env).prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM oauth_accounts WHERE provider='discord' AND provider_user_id=?").bind(discordId).first();
-  if(!linked){await mirrorPresenceToRust(env,{guild_id:b.guild_id,updates:[{user_id:discordId,status:presence}]});return json({ok:true,ignored:true});}
+  if(!linked)return json({ok:true,ignored:true});
   await getDatabase(env).batch([getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(linked.user_id,presence,now()),getDatabase(env).prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(linked.user_id,presence==="offline"?0:now())]);
-  await mirrorPresenceToRust(env,{guild_id:b.guild_id,updates:[{user_id:discordId,status:presence}]});
   return json({ok:true});
  }
  if(p==="/api/integrations/mallowbot/discord/messages"&&m==="POST"){
@@ -536,6 +523,36 @@ if(p==="/api/auth/logout"&&m==="POST"){const u=await userFor(req,env);if(u){awai
 const u=await userFor(req,env);
 if(p==="/api/auth/me"&&m==="GET")return u?json({user:{id:u.id,username:u.username,account_type:u.account_type}}):fail("Not signed in.",401);
 if(!u)return fail("Sign in required.",401);
+const memberRouteMatch=p.match(/^\\/api\\/servers\\/([^/]+)\\/members$/);
+if(memberRouteMatch&&m==="GET"){
+ await ensureMemberDirectoryTables(env);
+ const serverId=decodeURIComponent(memberRouteMatch[1]);
+ const server=await getDatabase(env).prepare("SELECT owner_id FROM servers WHERE id=?").bind(serverId).first();
+ if(!server)return fail("Server not found.",404);
+ const membership=await getDatabase(env).prepare("SELECT 1 AS member FROM memberships WHERE server_id=? AND user_id=?").bind(serverId,u.id).first();
+ if(!membership)return fail("You are not a member of this server.",403);
+ const members=await getDatabase(env).prepare(`SELECT u.id,
+  COALESCE(up.discord_username,u.username) AS username,
+  COALESCE(up.display_name,u.username) AS display_name,
+  up.avatar_url,up.bio,up.pronouns,
+  CASE
+   WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline'
+   WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online')
+   ELSE 'offline'
+  END AS presence,
+  COALESCE(up.is_bot,0) AS is_bot,
+  u.account_type,u.status,m.joined_at,
+  COALESCE((SELECT group_concat(r.name,', ') FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'@everyone') AS roles,
+  COALESCE((SELECT json_group_array(json_object('id',r.id,'name',r.name,'color',COALESCE(r.color,'#99aab5'),'position',r.position)) FROM member_roles mr JOIN roles r ON r.id=mr.role_id WHERE mr.server_id=m.server_id AND mr.user_id=m.user_id),'[]') AS roles_json
+ FROM memberships m
+ JOIN users u ON u.id=m.user_id
+ LEFT JOIN user_profiles up ON up.user_id=u.id
+ LEFT JOIN user_presence pr ON pr.user_id=u.id
+ LEFT JOIN user_preferences pref ON pref.user_id=u.id
+ WHERE m.server_id=?
+ ORDER BY m.joined_at`).bind(now()-45,serverId).all();
+ return json({members:members.results||[],can_manage:isOwner(u)||server.owner_id===u.id});
+}
 if(p==="/api/admin/d1-usage"&&m==="GET"){
  if(!isOwner(u))return fail("Owner access required.",403);
  const analyticsToken=String(env.CF_ANALYTICS_API_TOKEN||"").trim();
