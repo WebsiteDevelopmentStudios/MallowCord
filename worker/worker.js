@@ -523,7 +523,7 @@ if(p==="/api/auth/logout"&&m==="POST"){const u=await userFor(req,env);if(u){awai
 const u=await userFor(req,env);
 if(p==="/api/auth/me"&&m==="GET")return u?json({user:{id:u.id,username:u.username,account_type:u.account_type}}):fail("Not signed in.",401);
 if(!u)return fail("Sign in required.",401);
-const memberRouteMatch=p.match(/^\\/api\\/servers\\/([^/]+)\\/members$/);
+const memberRouteMatch=p.match(/^\/api\/servers\/([^/]+)\/members$/);
 if(memberRouteMatch&&m==="GET"){
  await ensureMemberDirectoryTables(env);
  const serverId=decodeURIComponent(memberRouteMatch[1]);
