@@ -1903,3 +1903,29 @@ body{
   #app.dm-mode .dm-main .dm-compose{gap:5px!important;padding-left:6px!important;padding-right:6px!important}
   #app.dm-mode .dm-main .dm-compose .primary{min-width:48px!important;padding:0 9px!important}
 }
+
+
+/* Keep the settings close control reachable and visible on narrow phone screens. */
+@media(max-width:650px){
+  #modal .account-settings-card{position:relative!important}
+  #modal .account-settings-card>#closeModal{
+    position:fixed!important;
+    top:calc(12px + env(safe-area-inset-top))!important;
+    right:calc(12px + env(safe-area-inset-right))!important;
+    z-index:1205!important;
+    display:grid!important;
+    place-items:center!important;
+    width:38px!important;
+    height:38px!important;
+    min-width:38px!important;
+    padding:0!important;
+    border:1px solid rgba(255,255,255,.2)!important;
+    border-radius:10px!important;
+    background:#303640!important;
+    color:#fff!important;
+    font-size:26px!important;
+    line-height:1!important;
+    box-shadow:0 3px 14px rgba(0,0,0,.4)!important;
+  }
+  #modal .account-settings-header{padding-right:42px!important}
+}
