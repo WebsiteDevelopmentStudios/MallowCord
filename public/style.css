@@ -1929,3 +1929,14 @@ body{
   }
   #modal .account-settings-header{padding-right:42px!important}
 }
+
+
+/* The DMs shortcut is a mobile-navigation control, not a desktop control. */
+#mobileDmButton{display:none!important}
+@media(max-width:650px){
+  .user-panel-actions>#mobileDmButton{
+    display:inline-flex!important;
+    align-items:center!important;
+    justify-content:center!important;
+  }
+}
