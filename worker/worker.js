@@ -199,6 +199,19 @@ async function oauthStart(req,env,provider){
  if(provider==="google")params.set("prompt","select_account");
  return Response.redirect(auth+"?"+params.toString(),302);
 }
+// OAuth provisioning runs before handle() is entered, so account schema setup
+// must be available at module scope rather than only inside the request router.
+async function ensureAccountTables(env){return ensureSchemaOnce("account-tables",async()=>{
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_profiles(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,display_name TEXT,avatar_url TEXT,email TEXT,email_verified_at INTEGER,phone TEXT,phone_verified_at INTEGER,updated_at INTEGER NOT NULL)").run();
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_preferences(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,settings_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL)").run();
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS contact_verifications(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,channel TEXT NOT NULL,target TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL)").run();
+ await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN bio TEXT").run().catch(()=>{});
+ await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN status TEXT NOT NULL DEFAULT 'online'").run().catch(()=>{});
+ await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN pronouns TEXT").run().catch(()=>{});
+ await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN discord_username TEXT").run().catch(()=>{});
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
+});}
+
 async function oauthUser(env,provider,profile){
  await ensureOAuthTables(env);
  const providerId=String(profile.id||profile.sub||"");
