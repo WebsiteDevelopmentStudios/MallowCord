@@ -97,6 +97,7 @@ document.addEventListener("click",event=>{
  if(target.closest("#closeModal")){event.preventDefault();document.querySelector("#modal")?.classList.add("hidden");return}
  const nav=target.closest(".account-nav");
  if(nav){event.preventDefault();showAccountPage(nav.dataset.page).catch(error=>{console.error("Settings page failed:",error);const root=document.querySelector("#accountSettingsContent");if(root)root.innerHTML='<div class="settings-error">'+String(error?.message||"Could not load this settings page.")+'</div>'});return}
+ if(target.closest("#mobileDmButton")){event.preventDefault();event.stopPropagation();if(typeof openSocial==="function")openSocial();return}
  const button=target.closest("#settingsBtn");
  if(!button)return;
  event.preventDefault();
