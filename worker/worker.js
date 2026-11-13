@@ -18,6 +18,17 @@ const ipDigest=async(req,env)=>ip(req)?sha(ip(req)+env.IP_HASH_SECRET):null;
 async function passwordHash(password,salt){salt=salt||token().slice(0,32);const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:new TextEncoder().encode(salt),iterations:100000,hash:"SHA-256"},key,256);return "pbkdf2$"+salt+"$"+hex(bits);}
 async function passwordCheck(password,stored){if(!stored)return false;const p=stored.split("$");if(p[0]!=="pbkdf2")return false;const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);for(const iterations of [100000,210000]){try{const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt:new TextEncoder().encode(p[1]),iterations,hash:"SHA-256"},key,256);if(hex(bits)===p[2])return true;}catch{}}return false;}
 async function body(req){try{return await req.json()}catch{return {}}}
+async function mirrorPresenceToRust(env,payload){
+ const origin=String(env.RUST_API_ORIGIN||"").trim(),key=String(env.MALLOWBOT_SERVICE_KEY||"").trim();
+ if(!origin||!key)return;
+ try{
+  const target=new URL("/api/integrations/mallowbot/discord/presence/batch",origin);
+  const response=await fetch(target,{method:"POST",headers:{"content-type":"application/json","X-MallowBot-Key":key},body:JSON.stringify(payload)});
+  if(!response.ok){console.warn("Rust presence mirror returned HTTP",response.status);return;}
+  const result=await response.json();
+  if(!result?.ok)console.warn("Rust presence mirror did not confirm update",result);
+ }catch(error){console.warn("Rust presence mirror failed",String(error?.message||error));}
+}
 async function userFor(req,env){const c=(req.headers.get("Cookie")||"").split(";").map(x=>x.trim()).find(x=>x.startsWith(COOKIE+"="));if(!c)return null;const th=await sha(c.slice(COOKIE.length+1));const u=await getDatabase(env).prepare("SELECT u.id,u.username,u.account_type,u.status,u.timeout_until,s.id AS session_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?").bind(th,now()).first();if(!u||u.status==="banned"||u.status==="deleted")return null;if(u.status==="timed_out"&&u.timeout_until>now())u.timed_out=true;return u;}
 const isOwner=u=>u&&u.account_type==="owner";
 async function session(req,env,userId){const raw=token(),t=now();await getDatabase(env).prepare("INSERT INTO sessions(id,user_id,token_hash,created_at,expires_at,user_agent,ip_hash) VALUES(?,?,?,?,?,?,?)").bind(uid(),userId,await sha(raw),t,t+DAYS*86400,req.headers.get("User-Agent")||"",await ipDigest(req,env)).run();return setCookie(raw);}
@@ -460,15 +471,18 @@ if(String(b.guild_id)!==expectedGuild)return fail("This bridge is restricted to 
   for(const row of oauthLinks.results||[]){if(!linked.has(row.discord_user_id))linked.set(row.discord_user_id,new Set());linked.get(row.discord_user_id).add(row.user_id);}
   const statements=[];
   for(const item of updates){const did=String(item.user_id||""),userIds=linked.get(did)||new Set(),status=["online","idle","dnd","offline"].includes(item.status)?item.status:"offline",seenAt=status==="offline"?0:now();for(const userId of userIds){statements.push(getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(userId,status,now()));statements.push(getDatabase(env).prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(userId,seenAt));}}
-  if(!statements.length)return json({ok:true,updated:0});
-  const results=await getDatabase(env).batch(statements);return json({ok:true,updated:results.reduce((n,r)=>n+(r.meta?.changes||0),0)});
+  if(statements.length)await getDatabase(env).batch(statements);
+  await mirrorPresenceToRust(env,{guild_id:b.guild_id,updates});
+  return json({ok:true,updated:statements.length});
  }
  if(p==="/api/integrations/mallowbot/discord/presence"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
   const presence=["online","idle","dnd","offline"].includes(b.status)?b.status:"offline";
   const discordId=String(b.user_id||""),linked=await getDatabase(env).prepare("SELECT user_id FROM discord_account_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM discord_user_links WHERE discord_user_id=? AND server_id=?").bind(discordId,system.id).first()||await getDatabase(env).prepare("SELECT user_id FROM oauth_accounts WHERE provider='discord' AND provider_user_id=?").bind(discordId).first();
-  if(!linked)return json({ok:true,ignored:true});
-  await getDatabase(env).batch([getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(linked.user_id,presence,now()),getDatabase(env).prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(linked.user_id,presence==="offline"?0:now())]);return json({ok:true});
+  if(!linked){await mirrorPresenceToRust(env,{guild_id:b.guild_id,updates:[{user_id:discordId,status:presence}]});return json({ok:true,ignored:true});}
+  await getDatabase(env).batch([getDatabase(env).prepare("INSERT INTO user_profiles(user_id,status,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at WHERE COALESCE(user_profiles.status,'offline')<>excluded.status").bind(linked.user_id,presence,now()),getDatabase(env).prepare("INSERT INTO user_presence(user_id,last_seen_at) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen_at=excluded.last_seen_at").bind(linked.user_id,presence==="offline"?0:now())]);
+  await mirrorPresenceToRust(env,{guild_id:b.guild_id,updates:[{user_id:discordId,status:presence}]});
+  return json({ok:true});
  }
  if(p==="/api/integrations/mallowbot/discord/messages"&&m==="POST"){
   const b=await body(req);if(String(b.guild_id)!==expectedGuild)return fail("Guild is not linked.",403);
