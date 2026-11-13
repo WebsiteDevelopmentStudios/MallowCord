@@ -1592,3 +1592,26 @@ body{
  .dm-workspace .dm-main{width:100%!important;min-width:0!important}
  .dm-workspace .dm-main .dm-compose{margin:0!important;padding:9px 10px calc(10px + env(safe-area-inset-bottom))!important}
 }
+
+
+/* Reliable phone drawer controls: keep both controls above chat overlays. */
+@media(max-width:650px){
+ #app .chat-head{position:relative;z-index:5}
+ #app .mobile-nav-toggle,#app .mobile-members-toggle{
+  display:grid!important;place-items:center!important;position:relative!important;z-index:20!important;
+  flex:0 0 40px!important;width:40px!important;height:40px!important;min-width:40px!important;
+  border:1px solid rgba(255,255,255,.16)!important;border-radius:10px!important;
+  background:#293442!important;color:#fff!important;font-size:20px!important;
+  opacity:1!important;visibility:visible!important;pointer-events:auto!important;
+  touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;
+ }
+ #app .mobile-members-toggle{font-size:21px!important}
+ #app .channels{pointer-events:none}
+ #app.mobile-channels-open .channels{pointer-events:auto}
+ #app .members{pointer-events:none}
+ #app.mobile-members-open .members{pointer-events:auto}
+ #app .mobile-drawer-backdrop{z-index:299!important}
+ #app .channels{z-index:300!important}
+ #app .members{z-index:301!important}
+}
+@media(min-width:651px){#mobileMembersToggle{display:none!important}}
