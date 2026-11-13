@@ -834,7 +834,34 @@ $("#logout").onclick=async()=>{await api("/auth/logout",{method:"POST"});localSt
  function closeDrawers(){app.classList.remove("mobile-channels-open","mobile-members-open");setToggle(false);members.style.transform="";members.classList.remove("mobile-drawer-dragging")}
  function openChannels(){app.classList.remove("mobile-members-open");members.style.transform="";app.classList.add("mobile-channels-open");setToggle(true)}
  function openMembers(){app.classList.remove("mobile-channels-open");members.style.transform="";app.classList.add("mobile-members-open");setToggle(false)}
- toggle.onclick=e=>{e.preventDefault();e.stopPropagation();if(!mobile())return;if(app.classList.contains("mobile-channels-open"))closeDrawers();else openChannels()};
+ // Use a document-level capture handler so later component listeners cannot swallow taps.
+ document.addEventListener("click",e=>{
+  const button=e.target instanceof Element?e.target.closest("#mobileChannelsToggle,#mobileMembersToggle"):null;
+  if(!button||!mobile())return;
+  e.preventDefault();e.stopImmediatePropagation();
+  if(button.id==="mobileChannelsToggle"){
+   if(app.classList.contains("mobile-channels-open"))closeDrawers();else openChannels();
+  }else{
+   if(app.classList.contains("mobile-members-open"))closeDrawers();else openMembers();
+  }
+ },true);
+ // Touch-event fallback for browsers/webviews where Pointer Events are interrupted by scrolling.
+ let touchStart=null;
+ app.addEventListener("touchstart",e=>{
+  if(!mobile()||e.touches.length!==1)return;
+  const t=e.touches[0],target=e.target instanceof Element?e.target:null;
+  const memberOpen=app.classList.contains("mobile-members-open");
+  if(memberOpen?!target?.closest(".members"):!target?.closest(".chat")){touchStart=null;return}
+  touchStart={x:t.clientX,y:t.clientY,memberOpen};
+ },{passive:true});
+ app.addEventListener("touchend",e=>{
+  if(!touchStart||!mobile()||!e.changedTouches.length)return;
+  const t=e.changedTouches[0],dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y,start=touchStart;touchStart=null;
+  if(Math.abs(dx)<55||Math.abs(dx)<Math.abs(dy)*1.25)return;
+  if(start.memberOpen&&dx>0)closeDrawers();
+  else if(!start.memberOpen&&dx<0)openMembers();
+ },{passive:true});
+
  const backdrop=document.createElement("button");backdrop.type="button";backdrop.className="mobile-drawer-backdrop";backdrop.setAttribute("aria-label","Close navigation");backdrop.addEventListener("click",closeDrawers);app.append(backdrop);
  document.querySelector("#channelList")?.addEventListener("click",e=>{if(mobile()&&e.target instanceof Element&&e.target.closest(".channel"))closeDrawers()});
  document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDrawers()});
