@@ -100,7 +100,7 @@ async function api(path,opts={}){const headers={...(opts.headers||{})};if(!(opts
 let realtimeSocket=null,realtimeReconnectTimer=null,realtimeConnectTimer=null,realtimeRetry=1000,memberRefreshTimer=null,bridgeMessagePoll=null;
 function realtimeConnected(){return typeof WebSocket!=="undefined"&&realtimeSocket?.readyState===WebSocket.OPEN}
 function startRealtimeFallback(){
- if(channelId&&!poll)poll=setInterval(()=>{if(document.visibilityState==="visible")loadMessages()},20000);
+ if(channelId&&!poll&&!bridgeMessagePoll)poll=setInterval(()=>{if(document.visibilityState==="visible")loadMessages()},20000);
  if(activeDmId&&!dmPoll)dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},20000);
  if(serverId&&!memberPoll)memberPoll=setInterval(()=>{if(document.visibilityState==="visible")loadMemberList()},60000);
  if(serverId&&!notificationPoll)notificationPoll=setInterval(()=>{if(document.visibilityState==="visible")loadNotifications()},45000);
