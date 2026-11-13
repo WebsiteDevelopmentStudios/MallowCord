@@ -1638,3 +1638,49 @@ body{
  #modal .account-settings-header{flex:0 0 auto!important;padding:18px 12px 12px!important}
  #modal .account-settings-content{flex:1 1 auto!important;min-width:0!important;min-height:0!important;height:auto!important;overflow-y:auto!important;overflow-x:hidden!important;padding:14px 12px 30px!important;-webkit-overflow-scrolling:touch!important}
 }
+
+
+/* Final settings + mobile drawer layout. These rules intentionally come last
+   so older experimental modal overrides cannot break the responsive layout. */
+.user-panel{min-width:0}
+.user-panel .user-profile-trigger{flex:1 1 auto!important;width:auto!important;min-width:0!important}
+.user-panel-actions{display:flex!important;flex:0 0 auto!important;align-items:center!important;justify-content:flex-end!important;gap:7px!important}
+.user-panel-actions>button{display:grid!important;place-items:center!important;flex:0 0 auto!important;min-width:36px!important;width:36px!important;height:36px!important;padding:0 7px!important;border:1px solid rgba(255,255,255,.12)!important;border-radius:9px!important;background:rgba(255,255,255,.08)!important;color:inherit!important;font-size:14px!important;font-weight:700!important;line-height:1!important;white-space:nowrap!important;cursor:pointer!important}
+.user-panel-actions>#mobileDmButton{width:52px!important;min-width:52px!important;font-size:12px!important;letter-spacing:.2px!important}
+.user-panel-actions>button:hover{background:rgba(255,255,255,.16)!important}
+#modal.modal{position:fixed!important;inset:0!important;z-index:1000!important;display:grid!important;place-items:center!important;padding:24px!important;background:rgba(0,0,0,.68)!important}
+#modal.modal.hidden{display:none!important}
+#modal.modal .account-settings-card{position:relative!important;display:block!important;width:min(1080px,calc(100vw - 48px))!important;height:min(760px,calc(100dvh - 48px))!important;max-width:1080px!important;max-height:calc(100dvh - 48px)!important;min-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important;border:1px solid rgba(255,255,255,.14)!important;border-radius:14px!important;background:#111318!important}
+#modal .account-settings-layout{display:grid!important;grid-template-columns:250px minmax(0,1fr)!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;overflow:hidden!important}
+#modal .account-settings-nav{display:block!important;min-width:0!important;min-height:0!important;height:100%!important;overflow-x:hidden!important;overflow-y:auto!important;padding:22px 14px!important;border-right:1px solid rgba(255,255,255,.1)!important;border-bottom:0!important;white-space:normal!important}
+#modal .account-settings-main{display:flex!important;flex-direction:column!important;min-width:0!important;min-height:0!important;height:100%!important;overflow:hidden!important;padding:0!important}
+#modal .account-settings-header{flex:0 0 auto!important;min-width:0!important;padding:25px 28px 18px!important;margin:0!important;border-bottom:1px solid rgba(255,255,255,.1)!important}
+#modal .account-settings-header .settings-eyebrow,#modal .account-settings-header p{display:block!important}
+#modal .account-settings-content{display:block!important;flex:1 1 auto!important;min-width:0!important;min-height:0!important;height:auto!important;max-width:none!important;overflow-x:hidden!important;overflow-y:auto!important;padding:24px 28px 42px!important;-webkit-overflow-scrolling:touch!important}
+#modal .account-settings-content>*{max-width:790px;margin-left:auto;margin-right:auto}
+#modal #closeModal{position:absolute!important;top:12px!important;right:14px!important;z-index:40!important;width:36px!important;height:36px!important;display:grid!important;place-items:center!important;pointer-events:auto!important;cursor:pointer!important}
+@media(max-width:760px){
+ #modal.modal{padding:10px!important}
+ #modal.modal .account-settings-card{width:calc(100vw - 20px)!important;height:calc(100dvh - 20px)!important;max-height:calc(100dvh - 20px)!important;border-radius:11px!important}
+ #modal .account-settings-layout{grid-template-columns:142px minmax(0,1fr)!important}
+ #modal .account-settings-nav{padding:16px 7px!important}
+ #modal .account-settings-main{padding:0!important}
+ #modal .account-settings-header{padding:18px 14px 12px!important}
+ #modal .account-settings-content{padding:16px 13px 28px!important}
+}
+@media(max-width:560px){
+ #modal.modal{padding:6px!important}
+ #modal.modal .account-settings-card{width:calc(100vw - 12px)!important;height:calc(100dvh - 12px)!important;max-height:calc(100dvh - 12px)!important}
+ #modal .account-settings-layout{display:flex!important;flex-direction:column!important}
+ #modal .account-settings-nav{display:flex!important;flex:0 0 56px!important;align-items:center!important;gap:5px!important;width:100%!important;height:56px!important;min-height:56px!important;overflow-x:auto!important;overflow-y:hidden!important;padding:7px 8px!important;border-right:0!important;border-bottom:1px solid rgba(255,255,255,.12)!important;white-space:nowrap!important;scrollbar-width:none!important}
+ #modal .account-settings-nav::-webkit-scrollbar{display:none!important}
+ #modal .account-settings-nav:before,#modal .account-settings-nav h2,#modal .account-settings-nav .settings-group-title{display:none!important}
+ #modal .account-settings-nav .account-nav{display:inline-flex!important;flex:0 0 auto!important;width:auto!important;min-height:36px!important;margin:0!important;padding:8px 10px!important;font-size:11px!important;white-space:nowrap!important}
+ #modal .account-settings-nav .account-logout{flex:0 0 auto!important}
+ #modal .account-settings-main{flex:1 1 auto!important;width:100%!important;min-height:0!important}
+ #modal .account-settings-header{padding:13px 14px 10px!important}
+ #modal .account-settings-header .settings-eyebrow,#modal .account-settings-header p{display:none!important}
+ #modal .account-settings-header h2{font-size:18px!important;margin:0!important}
+ #modal .account-settings-content{flex:1 1 auto!important;padding:14px 13px 24px!important}
+ #modal .account-field{grid-template-columns:minmax(0,1fr)!important;gap:8px!important}
+}
