@@ -17,7 +17,7 @@ const RUST_ROUTES = [
   ["POST", /^\/api\/presence\/heartbeat$/],
   ["GET", /^\/api\/servers$/],
   ["POST", /^\/api\/servers$/],
-  ["GET", /^\/api\/servers\/[^/]+\/(?:channels|roles|members|settings|stats|sections|onboarding)$/],
+  ["GET", /^\/api\/servers\/[^/]+\/(?:channels|roles|settings|stats|sections|onboarding)$/],
   ["GET", /^\/api\/servers\/[^/]+\/emojis$/],
   ["POST", /^\/api\/servers\/[^/]+\/emojis$/],
   ["DELETE", /^\/api\/servers\/[^/]+\/emojis\/[^/]+$/],
