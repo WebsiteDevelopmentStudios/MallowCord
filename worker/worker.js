@@ -320,6 +320,10 @@ async function ensureDiscordBridgeTables(env){return ensureSchemaOnce("discord-b
   await getDatabase(env).prepare("ALTER TABLE roles ADD COLUMN color TEXT NOT NULL DEFAULT '#99aab5'").run().catch(()=>{});
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_message_links(discord_message_id TEXT PRIMARY KEY,mallow_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,discord_channel_id TEXT NOT NULL)").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_outbox(id TEXT PRIMARY KEY,discord_channel_id TEXT NOT NULL,message_id TEXT NOT NULL UNIQUE,username TEXT NOT NULL,avatar_url TEXT,content TEXT NOT NULL,created_at INTEGER NOT NULL,processed_at INTEGER,discord_message_id TEXT)").run();
+ await getDatabase(env).prepare("CREATE INDEX IF NOT EXISTS discord_outbox_pending_created_idx ON discord_outbox(created_at) WHERE processed_at IS NULL").run();
+ await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_command_jobs(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,channel_id TEXT NOT NULL,user_id TEXT NOT NULL,discord_user_id TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,processed_at INTEGER)").run();
+ await getDatabase(env).prepare("CREATE INDEX IF NOT EXISTS discord_command_jobs_queued_created_idx ON discord_command_jobs(created_at) WHERE status='queued'").run();
+ await getDatabase(env).prepare("CREATE INDEX IF NOT EXISTS discord_command_jobs_processing_time_idx ON discord_command_jobs(processed_at) WHERE status='processing'").run();
  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS user_presence(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_seen_at INTEGER NOT NULL)").run();
  await getDatabase(env).prepare("ALTER TABLE user_profiles ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0").run().catch(()=>{});
 });}
@@ -355,7 +359,6 @@ if(discordBridgePath){
   return json({ok:true,linked:true});
  }
  if(p==="/api/integrations/mallowbot/discord/commands/next"&&m==="GET"){
-  await getDatabase(env).prepare("CREATE TABLE IF NOT EXISTS discord_command_jobs(id TEXT PRIMARY KEY,server_id TEXT NOT NULL,channel_id TEXT NOT NULL,user_id TEXT NOT NULL,discord_user_id TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,processed_at INTEGER)").run();
   await getDatabase(env).prepare("UPDATE discord_command_jobs SET status='queued',processed_at=NULL WHERE status='processing' AND processed_at<?").bind(now()-120).run();
   const rows=await getDatabase(env).prepare("SELECT j.id,j.channel_id,j.discord_user_id,j.content,cl.discord_channel_id FROM discord_command_jobs j JOIN discord_channel_links cl ON cl.mallow_channel_id=j.channel_id AND cl.server_id=j.server_id WHERE j.status='queued' ORDER BY j.created_at LIMIT 5").all();
   for(const job of rows.results)await getDatabase(env).prepare("UPDATE discord_command_jobs SET status='processing',processed_at=? WHERE id=? AND status='queued'").bind(now(),job.id).run();
