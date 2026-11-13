@@ -1387,3 +1387,64 @@ body{
  .community-invite-btn{padding:0 7px;font-size:10px;gap:5px}
  .chat-head .head-muted{display:none}
 }
+
+
+/* Keep the DM profile card fully inside its pane and separate avatar/name rows. */
+#dmProfilePanel.dm-profile-panel{
+ box-sizing:border-box!important;
+ min-height:100%!important;
+ padding:0 20px 28px!important;
+ overflow-x:hidden!important;
+ overflow-y:auto!important;
+}
+#dmProfilePanel .dm-profile-banner{
+ display:block!important;
+ height:112px!important;
+ margin:0 -20px!important;
+}
+#dmProfilePanel #dmProfileAvatar.dm-profile-avatar{
+ position:relative!important;
+ z-index:2!important;
+ width:92px!important;height:92px!important;
+ min-width:92px!important;max-width:92px!important;
+ min-height:92px!important;max-height:92px!important;
+ margin: -42px 0 0!important;
+ flex:none!important;
+ border:7px solid rgba(12,15,20,.95)!important;
+ border-radius:50%!important;
+ overflow:hidden!important;
+ box-sizing:border-box!important;
+}
+#dmProfilePanel #dmProfileAvatar img{
+ position:absolute!important;inset:0!important;
+ display:block!important;width:100%!important;height:100%!important;
+ max-width:none!important;max-height:none!important;
+ object-fit:cover!important;object-position:center!important;
+ border-radius:50%!important;
+}
+#dmProfilePanel #dmProfileName{
+ display:block!important;
+ position:relative!important;
+ margin:18px 0 0!important;
+ padding:0!important;
+ line-height:1.35!important;
+ overflow-wrap:anywhere!important;
+}
+#dmProfilePanel #dmProfileUsername{
+ display:block!important;
+ position:relative!important;
+ margin:8px 0 0!important;
+ padding:0!important;
+ line-height:1.5!important;
+ overflow-wrap:anywhere!important;
+}
+#dmProfilePanel #dmProfileStatus{display:inline-block!important;margin-top:12px!important}
+.dm-community-link{
+ display:flex!important;align-items:center!important;gap:9px!important;
+ color:#dfe2ff!important;text-decoration:none!important;
+ background:rgba(88,101,242,.12)!important;
+ border:1px solid rgba(88,101,242,.28)!important;
+}
+.dm-community-link:hover{background:rgba(88,101,242,.24)!important;color:#fff!important}
+.dm-community-link svg{width:17px;height:17px;flex:0 0 17px}
+.dm-nav-links .dm-community-link{font-size:12px;font-weight:700}
