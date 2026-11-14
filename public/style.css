@@ -2039,3 +2039,110 @@ body{
     padding-bottom:4px;
   }
 }
+
+
+/* Definitive DM rail fix: the profile button itself must reserve an avatar
+   column; the outer row must not let its action buttons overlap the profile. */
+.dm-workspace .dm-sidebar .social-person{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto!important;
+  align-items:center!important;
+  column-gap:7px!important;
+  width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+}
+.dm-workspace .dm-sidebar .social-person>button:first-child{
+  display:grid!important;
+  grid-template-columns:34px minmax(0,1fr)!important;
+  grid-template-rows:auto auto!important;
+  align-items:center!important;
+  justify-content:stretch!important;
+  column-gap:9px!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  flex:none!important;
+  position:relative!important;
+  overflow:hidden!important;
+  text-align:left!important;
+  white-space:normal!important;
+}
+.dm-workspace .dm-sidebar .social-person>button:first-child>.social-user-avatar{
+  grid-column:1!important;
+  grid-row:1 / span 2!important;
+  display:block!important;
+  width:34px!important;
+  height:34px!important;
+  min-width:34px!important;
+  max-width:34px!important;
+  flex:none!important;
+  object-fit:cover!important;
+  border-radius:50%!important;
+}
+.dm-workspace .dm-sidebar .social-person>button:first-child>span{
+  grid-column:2!important;
+  grid-row:1!important;
+  display:block!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+  align-self:end!important;
+}
+.dm-workspace .dm-sidebar .social-person>button:first-child>span small{
+  display:block!important;
+  width:100%!important;
+  min-width:0!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+}
+.dm-workspace .dm-sidebar .social-person .social-actions{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-end!important;
+  flex-wrap:nowrap!important;
+  gap:4px!important;
+  min-width:0!important;
+  margin:0!important;
+}
+.dm-workspace .dm-sidebar .social-person .social-actions button{
+  width:auto!important;
+  min-width:0!important;
+  max-width:100%!important;
+  padding:5px 6px!important;
+  font-size:10px!important;
+  white-space:nowrap!important;
+}
+.dm-workspace .dm-sidebar .social-person button>.presence-dot{
+  left:23px!important;
+  bottom:3px!important;
+}
+
+/* On compact screens show one pane at a time instead of squeezing the chat
+   into a sliver beside the friend list. */
+@media(max-width:760px){
+  .dm-workspace .dm-window,
+  .dm-workspace .dm-window.dm-conversation-open{
+    display:grid!important;
+    grid-template-columns:minmax(0,1fr)!important;
+    min-width:0!important;
+  }
+  .dm-workspace .dm-window .dm-sidebar{display:flex!important;min-width:0!important;width:100%!important}
+  .dm-workspace .dm-window .dm-main{display:none!important;min-width:0!important;width:100%!important}
+  .dm-workspace .dm-window.dm-conversation-open .dm-sidebar{display:none!important}
+  .dm-workspace .dm-window.dm-conversation-open .dm-main{display:flex!important}
+}
+@media(max-width:760px){
+  .dm-workspace .dm-sidebar .social-person{
+    grid-template-columns:minmax(0,1fr)!important;
+    row-gap:2px!important;
+  }
+  .dm-workspace .dm-sidebar .social-person .social-actions{
+    justify-content:flex-start!important;
+    padding:0 0 3px 47px!important;
+  }
+}
