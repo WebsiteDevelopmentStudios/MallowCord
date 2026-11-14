@@ -444,33 +444,38 @@ function clearReply(){replyingTo=null;$("#replyingToBar")?.classList.add("hidden
 function beginReply(m){replyingTo=m;const bar=$("#replyingToBar");bar.innerHTML='Replying to <b>'+esc(m.username)+'</b>: '+esc(m.content.slice(0,140))+'<button type="button" id="cancelReply">×</button>';bar.classList.remove("hidden");$("#cancelReply").onclick=clearReply;$("#messageForm [name=content]").focus();closeMessageMenu()}
 
 let activeDmId=null,activeDmUser=null,dmPoll=null;
-let socialSearchResults=[];
-async function loadSocial(){
- const [f,d]=await Promise.all([api("/friends"),api("/dms")]);
- const friends=f.friends||[],conversations=d.conversations||[],byId=new Map();
- for(const person of [...friends,...conversations,...socialSearchResults]){
+let socialSearchResults=[],socialFriendsCache=[],socialConversationsCache=[];
+function renderSocialPeople(){
+ const byId=new Map();
+ for(const person of [...socialFriendsCache,...socialConversationsCache,...socialSearchResults]){
   const id=String(person.user_id||person.id||"");if(!id)continue;
   const previous=byId.get(id)||{};
-  const isFriend=!!previous.is_friend||friends.some(x=>String(x.id)===id)||!!person.is_friend;
+  const isFriend=!!previous.is_friend||socialFriendsCache.some(x=>String(x.id)===id)||!!person.is_friend;
   byId.set(id,{...previous,...person,user_id:id,is_friend:isFriend});
  }
  socialPeople=[...byId.values()];
  const rows=socialPeople.map(person=>{
   const id=String(person.user_id||person.id),name=person.display_name||person.username||"User";
   const label=person.is_friend?"Friends":"Not friends";
-  const secondary=person.last_message||person.username&&("@"+person.username)||label;
+  const secondary=person.last_message||(person.username&&("@"+person.username))||label;
   return '<div class="social-person"><button type="button" class="social-person-main" data-open-dm="'+esc(id)+'"><span class="social-avatar-wrap"><img class="social-user-avatar" src="'+esc(person.avatar_url||"")+'" alt=""><i class="presence-dot '+esc(person.presence||"offline")+'"></i></span><span class="social-person-copy"><b>'+esc(name)+'</b><small>'+esc(secondary)+'</small></span></button><span class="social-person-status '+(person.is_friend?"is-friend":"is-not-friend")+'">'+label+'</span></div>';
  }).join("");
  $("#friendRequests").innerHTML="";
  $("#friendList").innerHTML="";
  $("#dmList").innerHTML=rows||'<p class="settings-note">Search for someone by username to start a conversation.</p>';
 }
+async function loadSocial(){
+ const [f,d]=await Promise.all([api("/friends"),api("/dms")]);
+ socialFriendsCache=f.friends||[];
+ socialConversationsCache=d.conversations||[];
+ renderSocialPeople();
+}
 async function searchDmUsers(query){
  const value=String(query||"").trim();
- if(value.length<2){socialSearchResults=[];await loadSocial();return}
+ if(value.length<2){socialSearchResults=[];renderSocialPeople();return}
  const result=await api("/users/search?q="+encodeURIComponent(value));
  socialSearchResults=result.users||[];
- await loadSocial();
+ renderSocialPeople();
 }
 
 async function openSocial(){try{$("#app").classList.add("dm-mode");$("#dmWindow").classList.remove("dm-conversation-open");$("#dmProfilePanel").classList.add("hidden");$("#socialModal").classList.remove("hidden");document.querySelectorAll(".servers .server-icon").forEach(b=>b.classList.toggle("active",b.id==="dmHomeBtn"));await loadSocial()}catch(e){toast(e.message)}}
