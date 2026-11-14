@@ -2205,3 +2205,19 @@ body{
   bottom:7px!important;
   z-index:2!important;
 }
+
+/* Unified DM rows: avatar, name and friend state must remain on one line. */
+#socialModal .dm-sidebar .social-person{display:flex!important;align-items:center!important;gap:8px!important;width:100%!important;min-width:0!important;max-width:100%!important;padding:3px 7px!important;box-sizing:border-box!important}
+#socialModal .dm-sidebar .social-person>.social-person-main{display:flex!important;flex:1 1 auto!important;align-items:center!important;flex-direction:row!important;justify-content:flex-start!important;gap:10px!important;width:0!important;min-width:0!important;max-width:100%!important;min-height:48px!important;height:auto!important;padding:5px 0!important;margin:0!important;overflow:hidden!important;position:relative!important;text-align:left!important;white-space:normal!important}
+#socialModal .dm-sidebar .social-avatar-wrap{display:block!important;position:relative!important;flex:0 0 36px!important;width:36px!important;min-width:36px!important;height:36px!important;margin:0!important;padding:0!important;overflow:visible!important}
+#socialModal .dm-sidebar .social-avatar-wrap img.social-user-avatar{display:block!important;position:static!important;inset:auto!important;width:36px!important;min-width:36px!important;max-width:36px!important;height:36px!important;min-height:36px!important;max-height:36px!important;margin:0!important;padding:0!important;border-radius:50%!important;object-fit:cover!important;vertical-align:middle!important}
+#socialModal .dm-sidebar .social-avatar-wrap .presence-dot{position:absolute!important;left:25px!important;right:auto!important;bottom:0!important;top:auto!important;z-index:3!important}
+#socialModal .dm-sidebar .social-person-copy{display:flex!important;flex:1 1 auto!important;flex-direction:column!important;align-items:flex-start!important;justify-content:center!important;width:0!important;min-width:0!important;max-width:100%!important;overflow:hidden!important;gap:2px!important}
+#socialModal .dm-sidebar .social-person-copy b,#socialModal .dm-sidebar .social-person-copy small{display:block!important;width:100%!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+#socialModal .dm-sidebar .social-person-status{display:block!important;flex:0 0 auto!important;max-width:78px!important;margin-left:auto!important;font-size:10px!important;white-space:nowrap!important}
+#socialModal .social-person-status.is-friend{color:#43b581!important}
+#socialModal .social-person-status.is-not-friend{color:#aeb4bd!important}
+#socialModal .dm-sidebar .dm-user-search{display:flex!important;gap:6px!important}
+#socialModal .dm-sidebar .dm-user-search input{flex:1 1 0!important;width:0!important;min-width:0!important}
+#socialModal .dm-sidebar .dm-user-search button{flex:0 0 auto!important}
+#socialModal .dm-sidebar .dm-unified-list{display:flex!important;flex-direction:column!important;gap:2px!important}
