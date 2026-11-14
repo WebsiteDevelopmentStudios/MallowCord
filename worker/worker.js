@@ -699,6 +699,14 @@ async function ensureSocialTables(env){return ensureSchemaOnce("social-tables",a
 
 
 });}
+if(p==="/api/users/search"&&m==="GET"){
+ await ensureSocialTables(env);
+ const query=String(url.searchParams.get("q")||"").trim().toLowerCase();
+ if(query.length<2)return json({users:[]});
+ const pattern="%"+query+"%";
+ const rows=await getDatabase(env).prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,COALESCE(up.status,'offline') AS presence,EXISTS(SELECT 1 FROM friendships f WHERE f.user_low_id=MIN(?,u.id) AND f.user_high_id=MAX(?,u.id)) AS is_friend FROM users u LEFT JOIN user_profiles up ON up.user_id=u.id WHERE u.id<>? AND u.status='active' AND (u.username_key LIKE ? OR lower(COALESCE(up.display_name,'')) LIKE ?) ORDER BY CASE WHEN u.username_key=? THEN 0 ELSE 1 END,u.username LIMIT 30").bind(u.id,u.id,u.id,pattern,pattern,query).all();
+ return json({users:rows.results});
+}
 if(p==="/api/friends"&&m==="GET"){
  await ensureSocialTables(env);
  const friends=await getDatabase(env).prepare("SELECT u.id,u.username,COALESCE(up.display_name,u.username) AS display_name,up.avatar_url,CASE WHEN COALESCE(json_extract(pref.settings_json,'$.privacy.showOnlineStatus'),1)=0 THEN 'offline' WHEN EXISTS(SELECT 1 FROM discord_user_links dul WHERE dul.user_id=u.id) OR EXISTS(SELECT 1 FROM discord_account_links dal WHERE dal.user_id=u.id) OR EXISTS(SELECT 1 FROM oauth_accounts oa WHERE oa.user_id=u.id AND oa.provider='discord') THEN COALESCE(up.status,'offline') WHEN COALESCE(pr.last_seen_at,0)>=? THEN COALESCE(up.status,'online') ELSE 'offline' END AS presence FROM friendships f JOIN users u ON u.id=CASE WHEN f.user_low_id=? THEN f.user_high_id ELSE f.user_low_id END LEFT JOIN user_profiles up ON up.user_id=u.id LEFT JOIN user_presence pr ON pr.user_id=u.id LEFT JOIN user_preferences pref ON pref.user_id=u.id WHERE f.user_low_id=? OR f.user_high_id=? ORDER BY COALESCE(up.display_name,u.username)").bind(now()-90,u.id,u.id,u.id).all();
@@ -761,7 +769,8 @@ if(p==="/api/dms/open"&&m==="POST"){
  const target=String((await body(req)).user_id||"");
  if(!target||target===u.id)return fail("Choose another user.");
  const [low,high]=u.id<target?[u.id,target]:[target,u.id];
- if(!await getDatabase(env).prepare("SELECT 1 FROM friendships WHERE user_low_id=? AND user_high_id=?").bind(low,high).first())return fail("You can only message friends.",403);
+ const targetExists=await getDatabase(env).prepare("SELECT 1 FROM users WHERE id=? AND status='active'").bind(target).first();
+ if(!targetExists)return fail("User not found.",404);
  await getDatabase(env).prepare("INSERT OR IGNORE INTO dm_conversations(id,user_low_id,user_high_id,created_at,updated_at) VALUES(?,?,?,?,?)").bind(uid(),low,high,now(),now()).run();
  const conversation=await getDatabase(env).prepare("SELECT id FROM dm_conversations WHERE user_low_id=? AND user_high_id=?").bind(low,high).first();
  return json({conversation:{id:conversation.id,user_id:target}},201);
