@@ -2146,3 +2146,62 @@ body{
     padding:0 0 3px 47px!important;
   }
 }
+
+
+/* DM friend rows: keep the avatar beside the name.
+   Use flex here because the presence indicator is a third child in the
+   profile button; grid auto-placement was letting it compete with the text. */
+#socialModal .dm-sidebar .social-person>button:first-child{
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  gap:10px!important;
+  min-height:48px!important;
+  height:auto!important;
+  padding:7px 8px!important;
+  position:relative!important;
+  text-align:left!important;
+  overflow:hidden!important;
+}
+#socialModal .dm-sidebar .social-person>button:first-child>.social-user-avatar{
+  display:block!important;
+  position:relative!important;
+  inset:auto!important;
+  order:0!important;
+  flex:0 0 36px!important;
+  width:36px!important;
+  min-width:36px!important;
+  max-width:36px!important;
+  height:36px!important;
+  min-height:36px!important;
+  margin:0!important;
+  border-radius:50%!important;
+  object-fit:cover!important;
+}
+#socialModal .dm-sidebar .social-person>button:first-child>span{
+  display:block!important;
+  order:1!important;
+  flex:1 1 auto!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:none!important;
+  margin:0!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+  align-self:center!important;
+}
+#socialModal .dm-sidebar .social-person>button:first-child>span small{
+  display:block!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+}
+#socialModal .dm-sidebar .social-person>button:first-child>.presence-dot{
+  position:absolute!important;
+  left:34px!important;
+  right:auto!important;
+  bottom:7px!important;
+  z-index:2!important;
+}
