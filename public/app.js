@@ -444,15 +444,40 @@ function clearReply(){replyingTo=null;$("#replyingToBar")?.classList.add("hidden
 function beginReply(m){replyingTo=m;const bar=$("#replyingToBar");bar.innerHTML='Replying to <b>'+esc(m.username)+'</b>: '+esc(m.content.slice(0,140))+'<button type="button" id="cancelReply">×</button>';bar.classList.remove("hidden");$("#cancelReply").onclick=clearReply;$("#messageForm [name=content]").focus();closeMessageMenu()}
 
 let activeDmId=null,activeDmUser=null,dmPoll=null;
+let socialSearchResults=[];
 async function loadSocial(){
  const [f,d]=await Promise.all([api("/friends"),api("/dms")]);
- const renderUser=(person,actions)=>'<div class="social-person"><button type="button" data-social-profile="'+esc(person.user_id||person.id)+'"><img class="social-user-avatar" src="'+esc(person.avatar_url||"")+'" alt=""><i class="presence-dot '+esc(person.presence||"offline")+'"></i><span>'+esc(person.display_name||person.username||"User")+'<small>@'+esc(person.username||"")+'</small></span></button><span class="social-actions">'+actions+'</span></div>';
- $("#friendRequests").innerHTML=(f.incoming||[]).map(x=>renderUser(x,'<button type="button" data-friend-action="accept" data-user-id="'+esc(x.user_id)+'">Accept</button><button type="button" data-friend-action="decline" data-user-id="'+esc(x.user_id)+'">Decline</button>')).join("")+(f.outgoing||[]).map(x=>renderUser(x,'<small>Pending</small>')).join("")||'<p class="settings-note">No pending requests.</p>';
- $("#friendList").innerHTML=(f.friends||[]).map(x=>renderUser(x,'<button type="button" data-open-dm="'+esc(x.id)+'">Message</button><button type="button" data-friend-action="remove" data-user-id="'+esc(x.id)+'">Remove</button>')).join("")||'<p class="settings-note">No friends yet.</p>';
- socialPeople=[...(f.friends||[]),...(d.conversations||[])].filter((p,i,a)=>a.findIndex(x=>String(x.user_id||x.id)===String(p.user_id||p.id))===i);$("#dmList").innerHTML=(d.conversations||[]).map(x=>'<button type="button" data-open-dm="'+esc(x.user_id)+'"><img class="social-user-avatar" src="'+esc(x.avatar_url||"")+'" alt=""><i class="presence-dot '+esc(x.presence||"offline")+'"></i><span>'+esc(x.display_name||x.username||"User")+'<small>'+esc(x.last_message||"No messages yet")+'</small></span></button>').join("")||'<p class="settings-note">No conversations yet.</p>';
+ const friends=f.friends||[],conversations=d.conversations||[],byId=new Map();
+ for(const person of [...friends,...conversations,...socialSearchResults]){
+  const id=String(person.user_id||person.id||"");if(!id)continue;
+  const previous=byId.get(id)||{};
+  const isFriend=!!previous.is_friend||friends.some(x=>String(x.id)===id)||!!person.is_friend;
+  byId.set(id,{...previous,...person,user_id:id,is_friend:isFriend});
+ }
+ socialPeople=[...byId.values()];
+ const rows=socialPeople.map(person=>{
+  const id=String(person.user_id||person.id),name=person.display_name||person.username||"User";
+  const label=person.is_friend?"Friends":"Not friends";
+  const secondary=person.last_message||person.username&&("@"+person.username)||label;
+  return '<div class="social-person"><button type="button" class="social-person-main" data-open-dm="'+esc(id)+'"><span class="social-avatar-wrap"><img class="social-user-avatar" src="'+esc(person.avatar_url||"")+'" alt=""><i class="presence-dot '+esc(person.presence||"offline")+'"></i></span><span class="social-person-copy"><b>'+esc(name)+'</b><small>'+esc(secondary)+'</small></span></button><span class="social-person-status '+(person.is_friend?"is-friend":"is-not-friend")+'">'+label+'</span></div>';
+ }).join("");
+ $("#friendRequests").innerHTML="";
+ $("#friendList").innerHTML="";
+ $("#dmList").innerHTML=rows||'<p class="settings-note">Search for someone by username to start a conversation.</p>';
 }
+async function searchDmUsers(query){
+ const value=String(query||"").trim();
+ if(value.length<2){socialSearchResults=[];await loadSocial();return}
+ const result=await api("/users/search?q="+encodeURIComponent(value));
+ socialSearchResults=result.users||[];
+ await loadSocial();
+}
+
 async function openSocial(){try{$("#app").classList.add("dm-mode");$("#dmWindow").classList.remove("dm-conversation-open");$("#dmProfilePanel").classList.add("hidden");$("#socialModal").classList.remove("hidden");document.querySelectorAll(".servers .server-icon").forEach(b=>b.classList.toggle("active",b.id==="dmHomeBtn"));await loadSocial()}catch(e){toast(e.message)}}
 $("#startConversationBtn").onclick=()=>$("#addFriendForm [name=username]")?.focus();
+$("#addFriendForm").onsubmit=async e=>{e.preventDefault();try{await searchDmUsers(e.currentTarget.elements.username.value)}catch(x){toast(x.message)}};
+$("#addFriendForm [name=username]").addEventListener("input",()=>{const q=$("#addFriendForm [name=username]").value.trim();clearTimeout(window.__mallowDmSearchTimer);if(q.length>=2)window.__mallowDmSearchTimer=setTimeout(()=>searchDmUsers(q).catch(x=>toast(x.message)),250);else if(!q){socialSearchResults=[];loadSocial().catch(x=>toast(x.message))}});
+
 async function openDm(userId){try{stopDmTyping();if(dmTypingPoll)clearInterval(dmTypingPoll);$("#dmWindow").classList.add("dm-conversation-open");const conversationButton=Array.from(document.querySelectorAll("#dmList [data-open-dm]")).find(el=>el.dataset.openDm===String(userId));const conversationName=conversationButton?.querySelector("span")?.childNodes?.[0]?.textContent?.trim()||"Direct Message";$("#dmHeaderTitle").textContent=conversationName;const d=await api("/dms/open",{method:"POST",body:JSON.stringify({user_id:userId})});activeDmId=d.conversation.id;activeDmUser=userId;$("#dmEmpty").classList.add("hidden");await loadDmProfile(userId);$("#dmMessages").classList.remove("hidden");$("#dmForm").classList.remove("hidden");await loadDmMessages();if(dmTypingPoll)clearInterval(dmTypingPoll);dmTypingPoll=setInterval(refreshDmTyping,3000);refreshDmTyping();if(dmPoll)clearInterval(dmPoll);dmPoll=null;if(!realtimeConnected())dmPoll=setInterval(()=>{if(document.visibilityState==="visible")loadDmMessages()},20000);$("#dmForm [name=content]").focus()}catch(e){toast(e.message)}}
 async function loadDmProfile(userId){
  const panel=$("#dmProfilePanel");if(!panel)return;
@@ -488,7 +513,7 @@ $("#friendsBtn").onclick=openSocial;
 $("#dmBackToList").onclick=()=>{stopDmTyping();if(dmTypingPoll)clearInterval(dmTypingPoll);dmTypingPoll=null;$("#dmTypingIndicator").classList.add("hidden");$("#dmWindow").classList.remove("dm-conversation-open");activeDmId=null;if(dmPoll)clearInterval(dmPoll);dmPoll=null;$("#dmProfilePanel").classList.add("hidden")};
 $("#closeSocialModal").onclick=()=>{$("#socialModal").classList.add("hidden");$("#dmWindow").classList.remove("dm-conversation-open");$("#app").classList.remove("dm-mode");if(dmPoll)clearInterval(dmPoll);dmPoll=null;activeDmId=null;document.querySelectorAll(".servers .server-icon").forEach(b=>b.classList.toggle("active",b.dataset.serverId===serverId))};
 $("#dmHomeBtn")?.addEventListener("click",openSocial);
-$("#addFriendForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget;try{const d=await api("/friends/request",{method:"POST",body:JSON.stringify({username:form.username.value})});toast(d.message||"Friend request sent.");form.reset();await loadSocial()}catch(x){toast(x.message)}};
+
 $("#dmForm [name=content]").addEventListener("input",()=>{if(!activeDmId)return;dmTypingValue=$("#dmForm [name=content]").value;if(!dmTypingValue.trim()){stopDmTyping();return}sendDmTyping(true);if(dmTypingIdleTimer)clearTimeout(dmTypingIdleTimer);dmTypingIdleTimer=setTimeout(stopDmTyping,5000)});
 $("#dmForm [name=content]").addEventListener("blur",stopDmTyping);
 $("#dmForm").onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,input=form.elements.content,value=input.value.trim();if(!value||!activeDmId)return;const conversation=activeDmId;stopDmTyping();input.value="";const pending=document.createElement("div");pending.className="dm-message mine optimistic-message";pending.innerHTML='<small>'+esc(me?.username||"You")+' · Sending…</small>'+renderMarkdown(value);$("#dmMessages").append(pending);$("#dmMessages").scrollTop=$("#dmMessages").scrollHeight;try{await api("/dms/"+conversation+"/messages",{method:"POST",body:JSON.stringify({content:value})});pending.remove();await loadDmMessages()}catch(x){pending.remove();input.value=value;toast(x.message)}};
