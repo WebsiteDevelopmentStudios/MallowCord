@@ -1940,3 +1940,102 @@ body{
     justify-content:center!important;
   }
 }
+
+
+/* DM sidebar layout repair: keep profile text beside avatars and actions
+   inside the sidebar instead of letting flex children overflow. */
+.dm-sidebar .social-person{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:6px;
+  min-width:0;
+  width:100%;
+}
+.dm-sidebar .social-person>button{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  width:100%;
+  min-width:0;
+  flex:1 1 auto;
+  padding:7px 5px;
+  overflow:hidden;
+}
+.dm-sidebar .social-person>button .social-user-avatar{
+  display:block;
+  width:34px;
+  height:34px;
+  min-width:34px;
+  flex:0 0 34px;
+  border-radius:50%;
+  object-fit:cover;
+}
+.dm-sidebar .social-person>button>span{
+  display:block;
+  flex:1 1 auto;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  line-height:1.25;
+}
+.dm-sidebar .social-person>button>span small{
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.dm-sidebar .social-person .social-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  flex:0 0 auto;
+  min-width:0;
+  gap:4px;
+  margin-left:0;
+}
+.dm-sidebar .social-person .social-actions button{
+  width:auto;
+  min-width:0;
+  flex:0 1 auto;
+  padding:5px 7px;
+  white-space:nowrap;
+  font-size:10px;
+}
+.dm-sidebar .social-person .social-actions small{
+  white-space:nowrap;
+  font-size:10px;
+}
+.dm-sidebar .inline-create{
+  min-width:0;
+  width:100%;
+  box-sizing:border-box;
+}
+.dm-sidebar .inline-create input{
+  flex:1 1 0;
+  width:0;
+  min-width:0;
+  box-sizing:border-box;
+}
+.dm-sidebar .inline-create .primary{
+  flex:0 0 auto;
+  min-width:48px;
+}
+.dm-sidebar .dm-sidebar-scroll,
+.dm-sidebar .social-list,
+.dm-sidebar .social-list>*{
+  min-width:0;
+  max-width:100%;
+}
+@media(max-width:760px){
+  .dm-sidebar .social-person{
+    grid-template-columns:minmax(0,1fr);
+    gap:2px;
+  }
+  .dm-sidebar .social-person .social-actions{
+    justify-content:flex-start;
+    padding-left:48px;
+    padding-bottom:4px;
+  }
+}
