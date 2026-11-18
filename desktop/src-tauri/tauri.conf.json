@@ -25,8 +25,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "shortDescription": "MallowCord desktop client",
-    "longDescription": "The MallowCord community chat desktop application."
+    "longDescription": "The MallowCord community chat desktop application.",
+    "icon": []
   }
 }
