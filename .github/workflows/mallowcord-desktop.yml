@@ -1,0 +1,34 @@
+name: Build MallowCord Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/mallowcord-desktop.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Windows installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tauriScript: cargo tauri
+          tagName: mallowcord-v__VERSION__
+          releaseName: "MallowCord Desktop v__VERSION__"
+          releaseBody: "Windows desktop build of MallowCord."
+          releaseDraft: true
+          prerelease: false
